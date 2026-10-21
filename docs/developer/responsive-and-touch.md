@@ -128,27 +128,35 @@ zstyle **没有** media query，所以断点不可能写在样式表里。但这
 
 这与既有 `.mica` 的做法同构：视图层表达意图，样式层给外观。
 
-## 8. 高度方向为什么还没动（**明确的能力缺口 + 记账**）
+## 8. 高度方向：`flex-grow` 现在有了，但**没有**用它去改 shell
 
 宽度方向现在是真自适应的：根容器不再写尺寸、`body` 加 `cross-align: stretch`、
 内容卡的 `width` 删掉、窄窗口导航折叠。实测四个尺寸（1400×800 / 1882×953 /
 982×653 / 602×853）右侧与内容区都正确铺满。
 
-**高度**不行，原因单一而硬：
+高度方向的缺口曾经是**一条硬边界**：core 的 `Stack::arrange` 只对**交叉轴**施加
+`cross_align`，主轴方向没有任何"占用剩余空间"的语义 —— 没有 flex-grow、
+没有星号行、没有 `Height="*"`。
 
-> core 的 `Stack::arrange` 只对**交叉轴**施加 `cross_align`，主轴方向没有任何
-> "占用剩余空间" 的语义 —— 没有 flex-grow、没有星号行、没有 `Height="*"`。
+> **2026-10 更新**：flex 分配已经进 core（`flex-direction` / `flex-wrap` /
+> `flex-grow` / `flex-shrink` / `flex-basis` / `align-items` / `justify-content`
+> / `align-content` / `align-self` / `gap` / `order`）。详见 §9。
+> **但 shell 仍然没有改**，理由见下。
 
-于是 `window`（垂直 StackPanel）的第二个子项 `body` 的高度只能由**内容**决定，
-而"把 body 推到剩满 753" 没有表达方式。要真正跟随窗口高，需要给 core 补：
+### 为什么 shell 还没换过去
 
-| 补什么 | 语义 | 两趟各自怎么变 |
-|---|---|---|
-| 主轴 fill | `Grid` 的 `*` 行 / WPF 的 `Height="*"` | **measure**：fill 子项对内容尺寸贡献 0（它不要固定空间）；**arrange**：主轴剩余空间按 fill 权重分配 |
+`content-card` 的 `height: 752` 仍在，换 flex 需要同时动**两个**判据，而那两件事
+不该在同一轮做：
 
-`measure` 那一步是坑：fill 子项有内容（卡片网格很高），若 measure 返回内容高，
-父容器就会按内容定尺寸而把 fill 语义抵消掉。所以两趟都要改，且**每处 `Stack::arrange`
-的调用点都是回归面**。
+1. **要给 `.window` 声明 `flex-direction: vertical`** —— 一旦声明，那个容器
+   就从 Stack 切到分配路径，**它的所有子项**的排布都可能变（不只是 `body`）。
+   这是全应用影响面，需要逐页量，不是"加一个属性"。
+2. **`only_fill_nodes_carry_local_width` 那条门禁的形状还没变。**
+   它的注释写着答案 —— 「黑名单会烂，**形状**不会」。flex 之后"哪些节点该
+   吃掉剩余空间"从「显式 fill 标记」变成「样式表里声明了 `flex-grow: 1`」，
+   那条门禁要重新设计判据，而不是加白名单。
+
+所以本轮的边界是：**core 有能力了，应用层还没接**。这不是遗漏，是分轮。
 
 ### 这一轮刻意没做的三件事
 
@@ -157,9 +165,65 @@ zstyle **没有** media query，所以断点不可能写在样式表里。但这
    与 `only_fill_nodes_carry_local_width`。后者的注释写着答案 ——
    「黑名单会烂，**形状**不会」。给 nav 加白名单就是让那条规矩烂掉，
    所以撤回了，改成由 `.nav-pane.compact` 在**样式表**里给窄宽。
-2. **没有把 content-card 的 `height: 752` 去掉**。去掉后它的高度由内容决定，
-   于是 Home 页的网格会把 body 撑到 1000+，窗口 800 高时溢出更多。
-   这是 `MIGRATION.md` §7.4 已为"Home 只能放 10 条"记过的同一笔账：
-   core 无滚动 + 无 flex-grow ⇒ 固定高度 + 裁剪，是当时唯一的取舍。
+2. **没有把 content-card 的 `height: 752` 去掉**。见上：那要连
+   `only_fill_nodes_carry_local_width` 的判据一起重设计。
+   这是 `MIGRATION.md` §7.4 已为"Home 只能放 10 条"记过的同一笔账。
 3. **没有同时改布局基准**（见 §5）。响应式与基准换算必须分两轮，
    否则一次改动同时动了「哪套布局」和「布局有多大」，出问题无法归因。
+
+## 9. flex：怎么用，以及它**不会**自动生效
+
+### 激活是显式的，不是默认的
+
+容器上**必须声明** `flex-direction` 或 `flex-wrap`，那一个容器才走 flex 分配
+路径。没有声明的一律走 Stack，子项的 `flex-grow` 一概不生效。
+
+```zstyle
+/* 声明了 → 这个容器走分配路径 */
+Container.toolbar {
+    flex-direction: row;
+    gap: 12px;
+}
+
+/* 没声明 → 走 Stack，子项的 flex-grow 一概不生效 */
+Container.plain-row {
+    direction: horizontal;
+}
+```
+
+这条不是实现偷懒。默认走 Stack 保证了**存量应用一个字节都不用改**：已有布局
+的几何、已有测试的断言、`--dump-cpu` 的对照图，全部原样。若反过来"有 `flex-grow`
+就自动开"，那么任何一个误写了 `flex-grow` 的子项都会静默改变**它父容器**的排布。
+
+### 主轴跟随既有的 `direction`，不是新增一套
+
+只声明 `flex-wrap: wrap` 而不写 `flex-direction` 时，主轴方向回落到既有的
+`direction` 属性。于是 `direction: horizontal` + `flex-wrap: wrap` 就是
+「横排、放不下就折行」，不需要学第二个方向词汇。
+
+### 测量趟**不做** grow / shrink
+
+grow/shrink 回答的是「容器给多少就吃多少」，而测量趟只回答「内容想要多大」。
+把分配塞进测量趟的症状是：容器尺寸随 grow 变 ⇒ 下一帧约束变 ⇒ 测量缓存
+永不命中 ⇒ 静止界面每帧全树重排。所以：
+
+- **measure**：逐项测量 → 按 `order` 排 → 切行 → 聚合成内容尺寸；
+- **arrange**：从测量缓存 + 属性重新推一遍行与分布，再分配。
+
+⚠ 也正因如此，**折行判定在两趟里必须用同一个宽度** —— 容器自己声明的
+`width` 优先于父上限，且要先夹进父给的区间再扣内边距。踩过这个坑：
+[`../dev-log/2026-10-flex-wrap-two-pass-width.md`](../dev-log/2026-10-flex-wrap-two-pass-width.md)。
+
+### 代价：flex 路径是**分配式**的
+
+Stack 路径零分配（这是刻意保住的）。flex 路径要建项表、行表、分配表三个
+`Vec` —— 只在**声明了**的容器上发生。所以判据是：不要在每帧都重建的子树里
+给容器加 `flex-direction`，除非你确实需要分配语义。
+
+### 端到端的门禁
+
+样式表那一侧的既有门禁只查「规则有没有选中元素」，不查它有没有**效果** ——
+「样式表写着 `flex-grow: 1`，画面上纹丝不动」这种断链，只有直接量最终几何
+才抓得住。所以画廊的布局页有一条几何门禁
+（`gates::the_flex_demos_on_the_layout_page_really_allocate`）：
+grow 格必须比固定格宽得多，折行演示的第四格必须换到第二行且 x 归零。

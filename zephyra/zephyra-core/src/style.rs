@@ -175,6 +175,69 @@ impl Node {
         }
     }
 
+    /// Flex 容器描述；`None` = 本节点**没有声明** flex，布局走 [`crate::layout::Stack`]。
+    ///
+    /// # 为什么查属性**表**而不是查读到的值
+    ///
+    /// [`Self::value`] 永远回落到键的默认值，于是「没写」与「写了默认值」拿到
+    /// 同一个结果 —— 分不开。而 flex 必须是显式声明才激活的：`lookup` 一次
+    /// 线性扫几个 `usize`（见 `PropertyStore` 的实现说明），对**不写 flex 的
+    /// 全部既有布局**来说这就是「两次比较后原路返回」，换它们各付一次
+    /// 项表扫描是不划算的。
+    ///
+    /// 声明方式 = 二选一（本地 `.with(...)` 或样式表都算）：
+    ///
+    /// - `flex-direction: …` —— 同时声明「我是 flex」与「主轴是哪根」；
+    /// - `flex-wrap: …` —— 「只想要换行」的容器不必再写方向。
+    ///
+    /// # 方向的回落顺序
+    ///
+    /// 写了 `flex-direction` 就以它为准（含反向）；只写了 `flex-wrap` 时主轴
+    /// 沿用 Stack 的 `direction` —— 于是 `direction: vertical; flex-wrap: wrap;`
+    /// 是一列换行，与 CSS 里 `flex-direction: column; flex-wrap: wrap;` 同义。
+    pub fn flex(&self, ctx: Context<'_>) -> Option<crate::layout::Flex> {
+        use crate::layout::{AlignContent, Direction, FlexWrap};
+
+        let wrap_declared = self.props().lookup(&crate::props::FLEX_WRAP).is_some();
+        let direction_declared = self.props().lookup(&crate::props::FLEX_DIRECTION).is_some();
+        if !wrap_declared && !direction_declared {
+            return None;
+        }
+        let (direction, reverse) = if direction_declared {
+            match self.value(&crate::props::FLEX_DIRECTION, ctx).as_deref() {
+                Some(PropertyValue::FlexDirection(d)) => (d.axis(), d.is_reverse()),
+                _ => (Direction::Horizontal, false),
+            }
+        } else {
+            match self.value(&crate::props::DIRECTION, ctx).as_deref() {
+                Some(PropertyValue::Direction(d)) => (*d, false),
+                _ => (Direction::Horizontal, false),
+            }
+        };
+        Some(crate::layout::Flex {
+            direction,
+            reverse,
+            wrap: match self.value(&crate::props::FLEX_WRAP, ctx).as_deref() {
+                Some(PropertyValue::FlexWrap(w)) => *w,
+                _ => FlexWrap::NoWrap,
+            },
+            // `gap` 的 CSS 名映射到同一个键（见 zstylec::props_map），这里读 `Spacing`。
+            spacing: self.number(&crate::props::SPACING, ctx),
+            justify: match self.value(&crate::props::MAIN_ALIGN, ctx).as_deref() {
+                Some(PropertyValue::MainAlign(a)) => *a,
+                _ => crate::layout::MainAxisAlign::Start,
+            },
+            align_items: match self.value(&crate::props::CROSS_ALIGN, ctx).as_deref() {
+                Some(PropertyValue::CrossAlign(a)) => *a,
+                _ => crate::layout::AlignItems::Start,
+            },
+            align_content: match self.value(&crate::props::ALIGN_CONTENT, ctx).as_deref() {
+                Some(PropertyValue::AlignContent(a)) => *a,
+                _ => AlignContent::Stretch,
+            },
+        })
+    }
+
     /// 背景色。
     pub fn background(&self, ctx: Context<'_>) -> crate::core::Color {
         self.color(&crate::props::BACKGROUND, ctx)

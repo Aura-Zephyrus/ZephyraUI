@@ -287,7 +287,9 @@ fn filter_by_name(name: &str, args: &mut Parser) -> Option<zephyra_core::filter:
 /// 目前只覆盖**真的出现在样式表里的枚举属性**。加属性时往这里加一行，
 /// 不在这张表里的属性收到关键字就报错。
 fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
-    use zephyra_core::layout::{AlignItems, Direction, MainAxisAlign};
+    use zephyra_core::layout::{
+        AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+    };
     let eq = |s: &str| s.eq_ignore_ascii_case(word);
 
     if key.name() == "Direction" {
@@ -326,6 +328,81 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
         }
         if eq("space-between") {
             return Some(PropertyValue::main_align(MainAxisAlign::SpaceBetween));
+        }
+        if eq("space-around") {
+            return Some(PropertyValue::main_align(MainAxisAlign::SpaceAround));
+        }
+        if eq("space-evenly") {
+            return Some(PropertyValue::main_align(MainAxisAlign::SpaceEvenly));
+        }
+        return None;
+    }
+    if key.name() == "FlexWrap" {
+        if eq("nowrap") {
+            return Some(PropertyValue::flex_wrap(FlexWrap::NoWrap));
+        }
+        if eq("wrap") {
+            return Some(PropertyValue::flex_wrap(FlexWrap::Wrap));
+        }
+        if eq("wrap-reverse") {
+            return Some(PropertyValue::flex_wrap(FlexWrap::WrapReverse));
+        }
+        return None;
+    }
+    if key.name() == "FlexDirection" {
+        if eq("row") {
+            return Some(PropertyValue::flex_direction(FlexDirection::Row));
+        }
+        if eq("row-reverse") {
+            return Some(PropertyValue::flex_direction(FlexDirection::RowReverse));
+        }
+        if eq("column") {
+            return Some(PropertyValue::flex_direction(FlexDirection::Column));
+        }
+        if eq("column-reverse") {
+            return Some(PropertyValue::flex_direction(FlexDirection::ColumnReverse));
+        }
+        return None;
+    }
+    if key.name() == "AlignContent" {
+        if eq("stretch") {
+            return Some(PropertyValue::align_content(AlignContent::Stretch));
+        }
+        if eq("start") {
+            return Some(PropertyValue::align_content(AlignContent::Start));
+        }
+        if eq("center") {
+            return Some(PropertyValue::align_content(AlignContent::Center));
+        }
+        if eq("end") {
+            return Some(PropertyValue::align_content(AlignContent::End));
+        }
+        if eq("space-between") {
+            return Some(PropertyValue::align_content(AlignContent::SpaceBetween));
+        }
+        if eq("space-around") {
+            return Some(PropertyValue::align_content(AlignContent::SpaceAround));
+        }
+        if eq("space-evenly") {
+            return Some(PropertyValue::align_content(AlignContent::SpaceEvenly));
+        }
+        return None;
+    }
+    if key.name() == "AlignSelf" {
+        if eq("auto") {
+            return Some(PropertyValue::align_self(AlignSelf::Auto));
+        }
+        if eq("stretch") {
+            return Some(PropertyValue::align_self(AlignSelf::Stretch));
+        }
+        if eq("start") {
+            return Some(PropertyValue::align_self(AlignSelf::Start));
+        }
+        if eq("center") {
+            return Some(PropertyValue::align_self(AlignSelf::Center));
+        }
+        if eq("end") {
+            return Some(PropertyValue::align_self(AlignSelf::End));
         }
         return None;
     }

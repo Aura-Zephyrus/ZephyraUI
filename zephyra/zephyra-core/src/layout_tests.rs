@@ -10,7 +10,9 @@ use crate::diff::diff;
 use crate::element::Element;
 use crate::id::NodeTag;
 use crate::layout::layout;
-use crate::layout::{AlignItems, Direction, MainAxisAlign};
+use crate::layout::{
+    AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+};
 use crate::node::Node;
 use crate::paint::render;
 use crate::paint::{Command, Layer};
@@ -765,4 +767,273 @@ fn nested_containers_each_get_their_own_rect() {
 
     // 每个组容器与每个按钮都应产出背景
     assert_eq!(commands(&node).len(), 5, "2 个组 + 3 个按钮");
+}
+
+// ============================== Flexbox ==============================
+//
+// 全组的判据前提：**显式声明才进 flex**（容器上写了 `flex-direction` 或
+// `flex-wrap`，见 `style::Node::flex`）。没声明的容器走 Stack，子项的
+// `flex-grow` 一概不生效 —— 第一条钉的就是这条。
+
+/// 各子节点已摆好的矩形（按**文档顺序**，不是排布顺序）。
+fn child_rects(node: &Node) -> Vec<Rect> {
+    node.children().iter().map(|c| c.rect()).collect()
+}
+
+#[test]
+fn a_container_without_flex_declarations_ignores_flex_grow() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control))
+                .with(&props::FLEX_GROW, PropertyValue::float(1.0)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    assert!((rects[0].width - 40.0).abs() < 1e-3);
+    assert!(
+        (rects[1].width - 40.0).abs() < 1e-3,
+        "未声明 flex 的容器不该理会子项的 flex-grow，实得 {}",
+        rects[1].width
+    );
+    assert!((rects[1].x - 40.0).abs() < 1e-3, "依然按 Stack 依次排");
+}
+
+#[test]
+fn flex_grow_takes_the_remaining_main_space() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Row),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            Element::new(NodeTag::Control)
+                .with(&props::HEIGHT, PropertyValue::float(10.0))
+                .with(&props::FLEX_GROW, PropertyValue::float(1.0)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    assert!(
+        (rects[0].width - 40.0).abs() < 1e-3,
+        "grow=0 的项保持 basis"
+    );
+    assert!((rects[1].x - 40.0).abs() < 1e-3);
+    assert!(
+        (rects[1].width - 160.0).abs() < 1e-3,
+        "grow=1 应吃掉全部剩余空间（200 − 40），实得 {}",
+        rects[1].width
+    );
+}
+
+#[test]
+fn flex_shrink_uses_the_scaled_shrink_factor() {
+    // 视觉收缩率 = `shrink × basis`：两个 120 挤进 200，`shrink = 0` 的那侧冻结，
+    // 40 的缺口全由 `shrink = 1` 的那侧按它的 basis 补上。
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Row),
+        )
+        .with_children([
+            sized(120.0, 10.0)(Element::new(NodeTag::Control))
+                .with(&props::FLEX_SHRINK, PropertyValue::float(0.0)),
+            sized(120.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    assert!(
+        (rects[0].width - 120.0).abs() < 1e-3,
+        "shrink=0 冻结，不许缩"
+    );
+    assert!((rects[1].x - 120.0).abs() < 1e-3);
+    assert!(
+        (rects[1].width - 80.0).abs() < 1e-3,
+        "缺口 40 应全由 shrink=1 的项补，实得 {}",
+        rects[1].width
+    );
+}
+
+#[test]
+fn flex_wrap_breaks_the_line_and_the_next_line_returns_to_the_cross_start() {
+    // 这条同时钉两件事：只声明 `flex-wrap`（不写 flex-direction）也是进入 flex 的
+    // 开关且方向回落到 `direction`；以及折行后第二行回到交叉轴起点。
+    let e = Element::new(NodeTag::Container)
+        .with(&props::FLEX_WRAP, PropertyValue::flex_wrap(FlexWrap::Wrap))
+        .with(
+            &props::ALIGN_CONTENT,
+            PropertyValue::align_content(AlignContent::Start),
+        )
+        .with(&props::SPACING, PropertyValue::float(10.0))
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 100.0, 100.0));
+    let rects = child_rects(&node);
+    // 行1：40 + 10 + 40 = 90 ≤ 100；第三项 90 + 10 + 40 = 140 > 100 ⇒ 折行。
+    assert!((rects[1].x - 50.0).abs() < 1e-3, "行内第二项贴住 gap");
+    assert!((rects[1].y - 0.0).abs() < 1e-3);
+    assert!((rects[2].x - 0.0).abs() < 1e-3, "折行后回到交叉轴起点");
+    assert!(
+        (rects[2].y - 20.0).abs() < 1e-3,
+        "行高 10 + 行距 10 ⇒ 第二行 y = 20，实得 {}",
+        rects[2].y
+    );
+}
+
+#[test]
+fn order_reorders_arrangement_but_not_the_document() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Row),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control))
+                .with(&props::ORDER, PropertyValue::int(1)),
+            sized(60.0, 10.0)(Element::new(NodeTag::Control))
+                .with(&props::ORDER, PropertyValue::int(0)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    // `child_rects` 按文档顺序返回：[0] 是 order=1 的那项，排布上应落到第二位。
+    assert!((rects[0].x - 60.0).abs() < 1e-3, "order=1 排到后面");
+    assert!((rects[1].x - 0.0).abs() < 1e-3, "order=0 排到前面");
+}
+
+#[test]
+fn align_self_overrides_the_container_align_items() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Row),
+        )
+        .with(
+            &props::CROSS_ALIGN,
+            PropertyValue::cross_align(AlignItems::End),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 20.0)(Element::new(NodeTag::Control)).with(
+                &props::ALIGN_SELF,
+                PropertyValue::align_self(AlignSelf::Center),
+            ),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 50.0));
+    let rects = child_rects(&node);
+    assert!((rects[0].y - 40.0).abs() < 1e-3, "容器 end ⇒ 首项贴底");
+    assert!(
+        (rects[1].y - 15.0).abs() < 1e-3,
+        "align-self: center ⇒ 覆盖成居中"
+    );
+}
+
+#[test]
+fn flex_direction_column_grows_children_down_the_main_axis() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Column),
+        )
+        .with_children([
+            sized(40.0, 50.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control))
+                .with(&props::FLEX_GROW, PropertyValue::float(1.0)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 100.0, 200.0));
+    let rects = child_rects(&node);
+    assert!((rects[0].y - 0.0).abs() < 1e-3);
+    assert!((rects[0].height - 50.0).abs() < 1e-3);
+    assert!((rects[1].y - 50.0).abs() < 1e-3);
+    assert!(
+        (rects[1].height - 150.0).abs() < 1e-3,
+        "列方向上 grow 分的是高度，实得 {}",
+        rects[1].height
+    );
+}
+
+#[test]
+fn row_reverse_mirrors_main_offsets_without_reversing_the_item_order() {
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::RowReverse),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(60.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    // 反向 = **翻转坐标**：首项贴末端 [160,200)，次项紧挨它 [100,160)。
+    assert!((rects[0].x - 160.0).abs() < 1e-3, "首项贴主轴末端");
+    assert!((rects[1].x - 100.0).abs() < 1e-3, "次项依次往前排");
+}
+
+#[test]
+fn flex_basis_replaces_the_measured_main_size() {
+    // CSS 同义：basis 非 auto 时，主轴尺寸由 basis 决定，width / 内容都不再插手
+    // —— 项测量出 40，摆出来却是 100。
+    let e = Element::new(NodeTag::Container)
+        .with(
+            &props::FLEX_DIRECTION,
+            PropertyValue::flex_direction(FlexDirection::Row),
+        )
+        .with_children([sized(40.0, 10.0)(Element::new(NodeTag::Control))
+            .with(&props::FLEX_BASIS, PropertyValue::float(100.0))]);
+    let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
+    let rects = child_rects(&node);
+    assert!(
+        (rects[0].width - 100.0).abs() < 1e-3,
+        "basis=100 应盖过测量出的 40，实得 {}",
+        rects[0].width
+    );
+}
+
+#[test]
+fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
+    // 两趟折行必须用同一个数：容器声明 `width: 100`，父上限却是 300。
+    // 测量趟若按 300 折行 → 单行 → 高度 10；排列趟按 100 折行 → 两行 →
+    // 第二行落到 10px 高的盒子外面 —— 症状（文字压在一起）离原因很远。
+    let e = Element::new(NodeTag::Container)
+        .with(&props::FLEX_WRAP, PropertyValue::flex_wrap(FlexWrap::Wrap))
+        .with(&props::WIDTH, PropertyValue::float(100.0))
+        .with(&props::SPACING, PropertyValue::float(10.0))
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
+    let root = Element::new(NodeTag::Container)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with_children([e]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 300.0, 300.0));
+    let flex_rect = node.children()[0].rect();
+    assert!(
+        (flex_rect.width - 100.0).abs() < 1e-3,
+        "显式 width 要夹进父区间再生效，实得 {}",
+        flex_rect.width
+    );
+    // 100 装得下 40+10+40=90，装不下第三个 → 两行 → 10+10+间距 10 = 30。
+    assert!(
+        (flex_rect.height - 30.0).abs() < 1e-3,
+        "按 100 折行应得两行（高 30），实得 {}",
+        flex_rect.height
+    );
+    let rects = child_rects(&node.children()[0]);
+    assert!((rects[0].x - 0.0).abs() < 1e-3 && (rects[0].y - 0.0).abs() < 1e-3);
+    assert!(
+        (rects[2].y - 20.0).abs() < 1e-3,
+        "第三项应在第二行（y=20），实得 {}",
+        rects[2].y
+    );
 }

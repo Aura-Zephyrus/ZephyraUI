@@ -57,7 +57,36 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "collapsed",
         key: &props::COLLAPSED,
     },
-    // ---- 弹性容器（影响布局）----
+    // ---- Flexbox 容器（影响布局）----
+    //
+    // `align-items` / `justify-content` / `gap` 与既有名字是**同一个键的两套 CSS
+    // 名字**（`cross-align` / `main-align` / `spacing`）—— 语义只有一个，见
+    // `zephyra_core::props` 里那段说明。
+    Prop {
+        css: "flex-direction",
+        key: &props::FLEX_DIRECTION,
+    },
+    Prop {
+        css: "flex-wrap",
+        key: &props::FLEX_WRAP,
+    },
+    Prop {
+        css: "align-content",
+        key: &props::ALIGN_CONTENT,
+    },
+    Prop {
+        css: "align-items",
+        key: &props::CROSS_ALIGN,
+    },
+    Prop {
+        css: "justify-content",
+        key: &props::MAIN_ALIGN,
+    },
+    Prop {
+        css: "gap",
+        key: &props::SPACING,
+    },
+    // ---- 既有名字（与上面的 CSS 名同键）----
     Prop {
         css: "direction",
         key: &props::DIRECTION,
@@ -69,6 +98,27 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop {
         css: "main-align",
         key: &props::MAIN_ALIGN,
+    },
+    // ---- Flexbox 子项（影响布局）----
+    Prop {
+        css: "align-self",
+        key: &props::ALIGN_SELF,
+    },
+    Prop {
+        css: "flex-grow",
+        key: &props::FLEX_GROW,
+    },
+    Prop {
+        css: "flex-shrink",
+        key: &props::FLEX_SHRINK,
+    },
+    Prop {
+        css: "flex-basis",
+        key: &props::FLEX_BASIS,
+    },
+    Prop {
+        css: "order",
+        key: &props::ORDER,
     },
     // ---- 文本（影响布局）----
     Prop {

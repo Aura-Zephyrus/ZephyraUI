@@ -8,7 +8,9 @@
 //! 全部是 `const`：属性定义是编译期常量，全树共享同一份身份，diff 靠指针相等配对。
 
 use crate::core::{Color, CornerRadius, UvRect};
-use crate::layout::{AlignItems, Direction, MainAxisAlign};
+use crate::layout::{
+    AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+};
 use crate::property::{PropertyKey, PropertyValue};
 
 // ============================== 布局 ==============================
@@ -46,6 +48,59 @@ pub static MAIN_ALIGN: PropertyKey =
 /// 对应 WinUI 的 `Visibility=Collapsed`。与"宽度为 0"不同：零宽仍占一个间距位，
 /// 而折叠完全不占——工具栏在图片模式下少一个按钮时，间距必须跟着消失。
 pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyValue::bool(false));
+
+// ============================== Flexbox ==============================
+//
+// 三个 CSS 名刻意映射到**既有键**而不是另开新键：
+// `align-items` → `CROSS_ALIGN`、`justify-content` → `MAIN_ALIGN`、`gap` → `SPACING`
+// （映射在 `zstylec::props_map`）。两份键的症状是「Stack 路径读得到、Flex 路径
+// 读不到」这类半生效状态 —— 同一个语义永远只有一处读法。
+
+/// Flex 主轴方向（row / row-reverse / column / column-reverse）。
+///
+/// **声明它 = 本容器是 flex 容器**（见 `style::Node::flex`：只有 `FlexDirection`
+/// 或 `FlexWrap` 之一被写上才走 flex 分配路径，其余全部走 `Stack` 快路径）。
+///
+/// 未声明时主轴回落到 [`Direction`]：flex 容器上写 `direction: vertical`
+/// 等价于 `flex-direction: column`。
+pub static FLEX_DIRECTION: PropertyKey = PropertyKey::layout(
+    "FlexDirection",
+    PropertyValue::flex_direction(FlexDirection::Row),
+);
+
+/// Flex 换行策略（nowrap / wrap / wrap-reverse）。
+///
+/// 声明它同样是**进入 flex 的开关** —— 「只想要换行」的容器不必同时写
+/// `flex-direction`。
+pub static FLEX_WRAP: PropertyKey =
+    PropertyKey::layout("FlexWrap", PropertyValue::flex_wrap(FlexWrap::NoWrap));
+
+/// 多行时行组在交叉轴上的分布（CSS 的 `align-content`；单行时不生效）。
+pub static ALIGN_CONTENT: PropertyKey = PropertyKey::layout(
+    "AlignContent",
+    PropertyValue::align_content(AlignContent::Stretch),
+);
+
+// ============================== Flexbox 子项 ==============================
+
+/// 单项交叉轴对齐（覆盖容器的 align-items，对应 align-self）。
+pub static ALIGN_SELF: PropertyKey =
+    PropertyKey::layout("AlignSelf", PropertyValue::align_self(AlignSelf::Auto));
+
+/// Flex 扩展因子（剩余空间按比例分配，对应 flex-grow）。
+pub static FLEX_GROW: PropertyKey = PropertyKey::layout("FlexGrow", PropertyValue::float(0.0));
+
+/// Flex 收缩因子（溢出时按比例收缩，对应 flex-shrink）。
+pub static FLEX_SHRINK: PropertyKey = PropertyKey::layout("FlexShrink", PropertyValue::float(1.0));
+
+/// Flex 基准尺寸（auto 或显式尺寸，对应 flex-basis）。
+///
+/// `f32::NAN` 表示 `auto`（由内容决定）。
+pub static FLEX_BASIS: PropertyKey =
+    PropertyKey::layout("FlexBasis", PropertyValue::float(f32::NAN));
+
+/// 显式排序（越小越靠前，对应 order）。
+pub static ORDER: PropertyKey = PropertyKey::layout("Order", PropertyValue::int(0));
 
 // ============================== 外观 ==============================
 

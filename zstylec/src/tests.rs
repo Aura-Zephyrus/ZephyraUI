@@ -118,6 +118,61 @@ fn enum_values_parse_per_property() {
 }
 
 #[test]
+fn flexbox_properties_parse_and_map_to_the_core_keys() {
+    // 关键字分支按 `key.name()` 认（见 `value::enum_value`）。漏一条分支的症状是
+    // 「属性名没错、值报 unknown value」，所以整套 flex 词汇一次写全。
+    let r = ok(
+        "Container { flex-direction: column-reverse; flex-wrap: wrap; \
+         align-content: space-between; align-self: end; \
+         flex-grow: 2; flex-shrink: 0; flex-basis: 120px; order: 3; \
+         gap: 8px; align-items: center; justify-content: space-evenly; }",
+    );
+    use zephyra_core::layout::{
+        AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, MainAxisAlign,
+    };
+
+    let decls = &r.sheet.rules()[0].declarations;
+    let get = |name: &str| {
+        decls
+            .iter()
+            .find(|d| d.key.name() == name)
+            .unwrap_or_else(|| panic!("少了 {name} 这条声明"))
+    };
+    assert_eq!(
+        get("FlexDirection").value.get::<FlexDirection>(),
+        Some(FlexDirection::ColumnReverse)
+    );
+    assert_eq!(
+        get("FlexWrap").value.get::<FlexWrap>(),
+        Some(FlexWrap::Wrap)
+    );
+    assert_eq!(
+        get("AlignContent").value.get::<AlignContent>(),
+        Some(AlignContent::SpaceBetween)
+    );
+    assert_eq!(
+        get("AlignSelf").value.get::<AlignSelf>(),
+        Some(AlignSelf::End)
+    );
+    assert_eq!(get("FlexGrow").value.get::<f32>(), Some(2.0));
+    assert_eq!(get("FlexShrink").value.get::<f32>(), Some(0.0));
+    assert_eq!(get("FlexBasis").value.get::<f32>(), Some(120.0));
+    assert_eq!(get("Order").value.get::<f32>(), Some(3.0));
+    // 三个 CSS 名是**既有键的别名**：gap → Spacing、align-items → CrossAlign、
+    // justify-content → MainAlign。另开新键的症状是「Stack 路径读得到、
+    // Flex 路径读不到」这类半生效状态。
+    assert_eq!(get("Spacing").value.get::<f32>(), Some(8.0));
+    assert_eq!(
+        get("CrossAlign").value.get::<AlignItems>(),
+        Some(AlignItems::Center)
+    );
+    assert_eq!(
+        get("MainAlign").value.get::<MainAxisAlign>(),
+        Some(MainAxisAlign::SpaceEvenly)
+    );
+}
+
+#[test]
 fn comments_and_whitespace_are_ignored() {
     let r = ok("/* a */ Control   { width :  40px ; } /* b */");
     assert_eq!(r.sheet.rules().len(), 1);

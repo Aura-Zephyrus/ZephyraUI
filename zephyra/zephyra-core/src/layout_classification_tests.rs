@@ -45,6 +45,37 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
         "`arrange` 直接读 `node.cross_align`",
     ),
     (&props::MAIN_ALIGN, true, "经 `node.stack()` 进入 `arrange`"),
+    // ---- 影响布局：Flexbox ----
+    // 读法各不相同但都在布局趟里：容器经 `style::Node::flex`，子项经
+    // `layout::FlexItem::read_item`（测量趟与排列趟共用同一份读法）。
+    (
+        &props::FLEX_DIRECTION,
+        true,
+        "声明它即切进 flex 路径，并决定主轴与反向",
+    ),
+    (
+        &props::FLEX_WRAP,
+        true,
+        "决定切不切行（也是进入 flex 的开关之一）",
+    ),
+    (
+        &props::ALIGN_CONTENT,
+        true,
+        "`Flex::line_boxes` 按它分配行组",
+    ),
+    (&props::ALIGN_SELF, true, "`Flex::item_cross` 逐项读"),
+    (
+        &props::FLEX_GROW,
+        true,
+        "`Flex::resolve_main` 按比例分剩余空间",
+    ),
+    (
+        &props::FLEX_SHRINK,
+        true,
+        "`Flex::resolve_main` 按视觉收缩率补缺口",
+    ),
+    (&props::FLEX_BASIS, true, "主轴假设尺寸，测量与分配都要读"),
+    (&props::ORDER, true, "决定项的排布顺序（两趟都要按它排）"),
     // ---- 影响布局：文本度量 ----
     // `measure` 走 `node.text_size(ctx)`，它内部取 `text_style()`（字号 + 行高）
     // 与 `text_max_width()`，三者都进 `engine.shape(...)`。
@@ -128,6 +159,14 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "CROSS_ALIGN",
         "MAIN_ALIGN",
         "COLLAPSED",
+        "FLEX_DIRECTION",
+        "FLEX_WRAP",
+        "ALIGN_CONTENT",
+        "ALIGN_SELF",
+        "FLEX_GROW",
+        "FLEX_SHRINK",
+        "FLEX_BASIS",
+        "ORDER",
         "BACKGROUND",
         "CORNER_RADIUS",
         "BORDER_COLOR",
@@ -169,6 +208,14 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "CrossAlign",
         "MainAlign",
         "Collapsed",
+        "FlexDirection",
+        "FlexWrap",
+        "AlignContent",
+        "AlignSelf",
+        "FlexGrow",
+        "FlexShrink",
+        "FlexBasis",
+        "Order",
         "Background",
         "CornerRadius",
         "BorderColor",

@@ -154,6 +154,14 @@ pub enum PropertyValue {
     CrossAlign(crate::layout::AlignItems),
     /// 主轴对齐（`layout::MainAxisAlign`）。
     MainAlign(crate::layout::MainAxisAlign),
+    /// 交叉轴多行对齐（`layout::AlignContent`）。
+    AlignContent(crate::layout::AlignContent),
+    /// 单项交叉轴对齐（`layout::AlignSelf`）。
+    AlignSelf(crate::layout::AlignSelf),
+    /// Flex 换行策略（`layout::FlexWrap`）。
+    FlexWrap(crate::layout::FlexWrap),
+    /// Flex 方向（`layout::FlexDirection`）。
+    FlexDirection(crate::layout::FlexDirection),
     /// 合成层（`paint::Layer`）。
     Layer(crate::paint::Layer),
     /// 滤镜链（`filter::FilterChain`）。
@@ -222,6 +230,26 @@ impl PropertyValue {
         PropertyValue::MainAlign(v)
     }
 
+    /// 构造交叉轴多行对齐属性值（`const` 可用）。
+    pub const fn align_content(v: crate::layout::AlignContent) -> Self {
+        PropertyValue::AlignContent(v)
+    }
+
+    /// 构造单项交叉轴对齐属性值（`const` 可用）。
+    pub const fn align_self(v: crate::layout::AlignSelf) -> Self {
+        PropertyValue::AlignSelf(v)
+    }
+
+    /// 构造 Flex 换行策略属性值（`const` 可用）。
+    pub const fn flex_wrap(v: crate::layout::FlexWrap) -> Self {
+        PropertyValue::FlexWrap(v)
+    }
+
+    /// 构造 Flex 方向属性值（`const` 可用）。
+    pub const fn flex_direction(v: crate::layout::FlexDirection) -> Self {
+        PropertyValue::FlexDirection(v)
+    }
+
     /// 构造合成层属性值（`const` 可用）。
     pub const fn layer(v: crate::paint::Layer) -> Self {
         PropertyValue::Layer(v)
@@ -278,6 +306,10 @@ impl PropertyValue {
             PropertyValue::Direction(v) => v,
             PropertyValue::CrossAlign(v) => v,
             PropertyValue::MainAlign(v) => v,
+            PropertyValue::AlignContent(v) => v,
+            PropertyValue::AlignSelf(v) => v,
+            PropertyValue::FlexWrap(v) => v,
+            PropertyValue::FlexDirection(v) => v,
             PropertyValue::Layer(v) => v,
             PropertyValue::Filter(v) => v,
             PropertyValue::BlendMode(v) => v,
@@ -309,6 +341,10 @@ impl PartialEq for PropertyValue {
             (PropertyValue::BlendMode(a), PropertyValue::BlendMode(b)) => a == b,
             (PropertyValue::UvRect(a), PropertyValue::UvRect(b)) => a == b,
             (PropertyValue::Resource(a), PropertyValue::Resource(b)) => a == b,
+            (PropertyValue::AlignContent(a), PropertyValue::AlignContent(b)) => a == b,
+            (PropertyValue::AlignSelf(a), PropertyValue::AlignSelf(b)) => a == b,
+            (PropertyValue::FlexWrap(a), PropertyValue::FlexWrap(b)) => a == b,
+            (PropertyValue::FlexDirection(a), PropertyValue::FlexDirection(b)) => a == b,
             (
                 PropertyValue::Custom { inner: ai, eq },
                 PropertyValue::Custom { inner: bi, eq: eqi },
@@ -334,6 +370,10 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::Direction(v) => write!(f, "{v:?}"),
             PropertyValue::CrossAlign(v) => write!(f, "{v:?}"),
             PropertyValue::MainAlign(v) => write!(f, "{v:?}"),
+            PropertyValue::AlignContent(v) => write!(f, "{v:?}"),
+            PropertyValue::AlignSelf(v) => write!(f, "{v:?}"),
+            PropertyValue::FlexWrap(v) => write!(f, "{v:?}"),
+            PropertyValue::FlexDirection(v) => write!(f, "{v:?}"),
             PropertyValue::Layer(v) => write!(f, "{v:?}"),
             // 调试输出要能看出"有几个滤镜"，否则属性 diff 失败时无从下手。
             PropertyValue::Filter(v) => write!(f, "Filter({} 项)", v.filters().len()),
@@ -434,6 +474,18 @@ pub fn name_affects_layout(name: &str) -> bool {
             | "MainAlign"
             | "Text.Size"
             | "Text.MaxWidth"
+            // ---- Flexbox ----
+            // 全部由 `layout::measure` / `arrange` 直读（经 `style::Node::flex`
+            // 与 `layout::FlexItem::read_item`），且 `Flex` 本身**没有**缓存 ——
+            // 漏一个的后果是「改 flex-grow 画面不动」。
+            | "FlexDirection"
+            | "FlexWrap"
+            | "AlignContent"
+            | "AlignSelf"
+            | "FlexGrow"
+            | "FlexShrink"
+            | "FlexBasis"
+            | "Order"
     )
 }
 

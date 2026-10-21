@@ -191,6 +191,93 @@ pub enum MainAxisAlign {
     End,
     /// 首尾对齐（剩余空间均摊到间隔里）。
     SpaceBetween,
+    /// 均匀分布（每项两侧留等宽空隙，端部半宽）。
+    SpaceAround,
+    /// 完全均匀（每项与间隔等宽，端部也等宽）。
+    SpaceEvenly,
+}
+
+/// 交叉轴多行对齐（flex-wrap 生效时）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignContent {
+    /// 拉伸填满。
+    #[default]
+    Stretch,
+    /// 起始边对齐。
+    Start,
+    /// 居中。
+    Center,
+    /// 末端边对齐。
+    End,
+    /// 首尾对齐（行间空隙均匀）。
+    SpaceBetween,
+    /// 均匀分布（行间空隙等宽，端部半宽）。
+    SpaceAround,
+    /// 完全均匀（行与空隙等宽，端部也等宽）。
+    SpaceEvenly,
+}
+
+/// 单项交叉轴对齐（覆盖容器的 `align-items`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignSelf {
+    /// 继承容器的 `align-items`。
+    #[default]
+    Auto,
+    /// 拉伸填满。
+    Stretch,
+    /// 起始边对齐。
+    Start,
+    /// 居中。
+    Center,
+    /// 末端边对齐。
+    End,
+}
+
+/// Flex 换行策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexWrap {
+    /// 不换行（单行）。
+    #[default]
+    NoWrap,
+    /// 换行。
+    Wrap,
+    /// 换行并反向。
+    WrapReverse,
+}
+
+/// Flex 方向（含反向）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexDirection {
+    /// 水平左→右。
+    #[default]
+    Row,
+    /// 水平右→左。
+    RowReverse,
+    /// 垂直上→下。
+    Column,
+    /// 垂直下→上。
+    ColumnReverse,
+}
+
+impl FlexDirection {
+    /// 主轴对应的 [`Direction`] —— **不含**反向（反向由 [`Self::is_reverse`] 单独表达）。
+    ///
+    /// 拆成两个字段，而不是给 [`Direction`] 加反向变体：`Direction` 是既有词汇，
+    /// Stack 与全部既有样式表都在读它，为一个新概念去改它 = 让旧路径一起变。
+    pub fn axis(self) -> Direction {
+        match self {
+            FlexDirection::Row | FlexDirection::RowReverse => Direction::Horizontal,
+            FlexDirection::Column | FlexDirection::ColumnReverse => Direction::Vertical,
+        }
+    }
+
+    /// 是否反向（`row-reverse` / `column-reverse`）。
+    pub fn is_reverse(self) -> bool {
+        matches!(
+            self,
+            FlexDirection::RowReverse | FlexDirection::ColumnReverse
+        )
+    }
 }
 
 /// 一维堆叠布局（WinUI `StackPanel` / CSS flex）。
@@ -265,11 +352,26 @@ impl Stack {
             MainAxisAlign::Start => (0.0, self.spacing),
             MainAxisAlign::Center => ((available_main - content) * 0.5, self.spacing),
             MainAxisAlign::End => (available_main - content, self.spacing),
-            // 单项时 SpaceBetween 不应留下任何空隙，否则"唯一一项"会被推到末尾。
+            // 单项时 SpaceBetween/SpaceAround/SpaceEvenly 不应留下空隙。
             MainAxisAlign::SpaceBetween if n == 1 => (0.0, self.spacing),
             MainAxisAlign::SpaceBetween => {
                 let slack = (available_main - content).max(0.0);
                 (0.0, self.spacing + slack / (n as f32 - 1.0))
+            }
+            MainAxisAlign::SpaceAround if n == 1 => (0.0, self.spacing),
+            MainAxisAlign::SpaceAround => {
+                // 每项两侧留等宽空隙，端部半宽：总空隙 = 可用 - 内容，每项空隙 = 总空隙 / n
+                // 但第一项起点 = 半空隙，间距 = 空隙
+                let slack = (available_main - content).max(0.0);
+                let gap = slack / n as f32;
+                (gap * 0.5, gap)
+            }
+            MainAxisAlign::SpaceEvenly if n == 1 => (0.0, self.spacing),
+            MainAxisAlign::SpaceEvenly => {
+                // 每项与间隔等宽，端部也等宽：空隙数 = n + 1
+                let slack = (available_main - content).max(0.0);
+                let gap = slack / (n as f32 + 1.0);
+                (gap, gap)
             }
         }
     }
@@ -432,6 +534,371 @@ impl Stack {
     }
 }
 
+/// Flexbox 容器（CSS 的 `display: flex` / WinUI `FlexLayout` 的那套语义）。
+///
+/// # 与 [`Stack`] 的分工，以及**为什么不是把 flex 并进 Stack**
+///
+/// [`Stack`] 是「一次排完、零分配」的快路径，全部既有布局走的都是它 ——
+/// 那条路径的每节点零分配是 resize 实测钉住的（见 [`arrange`] 的分配记录）。
+/// Flex 需要中间结构（项表、行划分、分配结果），并进 Stack 等于让每个普通容器
+/// 都付这笔代价。所以做成**显式声明才进入**的第二条路径：容器上写了
+/// `flex-direction` 或 `flex-wrap` 之一才构造本结构（见 `Node::flex`），
+/// 否则一次 `props().lookup` 就返回 `None`。
+///
+/// # CSS 属性对照
+///
+/// | CSS | 本仓 |
+/// |---|---|
+/// | `flex-direction` | [`Flex::direction`] + [`Flex::reverse`]（**另一个**键 `direction` 只在未声明 flex-direction 时兜底） |
+/// | `flex-wrap` | [`Flex::wrap`] |
+/// | `gap` / `justify-content` / `align-items` | [`Flex::spacing`] / [`Flex::justify`] / [`Flex::align_items`] —— 即 `Spacing` / `MainAlign` / `CrossAlign`，CSS 名映射到同一键 |
+/// | `align-content` | [`Flex::align_content`] |
+/// | `flex-grow` / `flex-shrink` / `flex-basis` / `order` / `align-self` | 项表（`FlexItem`，私有）同名字段 |
+///
+/// # 两趟之间不留状态
+///
+/// 测量趟算完内容尺寸就结束；排列趟从**测量缓存**（子项的 `Size`）与属性表
+/// 重新推出行划分与分配。中间不落任何字段 —— 代价是两趟各算一遍行划分，
+/// 换来的是「属性一改就重排」不需要额外的失效通知：布局相关属性改了会清
+/// 测量缓存（见 `crate::node::mark_dirty`），本趟自然重算。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Flex {
+    /// 主轴方向（**不含**反向；反向由 [`Flex::reverse`] 单独表达）。
+    pub direction: Direction,
+    /// 主轴反向（`row-reverse` / `column-reverse`）。
+    pub reverse: bool,
+    /// 换行策略（`nowrap` / `wrap` / `wrap-reverse`）。
+    pub wrap: FlexWrap,
+    /// 主轴上相邻子项的间距（即 `Spacing`，CSS 的 `gap` 映射到它）。
+    pub spacing: f32,
+    /// 主轴对齐（即 `MainAlign`，CSS 的 `justify-content` 映射到它）。
+    pub justify: MainAxisAlign,
+    /// 子项交叉轴默认对齐（即 `CrossAlign`，CSS 的 `align-items` 映射到它）。
+    pub align_items: AlignItems,
+    /// 多行时行组在交叉轴上的分布（单行时不生效，见私有的 `line_boxes`）。
+    pub align_content: AlignContent,
+}
+
+/// 一个参与 flex 排布的子项：测量结果 + 它在属性表里的 flex 参数。
+///
+/// 存**下标**而不是 `&Node`：排列趟要先按 `order` 排序、再按行分组，之后还要
+/// 递归 `&mut` 进每个子节点 —— 下标让「读子节点」与「改子节点」两次借用
+/// 互不重叠（`&Node` 会把整个 `children` 借死）。
+struct FlexItem {
+    /// 在 `node.children()` 里的下标（折叠项不入表，所以下标不连续）。
+    idx: usize,
+    /// 测量尺寸（交叉轴尺寸取自它）。
+    size: Size,
+    /// flex-basis：`auto`（NaN）已解析成测量出的主轴尺寸。
+    basis: f32,
+    /// `flex-grow`（默认 0，钳到 ≥ 0）。
+    grow: f32,
+    /// `flex-shrink`（默认 1，钳到 ≥ 0）。
+    shrink: f32,
+    /// `align-self`（默认 [`AlignSelf::Auto`] = 跟随容器的 `align-items`）。
+    align_self: AlignSelf,
+    /// `order`（默认 0；相等时保持文档顺序 —— 排序用的是稳定排序）。
+    order: i32,
+}
+
+/// 一行 flex 项（[`Flex::lines`] 的产物）。
+#[derive(Debug)]
+struct FlexLine {
+    /// 行内各项（[`FlexItem`] 的下标，已按 `order` 排好）。
+    items: Vec<usize>,
+    /// 该行的交叉轴内容尺寸 = 行内最大的项交叉尺寸。
+    cross: f32,
+}
+
+impl Flex {
+    /// 主轴是否水平。
+    fn main_is_horizontal(&self) -> bool {
+        matches!(self.direction, Direction::Horizontal)
+    }
+
+    /// 主轴长度。
+    fn main_of(&self, size: Size) -> f32 {
+        if self.main_is_horizontal() {
+            size.width
+        } else {
+            size.height
+        }
+    }
+
+    /// 交叉轴长度。
+    fn cross_of(&self, size: Size) -> f32 {
+        if self.main_is_horizontal() {
+            size.height
+        } else {
+            size.width
+        }
+    }
+
+    /// 同一套主轴规则（间距 + justify）—— 刻意复用 [`Stack`]，不另写一份。
+    ///
+    /// 「两套实现在某个对齐方式下排出来不一样」是这类布局最贵的 bug 形态，
+    /// 理由与 [`Stack::main_offset_rules`] 上那条相同。
+    fn stack(&self) -> Stack {
+        Stack {
+            direction: self.direction,
+            spacing: self.spacing,
+            main_align: self.justify,
+        }
+    }
+
+    /// 给子项的约束：主轴无界（分配由 basis/grow/shrink 决定），交叉轴保持有限。
+    ///
+    /// 与 [`Stack::child_constraints`] 同一条理由：交叉轴不给有限区间的话
+    /// `align-items: stretch` 无从谈起；主轴放开还让子项的测量缓存跨帧复用 ——
+    /// 只改容器尺寸时子项约束一个字没变（同
+    /// `layout_cache_tests::height_only_change_does_not_remeasure_subtree` 那条）。
+    pub fn child_constraints(&self, deflated: Constraints) -> Constraints {
+        self.stack().child_constraints(deflated)
+    }
+
+    /// 换行判定用的主轴可用长（无界 ⇒ `INFINITY` ⇒ 永不换行）。
+    fn available_main(&self, deflated: Constraints) -> f32 {
+        if self.main_is_horizontal() {
+            deflated.max.width
+        } else {
+            deflated.max.height
+        }
+    }
+
+    /// 读一个子项的 flex 参数。测量趟与排列趟**共用这一份读法** ——
+    /// 两边读出不同值的症状是「量出来一套、摆出来另一套」，且不会报错。
+    fn read_item(&self, idx: usize, size: Size, child: &Node, ctx: Context<'_>) -> FlexItem {
+        // `number_or` 会挡掉非有限值再回落到 fallback：这里的 fallback 就是 NaN，
+        // 于是「没写 flex-basis」与「写了 auto」同样是 NaN，随后统一解析成内容尺寸。
+        let basis = child.number_or(&crate::props::FLEX_BASIS, f32::NAN, ctx);
+        FlexItem {
+            idx,
+            size,
+            basis: if basis.is_finite() {
+                basis.max(0.0)
+            } else {
+                self.main_of(size)
+            },
+            grow: child.number_or(&crate::props::FLEX_GROW, 0.0, ctx).max(0.0),
+            shrink: child
+                .number_or(&crate::props::FLEX_SHRINK, 1.0, ctx)
+                .max(0.0),
+            align_self: match child.value(&crate::props::ALIGN_SELF, ctx).as_deref() {
+                Some(crate::property::PropertyValue::AlignSelf(a)) => *a,
+                _ => AlignSelf::Auto,
+            },
+            // 样式表侧的数字统一解析成 `Float`（zstylec `value.rs`），Rust 侧可能写
+            // `Int` —— 两种都收。只认一种的症状是「样式表里 `order` 生效、代码里
+            // `.with(&props::ORDER, …)` 写了没人理」。
+            order: match child.value(&crate::props::ORDER, ctx).as_deref() {
+                Some(crate::property::PropertyValue::Int(v)) => *v,
+                Some(crate::property::PropertyValue::Float(v)) => *v as i32,
+                _ => 0,
+            },
+        }
+    }
+
+    /// 把（已按 `order` 排好的）项按 `flex-wrap` 切成行。
+    ///
+    /// # 无界主轴下**永不换行**
+    ///
+    /// CSS 的换行判定要的是「容器有确定的主轴长」；无限长里放多少都放得下，
+    /// 此时给判定结果只会凭空多出几行 —— 而症状（内容被折成窄条）离原因极远。
+    fn lines(&self, items: &[FlexItem], available_main: f32) -> Vec<FlexLine> {
+        let wrap = self.wrap != FlexWrap::NoWrap && available_main.is_finite();
+        if !wrap {
+            if items.is_empty() {
+                return Vec::new();
+            }
+            return vec![FlexLine {
+                items: (0..items.len()).collect(),
+                cross: items
+                    .iter()
+                    .map(|i| self.cross_of(i.size))
+                    .fold(0.0, f32::max),
+            }];
+        }
+
+        let mut lines: Vec<FlexLine> = Vec::new();
+        let mut cur: Vec<usize> = Vec::new();
+        let mut cur_main = 0.0f32;
+        let mut cur_cross = 0.0f32;
+        for (idx, item) in items.iter().enumerate() {
+            let needed = if cur.is_empty() {
+                item.basis
+            } else {
+                cur_main + self.spacing + item.basis
+            };
+            // 已有内容才折：单个超宽项自己占一整行，而不是先折出一个空行。
+            if !cur.is_empty() && needed > available_main {
+                lines.push(FlexLine {
+                    items: std::mem::take(&mut cur),
+                    cross: cur_cross,
+                });
+                cur_main = 0.0;
+                cur_cross = 0.0;
+            }
+            cur_main = if cur.is_empty() {
+                item.basis
+            } else {
+                cur_main + self.spacing + item.basis
+            };
+            cur_cross = cur_cross.max(self.cross_of(item.size));
+            cur.push(idx);
+        }
+        if !cur.is_empty() {
+            lines.push(FlexLine {
+                items: cur,
+                cross: cur_cross,
+            });
+        }
+        lines
+    }
+
+    /// 一行内各项的最终主轴尺寸：`flex-grow` 分剩余、`flex-shrink` 补缺口。
+    ///
+    /// # 分配规则（CSS §9.7 的等价实现）
+    ///
+    /// 1. 先按 `basis` 得到「假设尺寸」；
+    /// 2. 有剩余空间 ⇒ 只在 `grow > 0` 的项里按 grow 比例分（`grow = 0` 的项保持
+    ///    basis，剩余空间全无时 `justify-content` 再去处理剩下的空隙）；
+    /// 3. 空间不足 ⇒ 在 `shrink > 0` 的项里按 `shrink × basis`（**视觉收缩率**，
+    ///    CSS 的 scaled shrink factor）分配；缩到 0 的项当场**冻结**，剩余份额
+    ///    重分给别的项 —— 这一步必须循环，否则会出现「总和仍超、但没人再缩」
+    ///    的残留溢出。每轮至少冻结一项，所以上界就是项数，不会不收敛。
+    ///
+    /// # 无界主轴直接返回 basis
+    ///
+    /// `inf − 总长 = inf`，让 grow 去分一个无穷大的剩余空间会把每项撑成 `inf`，
+    /// 而症状（整棵子树 NaN、画面无声消失）离原因极远。
+    fn resolve_main(&self, items: &[FlexItem], line: &FlexLine, available_main: f32) -> Vec<f32> {
+        let idxs = &line.items;
+        if idxs.is_empty() {
+            return Vec::new();
+        }
+        let mut sizes: Vec<f32> = idxs.iter().map(|&i| items[i].basis).collect();
+        if !available_main.is_finite() {
+            return sizes;
+        }
+
+        let free = available_main - sizes.iter().sum::<f32>();
+        if free > 0.0 {
+            let grow_total: f32 = idxs
+                .iter()
+                .filter(|&&i| items[i].grow > 0.0)
+                .map(|&i| items[i].grow)
+                .sum();
+            if grow_total > 0.0 {
+                for (k, &i) in idxs.iter().enumerate() {
+                    if items[i].grow > 0.0 {
+                        sizes[k] += free * (items[i].grow / grow_total);
+                    }
+                }
+            }
+            return sizes;
+        }
+        if free < 0.0 {
+            let mut frozen = vec![false; idxs.len()];
+            for _ in 0..=idxs.len() {
+                let total: f32 = sizes.iter().sum();
+                let free = available_main - total;
+                if free >= 0.0 {
+                    break;
+                }
+                let weight: f32 = idxs
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, &i)| !frozen[*k] && items[i].shrink > 0.0)
+                    .map(|(_, &i)| items[i].shrink * items[i].basis)
+                    .sum();
+                if weight <= 0.0 {
+                    break;
+                }
+                let mut clamped = false;
+                for (k, &i) in idxs.iter().enumerate() {
+                    if frozen[k] || items[i].shrink <= 0.0 {
+                        continue;
+                    }
+                    sizes[k] += free * (items[i].shrink * items[i].basis / weight);
+                    if sizes[k] <= 0.0 {
+                        sizes[k] = 0.0;
+                        frozen[k] = true;
+                        clamped = true;
+                    }
+                }
+                // 没有项触底 ⇒ 这一轮已按比例分完，下一轮 free ≥ 0 即退出。
+                if !clamped {
+                    break;
+                }
+            }
+        }
+        sizes
+    }
+
+    /// 每行在交叉轴上的 `(起点, 长度)`。
+    ///
+    /// # 单行的行长度 = 容器内交叉轴长
+    ///
+    /// `align-items` 的居中 / 末端 / 拉伸都要一个基准：单行时这个基准就是容器
+    /// 本身（与 [`Stack`] 路径逐字一致 —— 那条路径的 `Center` 同样按
+    /// `available_cross` 算）。多行时才轮到 `align-content` 把行组分配进容器。
+    ///
+    /// [`AlignContent::Stretch`] 把剩余空间**均摊给每一行**（行随容器变高），
+    /// 其余取值只挪动行组、不改行长。
+    fn line_boxes(&self, lines: &[FlexLine], available_cross: f32) -> Vec<(f32, f32)> {
+        if lines.len() <= 1 {
+            return vec![(0.0, available_cross)];
+        }
+        let n = lines.len() as f32;
+        let content: f32 = lines.iter().map(|l| l.cross).sum::<f32>() + self.spacing * (n - 1.0);
+        let slack = (available_cross - content).max(0.0);
+        let (start, gap, extra) = match self.align_content {
+            AlignContent::Start => (0.0, self.spacing, 0.0),
+            AlignContent::Center => (slack * 0.5, self.spacing, 0.0),
+            AlignContent::End => (slack, self.spacing, 0.0),
+            AlignContent::SpaceBetween => (0.0, self.spacing + slack / (n - 1.0), 0.0),
+            AlignContent::SpaceAround => {
+                let g = slack / n;
+                (g * 0.5, g, 0.0)
+            }
+            AlignContent::SpaceEvenly => {
+                let g = slack / (n + 1.0);
+                (g, g, 0.0)
+            }
+            AlignContent::Stretch => (0.0, self.spacing, slack / n),
+        };
+        let mut out = Vec::with_capacity(lines.len());
+        let mut cursor = start;
+        for line in lines {
+            let extent = line.cross + extra;
+            out.push((cursor, extent));
+            cursor += extent + gap;
+        }
+        out
+    }
+
+    /// 单项在交叉轴上的 `(起点, 长度)`：`align-self` 覆盖容器的 `align-items`。
+    ///
+    /// 拉伸落到**行**的长度而不是容器：单行时两者相同，多行时「拉伸到本行最高项」
+    /// 才是 CSS 的语义（行高由 [`Flex::line_boxes`] 定）。
+    fn item_cross(&self, item: &FlexItem, line_start: f32, line_extent: f32) -> (f32, f32) {
+        let align = match item.align_self {
+            AlignSelf::Auto => self.align_items,
+            AlignSelf::Stretch => AlignItems::Stretch,
+            AlignSelf::Start => AlignItems::Start,
+            AlignSelf::Center => AlignItems::Center,
+            AlignSelf::End => AlignItems::End,
+        };
+        let measured = self.cross_of(item.size);
+        match align {
+            AlignItems::Stretch => (line_start, line_extent),
+            AlignItems::Start => (line_start, measured),
+            AlignItems::Center => (line_start + (line_extent - measured) * 0.5, measured),
+            AlignItems::End => (line_start + line_extent - measured, measured),
+        }
+    }
+}
+
 /// 在给定空间内按对齐方式摆放一个已测量的盒子，返回它的最终矩形。
 ///
 /// 抽成自由函数是因为栈布局、横/纵布局、以及各种居中容器全都用同一套算法，
@@ -485,46 +952,11 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         return size;
     }
     let padding = node.padding(ctx);
-    // 堆叠轴给子项**无穷**约束；交叉轴保持有限（stretch 依赖它）。
-    //
-    // 官方依据（microsoft-ui-xaml 的 dxaml/xcp/core/core/elements/StackPanel.cpp:24-30）：
-    //
-    //     XSIZEF childConstraint = (m_orientation == DirectUI::Orientation::Vertical)
-    //         ? XSIZEF{ availableSize.width - combinedThickness.width, XFLOAT_INF }
-    //         : XSIZEF{ XFLOAT_INF, availableSize.height - combinedThickness.height };
-    //
-    // 而这个子项约束的缓存是**跨帧**存活的（见 cached_for 与
-    // crate::node::clear_dirty 的文档）—— 两条合起来才是 resize 便宜的
-    // 全部原因：只改高度时约束一个字没变，于是整段子树跳过测量。
-    let stack = node.stack(ctx);
-    let child_constraints = stack.child_constraints(constraints.deflate(padding));
-
-    // 折叠的子节点不参与测量，也不占间距。
-
-    // 一边测一边折叠，**不收集中间 Vec**（改之前每节点一次堆分配）。
-    let mut main_sum = 0.0f32;
-    let mut cross_max = 0.0f32;
-    let mut n = 0usize;
-    for i in 0..node.children().len() {
-        if node.children()[i].is_collapsed(ctx) {
-            continue;
-        }
-        let s = measure(&mut node.children_mut()[i], child_constraints, ctx);
-        main_sum += stack.main_of(s);
-        cross_max = cross_max.max(match stack.direction {
-            Direction::Horizontal => s.height,
-            Direction::Vertical => s.width,
-        });
-        n += 1;
-    }
-    let mut content = if n == 0 {
-        Size::new(0.0, 0.0)
-    } else {
-        let main = main_sum + stack.spacing * (n as f32 - 1.0);
-        match stack.direction {
-            Direction::Horizontal => Size::new(main, cross_max),
-            Direction::Vertical => Size::new(cross_max, main),
-        }
+    // 分岔只有一处：声明了 flex 的容器走项表 + 行划分，其余（**全部既有布局**）
+    // 一个字不改地走 Stack 快路径。判据见 `style::Node::flex`。
+    let mut content = match node.flex(ctx) {
+        Some(flex) => measure_flex(node, constraints, flex, ctx),
+        None => measure_stack(node, constraints.deflate(padding), ctx),
     };
 
     // 文本节点自己贡献内容尺寸。
@@ -583,6 +1015,10 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     node.set_rect(bounds);
     let padding = node.padding(ctx);
     let inner = bounds.inset(padding);
+    if let Some(flex) = node.flex(ctx) {
+        arrange_flex(node, inner, flex, ctx);
+        return;
+    }
     let stack = node.stack(ctx);
     let cross_align = node.cross_align(ctx);
     let available = Size::new(inner.width, inner.height);
@@ -644,6 +1080,219 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
         };
         arrange(child, rect, ctx);
         cursor += stack.main_of(size) + gap;
+    }
+}
+
+/// Stack 快路径的子项测量：主轴一条和 + 交叉轴一条最大边，**不收集中间 `Vec`**。
+///
+/// # 子项约束只放开堆叠轴（官方依据）
+///
+/// microsoft-ui-xaml 的 dxaml/xcp/core/core/elements/StackPanel.cpp:24-30：
+///
+/// ```text
+/// XSIZEF childConstraint = (m_orientation == DirectUI::Orientation::Vertical)
+///     ? XSIZEF{ availableSize.width - combinedThickness.width, XFLOAT_INF }
+///     : XSIZEF{ XFLOAT_INF, availableSize.height - combinedThickness.height };
+/// ```
+///
+/// 而这个子项约束的缓存是**跨帧**存活的（见 [`cached_for`] 与
+/// [`crate::node::clear_dirty`] 的文档）—— 两条合起来才是 resize 便宜的
+/// 全部原因：只改高度时约束一个字没变，于是整段子树跳过测量。
+fn measure_stack(node: &mut Node, deflated: Constraints, ctx: Context<'_>) -> Size {
+    let stack = node.stack(ctx);
+    let child_constraints = stack.child_constraints(deflated);
+
+    // 折叠的子节点不参与测量，也不占间距。
+
+    // 一边测一边折叠，**不收集中间 Vec**（改之前每节点一次堆分配）。
+    let mut main_sum = 0.0f32;
+    let mut cross_max = 0.0f32;
+    let mut n = 0usize;
+    for i in 0..node.children().len() {
+        if node.children()[i].is_collapsed(ctx) {
+            continue;
+        }
+        let s = measure(&mut node.children_mut()[i], child_constraints, ctx);
+        main_sum += stack.main_of(s);
+        cross_max = cross_max.max(match stack.direction {
+            Direction::Horizontal => s.height,
+            Direction::Vertical => s.width,
+        });
+        n += 1;
+    }
+    if n == 0 {
+        Size::new(0.0, 0.0)
+    } else {
+        let main = main_sum + stack.spacing * (n as f32 - 1.0);
+        match stack.direction {
+            Direction::Horizontal => Size::new(main, cross_max),
+            Direction::Vertical => Size::new(cross_max, main),
+        }
+    }
+}
+
+/// flex 容器的测量趟：逐项测量 → 按 `order` 排 → 切行 → 聚合成内容尺寸。
+///
+/// 与 [`measure_stack`] 的差别只在**聚合方式**：
+///
+/// - 主轴：不换行 = basis 之和（与 Stack 同型）；换行 = **最大行宽** ——
+///   容器宽到装下最宽那行就够，CSS 同义。
+/// - 交叉轴：不换行 = 最大项交叉尺寸；换行 = 各行之和 + 行间距。
+///
+/// `align-content` 不进这里：它分配的是**容器已经给出的**交叉轴空间，
+/// 不改变容器想要的尺寸。
+///
+/// # 分配为什么不能发生在测量趟
+///
+/// grow/shrink 回答的是「容器给多少就吃多少」，而测量趟只回答「内容想要多大」。
+/// 把分配塞进测量趟的症状是：容器尺寸随 grow 变 ⇒ 下一帧约束变 ⇒ 缓存永不
+/// 命中 ⇒ 静止界面每帧全树重排。
+///
+/// # 折行宽度必须与排列趟的 `inner.width` 是同一个数
+///
+/// 排列趟按父摆进来的矩形折行（[`arrange_flex`] 用 `inner`）。测量趟若拿父
+/// 约束的上限，一个 `width: 340px` 的容器就会在测量时按父宽折行、在排列时按
+/// 340 折行 —— 两趟行数不同 ⇒ 行高之和算错 ⇒ 容器高度与真实行数不符，
+/// 而症状（文字压到下一行上）离原因很远。所以显式主轴长优先，并且**先像
+/// [`pick_axis`] 那样夹进父给的区间再扣内边距**：父上限比 `width` 小时摆出来
+/// 就是父上限，按一个永远不会出现的宽度折行同样是错的。
+fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Context<'_>) -> Size {
+    let padding = node.padding(ctx);
+    let deflated = constraints.deflate(padding);
+    let child_constraints = flex.child_constraints(deflated);
+    let mut items: Vec<FlexItem> = Vec::new();
+    for i in 0..node.children().len() {
+        if node.children()[i].is_collapsed(ctx) {
+            continue;
+        }
+        let size = measure(&mut node.children_mut()[i], child_constraints, ctx);
+        items.push(flex.read_item(i, size, &node.children()[i], ctx));
+    }
+    if items.is_empty() {
+        return Size::new(0.0, 0.0);
+    }
+    // 稳定排序：`order` 相等的项保持文档顺序，与 CSS 一致。
+    items.sort_by_key(|it| it.order);
+
+    // 折行判定的宽度（见函数文档：必须与排列趟的 `inner` 同源）。
+    let axis = if flex.main_is_horizontal() {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    };
+    let (own_w, own_h) = explicit_size(node, ctx);
+    let own_main = if flex.main_is_horizontal() {
+        own_w
+    } else {
+        own_h
+    };
+    let available_main = match own_main {
+        Some(v) => {
+            let (min, max) = axis.bounds(constraints);
+            let clamped = v.max(min);
+            let clamped = if max.is_finite() {
+                clamped.min(max)
+            } else {
+                clamped
+            };
+            (clamped - axis.padding(padding)).max(0.0)
+        }
+        None => flex.available_main(deflated),
+    };
+    let lines = flex.lines(&items, available_main);
+    let spacing = flex.spacing;
+    let line_main = |line: &FlexLine| -> f32 {
+        let sum: f32 = line.items.iter().map(|&i| items[i].basis).sum();
+        sum + spacing * (line.items.len().saturating_sub(1) as f32)
+    };
+    let content_main = lines.iter().map(line_main).fold(0.0f32, f32::max);
+    let content_cross = if lines.len() > 1 {
+        lines.iter().map(|l| l.cross).sum::<f32>() + spacing * (lines.len() as f32 - 1.0)
+    } else {
+        lines.first().map(|l| l.cross).unwrap_or(0.0)
+    };
+    if flex.main_is_horizontal() {
+        Size::new(content_main, content_cross)
+    } else {
+        Size::new(content_cross, content_main)
+    }
+}
+
+/// flex 容器的排列趟：重推行划分与分配 → 逐行落矩形 → 递归。
+///
+/// # 为什么这条路敢分配 `Vec`
+///
+/// 只有**显式声明** flex 的容器走得到这里（见 `style::Node::flex`）：项表、
+/// 行、分配结果各一个。Stack 路径依旧逐节点零分配 —— 那条的记录见
+/// [`arrange`] 开头。
+fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
+    // 第一趟（只读）：从测量缓存 + 属性表重建项表。
+    let mut items: Vec<FlexItem> = Vec::new();
+    for i in 0..node.children().len() {
+        if node.children()[i].is_collapsed(ctx) {
+            continue;
+        }
+        let size = cached_size_or_zero(&node.children()[i]);
+        items.push(flex.read_item(i, size, &node.children()[i], ctx));
+    }
+    if items.is_empty() {
+        return;
+    }
+    items.sort_by_key(|it| it.order);
+
+    let available = Size::new(inner.width, inner.height);
+    let available_main = flex.main_of(available);
+    let available_cross = flex.cross_of(available);
+    let lines = flex.lines(&items, available_main);
+    let mut boxes = flex.line_boxes(&lines, available_cross);
+    // `wrap-reverse`：行序沿交叉轴反着铺（首行贴末端）。只翻坐标、不倒 `lines`
+    // —— 倒了的话行内项的主轴顺序会跟着错。
+    if flex.wrap == FlexWrap::WrapReverse {
+        for b in boxes.iter_mut() {
+            *b = (available_cross - b.0 - b.1, b.1);
+        }
+    }
+
+    let stack = flex.stack();
+    let horizontal = flex.main_is_horizontal();
+
+    // 第二趟（可变）：分配主轴 → justify 落位 → 递归。
+    for (li, line) in lines.iter().enumerate() {
+        let (line_start, line_extent) = boxes[li];
+        let sizes = flex.resolve_main(&items, line, available_main);
+        let content: f32 =
+            sizes.iter().sum::<f32>() + flex.spacing * (line.items.len().saturating_sub(1) as f32);
+        let (start, gap) = stack.main_offset_rules(line.items.len(), content, available_main);
+        let mut cursor = start;
+        for (k, &item_i) in line.items.iter().enumerate() {
+            let item = &items[item_i];
+            let main_size = sizes[k];
+            // `row-reverse` 是**翻转坐标**而不是倒着遍历：倒着走会把 justify 的
+            // 结果（space-between 的空隙落在哪一侧）一起摆反。
+            let main_off = if flex.reverse {
+                available_main - cursor - main_size
+            } else {
+                cursor
+            };
+            let (cross_pos, cross_extent) = flex.item_cross(item, line_start, line_extent);
+            let rect = if horizontal {
+                Rect::new(
+                    inner.x + main_off,
+                    inner.y + cross_pos,
+                    main_size,
+                    cross_extent,
+                )
+            } else {
+                Rect::new(
+                    inner.x + cross_pos,
+                    inner.y + main_off,
+                    cross_extent,
+                    main_size,
+                )
+            };
+            arrange(&mut node.children_mut()[item.idx], rect, ctx);
+            cursor += main_size + gap;
+        }
     }
 }
 
