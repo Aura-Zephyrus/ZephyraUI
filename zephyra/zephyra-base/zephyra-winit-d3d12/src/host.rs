@@ -99,6 +99,10 @@ pub struct HostWindow<V: View> {
     /// 重建一次。于是一次拖动 = 1 次重建，而不是 140 次。
     /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
     reported_device_dead: bool,
+    /// 上一次**尝试恢复设备**的时刻。`None` = 还没试过（于是第一次就试）。
+    ///
+    /// 设备重置后要按间隔重建整条 GPU 栈才恢复，见 [`Self::try_recover_device`]。
+    last_recovery_attempt: Option<std::time::Instant>,
     /// 文本引擎。用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求
     /// 这一点。
     engine: std::cell::RefCell<TextEngine>,
@@ -165,6 +169,22 @@ pub enum SwapState {
     ///
     /// 此时**不能**画：链还停在旧尺寸，画了就是把旧内容拉进新窗口。
     Failed,
+}
+
+/// 设备恢复尝试的最小间隔。
+///
+/// 恢复要**重建整条 GPU 栈**（设备、交换链、DComp、渲染器），不便宜；而驱动重置后
+/// 通常几百毫秒内就恢复。1 秒是这两者之间的稳妥点：更短会让每次尝试都撞在
+/// 「还没恢复」上，更长则让用户多等。
+const DEVICE_RECOVERY_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 距上一次恢复尝试已经过了 `elapsed`，这一帧要不要再试。**纯函数**。
+///
+/// 与 [`should_draw_frame`] 同一手法：恢复要撞上的是真机上偶发的
+/// `DEVICE_RESET`（见 `docs/dev-log/2026-10-gpu-device-hung.md`），而这条修复的
+/// 全部价值就在那一刻。没有门禁的话，把它写错等于没有修复。
+pub fn should_attempt_recovery(elapsed: std::time::Duration) -> bool {
+    elapsed >= DEVICE_RECOVERY_RETRY_INTERVAL
 }
 
 /// 这一帧到底该不该画。**纯函数** —— 于是能在没有 GPU 的机器上门禁。
@@ -319,6 +339,7 @@ impl<V: View> HostWindow<V> {
             pointer_pos: (0.0, 0.0),
             dirty: true,
             reported_device_dead: false,
+            last_recovery_attempt: None,
             swap_state: SwapState::Same,
             resize_failures: 0,
 
@@ -532,6 +553,13 @@ impl<V: View> HostWindow<V> {
             // 次，不该按错误报）。
             if dead {
                 self.report_device_dead_once();
+                // 设备重置后**按间隔重试**：驱动通常几百毫秒内恢复，重试成功就接着画。
+                //
+                // ⚠ 没有这一步的话，设备一旦在空闲时挂掉，宿主就**永久**停止绘制 ——
+                // 用户看到的正是「点哪都没反应」。注意那不是点击分派坏了：
+                // `window_event` 仍无条件 `sync_input()`，点击一直在处理，只是画面
+                // 不再更新，于是「看着没反应」。
+                self.try_recover_device();
             }
             return self.empty_frame();
         }
@@ -905,13 +933,11 @@ impl<V: View> HostWindow<V> {
             // 官方四个常量，按「该怎么办」分组而不是按名字排。
             Some(0x887A_0007) => (
                 "DXGI_ERROR_DEVICE_HUNG",
-                "GPU 挂了（TDR）。必须重建 D3D12 设备与全部依赖它的资源；\
-                 本宿主现在停下绘制，等下一次设备重建的入口",
+                "GPU 挂了（TDR）。本宿主会按间隔重建整条 GPU 栈并自动恢复",
             ),
             Some(0x887A_0006) => (
                 "DXGI_ERROR_DEVICE_RESET",
-                "设备正在重建，可恢复 —— 但本宿主目前不自动重试，\
-                 恢复后需要重建设备再继续",
+                "设备正在重建，可恢复 —— 本宿主会按间隔重建整条 GPU 栈并自动恢复",
             ),
             Some(0x887A_0005) => (
                 "DXGI_ERROR_DEVICE_REMOVED",
@@ -925,7 +951,8 @@ impl<V: View> HostWindow<V> {
             eprintln!(
                 "[zephyra-d3d12] 设备不可用：{name} (0x{c:08X})\n\
                  [zephyra-d3d12] 后续动作：{advice}\n\
-                 [zephyra-d3d12] 本帧起停止绘制与呈现（不再重试，也不再打印）"
+                 [zephyra-d3d12] 本帧起暂停绘制与呈现，每 {} 秒尝试重建 GPU 栈（成功即自动恢复）",
+                DEVICE_RECOVERY_RETRY_INTERVAL.as_secs()
             );
         } else {
             // 走到这里说明 `device_dead` 是真的但原因码丢了 —— 不该发生，
@@ -944,6 +971,100 @@ impl<V: View> HostWindow<V> {
         // `ClearStoredMessages`，所以**出问题那一帧**的消息是在下一帧才打出来的。
         // 早先设备一判死就整体返回，把那一帧的消息连同上下文一起丢了 ——
         // 于是每次都只能拿到「GPU 挂了」这个结论，拿不到原因。
+    }
+
+    /// 重建整条 GPU 栈（设备、交换链、DComp、渲染器）。
+    ///
+    /// # 为什么恢复只能靠重建
+    ///
+    /// `DEVICE_REMOVED` 之后设备对象失效，绑在它上面的**一切**都失效：PSO、
+    /// 描述符堆、图集纹理、离屏 RT、命令分配器。继续用旧资源只会每帧失败，而且
+    /// 失败点各不相同（正是最难查的那种）。所以唯一的恢复是重建。
+    ///
+    /// # 为什么**先建新的、再换掉旧的**
+    ///
+    /// 中途任何一步失败都直接 `return Err`，此时 `self` 一个字都没改 —— 旧的链、
+    /// 设备、渲染器都还在，下一轮重试的起点是干净的。反过来先拆旧的再建新的，
+    /// 一旦中途失败就留下一个「旧的没了、新的没建起来」的空壳，窗口彻底不显示。
+    fn rebuild_gpu(&mut self) -> Result<(), String> {
+        let (width, height) = self.client_size();
+        let gpu = Gpu::new().map_err(|e| format!("创建 D3D12 设备: {e}"))?;
+        // 后缓冲格式必须与 PSO 的 `RTVFormats[0]` 一致（`R8G8B8A8`）—— 见
+        // `new_lenient_sized` 里同一段的说明。
+        let desc = SwapchainDesc {
+            buffer_count: 2,
+            format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
+        };
+        let chain = Swapchain::new(
+            &gpu,
+            (width, height),
+            &desc,
+            crate::swapchain::msaa_samples(),
+        )
+        .map_err(|e| format!("创建 composition swapchain: {e}"))?;
+        let (compositor, visual) = match hwnd_of(self.window.as_ref()) {
+            Some(h) => match attach_visual(HWND(h as *mut _), &gpu, &chain) {
+                Ok((c, v)) => (Some(c), Some(v)),
+                Err(e) => {
+                    eprintln!("[zephyra-d3d12] ⚠ DComp 建树失败（{e}）");
+                    (None, None)
+                }
+            },
+            None => {
+                eprintln!("[zephyra-d3d12] ⚠ 取不到 HWND，无法建立 DComp target");
+                (None, None)
+            }
+        };
+        let renderer = Renderer::new(
+            &gpu.device,
+            zephyra_core::text::atlas::ATLAS_SIZE,
+            chain.samples(),
+        )
+        .map_err(|e| format!("建根签名 / PSO / 描述符堆: {e}"))?;
+        // 全部成功才替换。赋值顺序按「谁引用谁」：先放引用方（DComp），再放被引用的
+        // （chain），最后是设备与渲染器 —— 与字段声明顺序**相反**，因为这里是部分
+        // 重建而不是整体析构。
+        self.compositor = compositor;
+        self.visual = visual;
+        self.chain = chain;
+        self.gpu = gpu;
+        self.renderer = renderer;
+        // 保留树是旧视口的、图集纹理是空的（新渲染器）—— 强制重来。
+        self.cache = FrameCache::new();
+        self.textures = TextureTable::new();
+        self.atlas_revision_uploaded = 0;
+        self.reported_device_dead = false;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// 设备不可用时按间隔尝试恢复。成功则恢复正常绘制；失败则等下一轮。
+    ///
+    /// # 为什么必须限流
+    ///
+    /// 恢复要重建整条 GPU 栈，而拖动期间 `frame()` 每秒被叫几十次 —— 不限流就是
+    /// 每秒几十次重建，那比「画面冻结」更糟。
+    fn try_recover_device(&mut self) {
+        let now = std::time::Instant::now();
+        let due = match self.last_recovery_attempt {
+            None => true,
+            Some(last) => should_attempt_recovery(now.duration_since(last)),
+        };
+        if !due {
+            return;
+        }
+        self.last_recovery_attempt = Some(now);
+        match self.rebuild_gpu() {
+            Ok(()) => {
+                eprintln!("[zephyra-d3d12] 设备已恢复：GPU 栈重建成功，继续绘制");
+            }
+            Err(e) => {
+                eprintln!(
+                    "[zephyra-d3d12] 设备恢复失败（{e}），{} 秒后重试",
+                    DEVICE_RECOVERY_RETRY_INTERVAL.as_secs()
+                );
+            }
+        }
     }
 
     /// 把交换链对齐到窗口尺寸。**返回尺寸是否变了**（变了就要重排）。
@@ -1341,7 +1462,7 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         self.sync_input();
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // 只在「有待处理的事件」时跑一帧。静止时一帧都不跑 —— 这既符合保留式 UI 的
         // 卖点，也让 demo 在静止时几乎没有 GPU 开销。
         //
@@ -1356,11 +1477,26 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         // ⚠ 这里**只**在画完之后 `present`，事件回调里不 present：那会在第一帧之前就
         // 呈现一个从未被写过的交换链（屏幕上一块纯白），也会在拖拽缩放时把
         // 「还没重建完」的状态推上屏。
-        if self.dirty {
+        //
+        // ⚠ 设备已死时**无条件**跑一帧：`dirty` 可能已经被清掉（设备是在
+        // `present()` 里死的），那样就再没有 `frame()` 可跑，恢复代码永远不执行。
+        if self.dirty || self.chain.device_dead() {
             let f = self.frame();
             if f.redrawn {
                 self.present();
             }
+        }
+        // 设备死了就周期性唤醒 —— 恢复尝试在 `frame()` 里，而空闲时事件循环不会
+        // 自己醒。不这么做，设备在空闲时挂掉就永远等不到下一次 `about_to_wait`，
+        // 于是「恢复代码永不执行」。
+        //
+        // ⚠ 设备**活着**时必须显式设回 `Wait`：`set_control_flow` 的值会**保留**，
+        // 而 `WaitUntil` 的期限一旦过去就会立刻再醒 —— 那会变成忙等（CPU 空转）。
+        if self.chain.device_dead() {
+            let next = std::time::Instant::now() + DEVICE_RECOVERY_RETRY_INTERVAL;
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next));
+        } else {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
         }
     }
 }

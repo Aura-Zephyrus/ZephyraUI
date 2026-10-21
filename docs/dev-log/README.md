@@ -25,6 +25,7 @@
 
 | 日期 | 条目 | 状态 |
 |---|---|---|
+| 2026-10-20 | [画廊点了没反应（`DEVICE_RESET` 死设备）](2026-10-gpu-device-reset-dead-clicks.md) | 已通；死设备 ⇒ 每帧空帧 ⇒ 输入照常跑但画面冻结；恢复 = 重建整条 GPU 栈，限流每秒一次；6 条门禁全部不需要真 GPU |
 | 2026-10-18 | [空壳控件（只有样式、点了没反应）](2026-10-hollow-controls.md) | 已通；审计出 30 个 key（4 类）；门禁按「扰动世界 + 树指纹」判定；顺带发现无字体布局的门禁看不见裁切 |
 | 2026-10-18 | [离屏 pass + 14 档 PS 变体混合](2026-10-linux-vulkan-offscreen.md) | 已通；`未实现混合` 归零；四个 usage/loadOp/initial_layout 坑 + 「RT 装的是命令自己」；对照 Windows 95.79% 逐字节一致 |
 | 2026-10-18 | [1:1 像素级达成（sRGB 取舍实测）](2026-10-linux-vulkan-parity.md) | 前 6 大颜色与 Windows 逐字节一致；UNORM 直通是正解 |

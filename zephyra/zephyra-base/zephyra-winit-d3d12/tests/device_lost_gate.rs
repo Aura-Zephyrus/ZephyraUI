@@ -97,3 +97,51 @@ fn truth_table_is_complete() {
         );
     }
 }
+
+/// 设备恢复尝试的**间隔**判据。
+///
+/// # 为什么这条也要门禁
+///
+/// 恢复 = 重建整条 GPU 栈（设备、交换链、DComp、渲染器），很贵；而拖动期间
+/// `frame()` 每秒被叫几十次。把间隔写错成「每次都试」就是每秒几十次重建，
+/// 比原来的「画面冻结」更糟。反过来写太长则让用户多等。
+#[test]
+fn recovery_is_rate_limited_to_one_attempt_per_second() {
+    use std::time::Duration;
+
+    // 刚试过 ⇒ 不试。
+    assert!(
+        !zephyra_winit_d3d12::should_attempt_recovery(Duration::ZERO),
+        "间隔为 0 时不该再试"
+    );
+    assert!(
+        !zephyra_winit_d3d12::should_attempt_recovery(Duration::from_millis(999)),
+        "不到 1 秒不该再试"
+    );
+    // 满 1 秒 ⇒ 再试。
+    assert!(
+        zephyra_winit_d3d12::should_attempt_recovery(Duration::from_secs(1)),
+        "满 1 秒该再试"
+    );
+    assert!(
+        zephyra_winit_d3d12::should_attempt_recovery(Duration::from_secs(60)),
+        "远超间隔时该再试"
+    );
+}
+
+/// 设备死了但**还要画**是不可能的 —— 两条判据必须一致。
+///
+/// `should_draw_frame(_, true) == false` 与「恢复要等满间隔」不冲突：前者是
+/// 「这一帧别画」，后者是「这一帧要不要重建设备」。把它们混成一条判断正是
+/// 早期「永久冻结」的成因。
+#[test]
+fn dead_device_never_draws_but_is_still_eligible_for_recovery() {
+    // 设备死了 ⇒ 不画（不管 resize 什么状态）。
+    for s in [SwapState::Same, SwapState::Synced, SwapState::Failed] {
+        assert!(!zephyra_winit_d3d12::should_draw_frame(s, true));
+    }
+    // 但「不画」不等于「不恢复」：间隔满了仍然要试。
+    assert!(zephyra_winit_d3d12::should_attempt_recovery(
+        std::time::Duration::from_secs(1)
+    ));
+}
