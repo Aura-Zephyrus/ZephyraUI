@@ -36,7 +36,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-badge",
                 "Badge",
                 vec![pages::demo_many(
-                    "Severities",
+                    g.tr("ui.severities"),
                     vec![
                         controls::info_badge("badge-info", "12", "info", true),
                         controls::info_badge("badge-ok", "OK", "success", true),
@@ -72,7 +72,7 @@ pub fn page(g: &Gallery) -> Element {
                         false,
                     )),
                     Some(pages::demo(
-                        "Restore",
+                        g.tr("ui.restore"),
                         controls::pill_button(
                             "infobar-restore",
                             "Show info bar",
@@ -107,21 +107,21 @@ pub fn page(g: &Gallery) -> Element {
                 "Progress",
                 vec![
                     pages::demo(
-                        "Bar",
+                        g.tr("ui.bar"),
                         controls::progress_bar("progress", g.volume, "running"),
                     ),
                     pages::demo_many(
-                        "States",
+                        g.tr("ui.states"),
                         vec![
                             controls::progress_bar("progress-p", 0.4, "paused"),
                             controls::progress_bar("progress-e", 0.8, "error"),
                         ],
                     ),
                     pages::demo(
-                        "Ring",
+                        g.tr("ui.ring"),
                         controls::progress_ring("ring", "62%", "running", true),
                     ),
-                    pages::demo("Busy", controls::busy_indicator("busy", 1)),
+                    pages::demo(g.tr("ui.busy"), controls::busy_indicator("busy", 1)),
                 ],
             ),
         ],

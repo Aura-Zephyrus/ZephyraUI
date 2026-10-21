@@ -258,7 +258,12 @@ pub fn spin_box(
 /// 16 格，每格 24×24、radius 3；选中格 2px 强调描边（`.selected`）。
 /// 格子的**颜色**在样式表的 `sw-0..15` 里（见 [`PALETTE`]）—— 换色板改写
 /// 那 16 个类即可，源码零颜色字面量。
-pub fn color_picker(key: &'static str, selected: usize) -> Element {
+pub fn color_picker(
+    key: &'static str,
+    selected: usize,
+    hovered: Option<&str>,
+    pressed: Option<&str>,
+) -> Element {
     // 8×2 网格：core 没有 Grid，按行手排（与 gallery 的 clip_grid 同手法）。
     //
     // ⚠ 每行 8 个而不是 4 个：参考页的高度是固定的（无滚动），4×4 的色板在
@@ -273,12 +278,21 @@ pub fn color_picker(key: &'static str, selected: usize) -> Element {
                 .enumerate()
                 .map(|(c, sw)| {
                     let index = r * 8 + c;
-                    let mut cell = Element::new(NodeTag::Container)
-                        .with_key(gen_swatch_key(index))
-                        // 色格可点：选中哪个颜色是应用的状态（控件只发 key）。
-                        .with(&props::INTERACTIVE, PropertyValue::bool(true))
-                        .style("swatch")
-                        .style(sw);
+                    let swatch_key_str = gen_swatch_key(index);
+                    let mut classes = Vec::new();
+                    classes.extend(state(
+                        hovered == Some(swatch_key_str),
+                        pressed == Some(swatch_key_str),
+                    ));
+                    let mut cell = with_classes(
+                        Element::new(NodeTag::Container)
+                            .with_key(swatch_key_str)
+                            // 色格可点：选中哪个颜色是应用的状态（控件只发 key）。
+                            .with(&props::INTERACTIVE, PropertyValue::bool(true))
+                            .style("swatch")
+                            .style(sw),
+                        &classes,
+                    );
                     if index == selected {
                         cell = cell.style("selected");
                     }

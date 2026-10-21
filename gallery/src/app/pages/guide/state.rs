@@ -33,8 +33,8 @@ pub fn page(g: &Gallery) -> Element {
         "state",
         "page-state",
         vec![
-            controls::text_label(
-                "state-blurb",
+            controls::
+                text_label("state-blurb",
                 "Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug.",
                 "text-body",
             ),
@@ -42,24 +42,24 @@ pub fn page(g: &Gallery) -> Element {
             //
             // 开发者看到这几行会想「点一下试试」。点下去界面确实会变 ——
             // 而它们改的状态**只影响本节**，不会污染别的页。
-            pages::section(
-                "state-wired",
+            pages::
+                section("state-wired",
                 "Wired to state",
                 vec![
-                    pages::demo("CheckBox", controls::check_box(
+                    pages::demo(g.tr("ui.checkbox"), controls::check_box(
                         "state-check",
                         "Toggle me",
                         g.demo_check,
                         g.hovers("state-check"),
                         g.holds("state-check"),
                     )),
-                    pages::demo("Toggle", controls::toggle_switch(
+                    pages::demo(g.tr("ui.toggle"), controls::toggle_switch(
                         "state-switch",
                         g.switch_on,
                         g.hovers("state-switch"),
                         g.holds("state-switch"),
                     )),
-                    pages::demo("Segmented", controls::segmented(
+                    pages::demo(g.tr("ui.segmented"), controls::segmented(
                         "state-seg",
                         &[
                             (crate::app::DEMO_SEGS[0], "A"),
@@ -70,7 +70,7 @@ pub fn page(g: &Gallery) -> Element {
                         g.hovered_name(),
                         g.pressed_name(),
                     )),
-                    pages::demo("ComboBox", controls::combo_box(
+                    pages::demo(g.tr("ui.combobox"), controls::combo_box(
                         "state-combo",
                         combo_text(g.demo_combo),
                         g.hovers("state-combo"),
@@ -83,23 +83,23 @@ pub fn page(g: &Gallery) -> Element {
             // ⚠ 这不是漏接。core 的当前边界就是这些控件只画不收。
             // 开发者如果给它们编一个「假动作」，症状是「点了有反应、切页就没了」——
             // 那比「点了没反应」更难查。
-            pages::section(
-                "state-display",
+            pages::
+                section("state-display",
                 "Display-only (core boundary)",
                 vec![
-                    pages::demo("Slider", controls::slider(
+                    pages::demo(g.tr("ui.slider"), controls::slider(
                         "state-slider",
                         0.5,
                         None,
                         g.hovers("state-slider"),
                         g.holds("state-slider"),
                     )),
-                    pages::demo("ProgressBar", controls::progress_bar(
+                    pages::demo(g.tr("ui.progressbar"), controls::progress_bar(
                         "state-progress",
                         0.65,
                         "running",
                     )),
-                    pages::demo("ToolTip", controls::tool_tip(
+                    pages::demo(g.tr("ui.tooltip"), controls::tool_tip(
                         "state-tip",
                         "I appear on hover",
                     )),

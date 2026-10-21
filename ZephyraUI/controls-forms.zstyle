@@ -222,6 +222,17 @@ Container.swatch {
     border-color: @card_border;
 }
 
+Container.swatch.hovered {
+    border-width: 2px;
+    border-color: @control_border_strong;
+}
+
+Container.swatch.pressed {
+    border-width: 2px;
+    border-color: @accent_fill;
+    opacity: 0.8;
+}
+
 Container.swatch.selected {
     border-width: 2px;
     border-color: @content;

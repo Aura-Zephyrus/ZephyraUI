@@ -38,7 +38,13 @@ pub fn page(g: &Gallery) -> Element {
                     // 当前页走 `Gallery::swipe_page`：底部圆点（`sw:N`）**可点**
                     // 跳页（core 没有拖拽手势，翻页只能由点击表达），
                     // `click` 的 `sw:` 分支回写。
-                    controls::swipe_view("swipe", SWIPE, g.swipe_page),
+                    controls::swipe_view(
+                        "swipe",
+                        SWIPE,
+                        g.swipe_page,
+                        g.hovered_name(),
+                        g.pressed_name(),
+                    ),
                     // ⚠ 这里不再另摆一个 `page_indicator`：`swipe_view` 自带
                     // 圆点（同一组 `sw:N` key），再摆一个就是同页两份翻页控件。
                 ],
@@ -49,7 +55,7 @@ pub fn page(g: &Gallery) -> Element {
                 // 独立的进度点（`pips`）：**展示**件 —— 它的语义是「一共多少页」，
                 // 不接收点击（可点的是上面 SwipeView 的圆点）。白名单注明。
                 vec![pages::demo(
-                    "Position",
+                    g.tr("ui.position"),
                     controls::page_indicator("pips", SWIPE.len(), g.swipe_page),
                 )],
             ),

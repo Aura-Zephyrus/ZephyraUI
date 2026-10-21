@@ -102,6 +102,14 @@ Container.dp-cell {
     cross-align: center;
 }
 
+Container.dp-cell.hovered .dp-day {
+    background: @control_secondary;
+}
+
+Container.dp-cell.pressed .dp-day {
+    background: @control_tertiary;
+}
+
 Container.dp-day {
     width: 34px;
     height: 34px;
@@ -151,6 +159,14 @@ Container.tp-item {
     main-align: center;
     cross-align: center;
     background: transparent;
+}
+
+Container.tp-item.hovered {
+    background: @control_secondary;
+}
+
+Container.tp-item.pressed {
+    background: @control_tertiary;
 }
 
 Container.tp-item.selected {

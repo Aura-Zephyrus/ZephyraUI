@@ -76,16 +76,9 @@ fn laid_out_from(route: &'static str, family: usize) -> Node {
     root
 }
 
-/// 造一棵「**reference 页 + 指定族**」的树。
-///
-/// # 为什么需要它
-///
-/// 十族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），于是
-/// 「玻璃参数门禁」要验的那三块玻璃现在住在 `reference` 页的第 8 族里。
-/// [`laid_out`] 只能设路由，设不了族 —— 而族是 `Gallery::ref_family` 状态，
-/// 不设它就永远落在 basics（第 0 族），玻璃门禁会因「树里没有玻璃」而恒真。
-fn laid_out_ref(family: usize) -> Node {
-    laid_out_from("reference", family)
+/// 液态玻璃页的树 —— 它现在是一等路由 `glass`，不再藏在 reference 的族里。
+fn laid_out_glass() -> Node {
+    laid_out("glass")
 }
 
 /// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
@@ -661,12 +654,16 @@ fn shell_layout_geometry() {
     );
 
     // 置底项：底部落在画布内 24px 以内。
+    //
+    // ⚠ 期望值随导航栏项数变化：每多一项，Settings 下移一项的高度（≈46px），
+    // 而 `.nav-spacer` 必须同步减少同样的量才能让 Settings 保持在容器底部。
+    // 基准 9 项时落在 794（spacer 324）。改导航栏或 spacer 时同步改这里的数字。
     let settings = find_by_key(&root, "settings").expect("settings nav item");
     let rs = settings.rect();
     let bottom = rs.y + rs.height;
     assert!(
-        (bottom - 788.0).abs() < 24.0,
-        "Settings 应落在导航栏底部附近（约 788），实测 {bottom:.1}"
+        (bottom - 794.0).abs() < 24.0,
+        "Settings 应落在导航栏底部附近（约 794），实测 {bottom:.1}"
     );
 }
 
@@ -806,6 +803,74 @@ fn every_icon_name_the_tree_emits_is_registered() {
 /// 用 `HitResult::target()`（最深的**可交互**节点）而不是 `deepest()`（最深的
 /// 任何节点）：命中链本来就包含图标、文本这些后代，它们不是处理目标 ——
 /// `INTERACTIVE` 是**不可继承**属性（见 `props::INTERACTIVE`），只有控件本身#[test]
+/// 布局页的两个 flex 演示必须**真的在分配**，而不是只在样式表里说了。
+///
+/// # 为什么值得一条几何门禁
+///
+/// flex 的激活链很长：`.zstyle` 文本 → `zstylec` 解析 → 属性键 →
+/// `PropertyStore` → `Node::flex()` 的激活判断 → `measure_flex` / `arrange_flex`。
+/// 任何一环断掉，症状都是「样式表写着 `flex-grow: 1`，画面上那一格纹丝不动」——
+/// 不崩、不报错、门禁全绿（`every_stylesheet_rule_matches_something` 只查规则
+/// 有没有选中元素，不查它有没有**效果**）。
+///
+/// 所以这里直接量最终几何：grow 格必须比固定格宽得多；折行演示的第四个格
+/// 必须换到第二行（y 更大、x 归零）。这两条只可能由真的分配产生。
+#[test]
+fn the_flex_demos_on_the_layout_page_really_allocate() {
+    let root = laid_out("layout");
+
+    let mut rects: Vec<(&str, zephyra_core::core::Rect)> = Vec::new();
+    walk(&root, &mut |n: &Node| {
+        if let Some(name) = n.key().and_then(|k| k.as_name()) {
+            if name.starts_with("fx-") {
+                rects.push((name, n.rect()));
+            }
+        }
+    });
+    let rect_of = |name: &str| {
+        rects
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("树上找不到 {name} —— 布局页的 flex 演示没了？"))
+    };
+
+    // grow：右格吃掉 420 − 100 − 10 = 310，固定格保持 100。
+    // 若 flex 没激活，两格都是 100（按内容收窄），差值立刻归零。
+    let fixed = rect_of("fx-fixed");
+    let grow = rect_of("fx-grow-cell");
+    assert!(
+        grow.width > fixed.width + 100.0,
+        "flex-grow 没生效：固定格 {:?} 宽 {}，填充格宽 {}（应接近 310）",
+        fixed,
+        fixed.width,
+        grow.width
+    );
+
+    // 折行：340px 装得下 100+10+100+10+100 = 330，装不下第四个 →
+    // 第四格必须换行（y 变大、x 回到行首）。若 flex-wrap 没生效，
+    // 六格会横排成一行（y 全等），而容器宽度会被撑到 650。
+    let w1 = rect_of("fx-w1");
+    let w4 = rect_of("fx-w4");
+    assert!(
+        w4.y > w1.y + 10.0,
+        "flex-wrap 没生效：第一格 y={}，第四格 y={}（应在第二行）",
+        w1.y,
+        w4.y
+    );
+    assert!(
+        (w4.x - w1.x).abs() < 1.0,
+        "第二行该从行首开始：第一格 x={}，第四格 x={}",
+        w1.x,
+        w4.x
+    );
+    assert!(
+        w4.x < w1.x + 150.0,
+        "第四格不该跟在第一格后面横排（x={}）—— 那说明压根没折行",
+        w4.x
+    );
+}
+
 #[test]
 fn hit_test_agrees_with_the_painted_rects() {
     // ⚠ 这一条必须跑**全部**路由，不是只跑 home。
@@ -1335,6 +1400,39 @@ fn every_page_carries_its_own_controls() {
     );
 }
 
+/// 语言自称（`LANG_SELFS`）必须与 `SUPPORTED` **同长**，且每门语言的条目数
+/// 必须与键集合等大。
+///
+/// # 为什么这条值得一条门禁
+///
+/// 设置页的 segmented 是按下标对照两组表的：下标错位会让用户选了
+/// "English" 却得到日文，而那在画面上完全看不出原因（文案是正常的、
+/// 布局是正常的，只是语言不对）。这种错只有机器能查。
+///
+/// # 为什么只查条目数，不去枚举"表里多了一门语言"
+///
+/// [`Messages`] 刻意不提供枚举语言的 API（`i18n.rs` 里写明"宁可门禁抄一遍"
+/// 也不加接口），所以这里用 `len_for` 反推：某门语言条目数少于键集合，
+/// 就是漏翻；多于键集合，则是把同一 (locale, key) 写了两遍。
+#[test]
+fn every_language_name_is_counted_in_the_same_order() {
+    use zephyra_gallery::app::{catalog_keys, messages, LANG_SELFS, SUPPORTED};
+
+    assert_eq!(
+        LANG_SELFS.len(),
+        SUPPORTED.len(),
+        "自称列表与语言表长度不一致（下标错位 = 选了 A 得到 B）"
+    );
+    let n_keys = catalog_keys().len();
+    for lang in SUPPORTED {
+        assert_eq!(
+            messages().len_for(lang),
+            n_keys,
+            "{lang} 的条目数与键集合不等大 —— 漏翻或重键"
+        );
+    }
+}
+
 /// 每个路由 id 在**每一门语言**下都必须有译文。
 ///
 /// # 为什么必须逐语言查，而不是查「键集合齐全」
@@ -1378,15 +1476,119 @@ fn every_route_id_is_translated_in_every_supported_language() {
     );
 }
 
+/// 源码里每个 `g.tr("key")` 的键，都必须在**每一门语言**下查得到。
+///
+/// # 为什么这条不能由「路由译齐了」代劳
+///
+/// [`Gallery::tr`] 查不到键时返回**键名本身**（`messages().select(..).unwrap_or(key)`）：
+/// 不崩、不空、颜色正常 —— 画面上显示的是 `ui.your-name` 这串字符。而
+/// [`every_route_id_is_translated_in_every_supported_language`] 只查 `route.*`。
+/// 页面里新加一句 `g.tr("ui.x")` 却忘了在表里加条目时，那条门禁全绿，
+/// 画面上却是键名 —— 两件事只能分开查。
+///
+/// # 反向也查：表里的键不许只翻一门
+///
+/// 只查「用到的键都有」会漏掉「en 加了 zh 忘了」。所以这里同时拿
+/// `catalog_keys()` 反查一遍 —— `Messages::missing_in` 是**精确**匹配
+/// （`get` 不做回退），正合「逐语言」这个判据。
+///
+/// # 已知盲区
+///
+/// 扫的是源码文本，所以键若不是字面量（拼出来的、查表返回的）这条查不到。
+/// 现状全部是字面量 —— 因为 `view()` 每帧重建整棵树，运行期拼串会泄漏
+/// （见 `app::route_key` 的说明），本来就不该那么写。开头那句
+/// `assert!(!used.is_empty())` 守的是「扫描方式过期了但门禁假装通过」。
+#[test]
+fn every_tr_key_used_in_source_exists_in_every_language() {
+    use std::path::{Path, PathBuf};
+    use zephyra_gallery::app::{catalog_keys, messages, SUPPORTED};
+
+    fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{} 可读: {e}", dir.display()))
+        {
+            let path = entry.expect("目录项可读").path();
+            if path.is_dir() {
+                collect_rs(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rs(&root, &mut files);
+
+    // `g.tr("…")` 是唯一的取文案入口（页面全部拿 `&Gallery`），
+    // 键是紧随其后的引号串。
+    //
+    // **跳过注释行**：这条门禁扫的是源码文本，而注释里写「源码里每个
+    // `g.tr("…")`」这类句子是正当的 —— 不跳过的话，门禁会把注释里的
+    // 省略号当成键名报出来（真实发生过一次：`mod.rs` 的门禁说明本身
+    // 让这条门禁红了）。
+    let mut used: Vec<String> = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("{} 可读: {e}", file.display()));
+        for line in text.lines() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for (i, _) in line.match_indices("g.tr(\"") {
+                let rest = &line[i + "g.tr(\"".len()..];
+                let Some(end) = rest.find('"') else { continue };
+                let key = &rest[..end];
+                if !used.iter().any(|k| k == key) {
+                    used.push(key.to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        !used.is_empty(),
+        "一个 `g.tr(\"…\")` 都没扫到 —— 取文案的写法变了，这条门禁在假装通过"
+    );
+
+    let msgs = messages();
+    let mut problems: Vec<String> = Vec::new();
+    for key in &used {
+        for lang in SUPPORTED {
+            if !msgs.missing_in(lang, &[key.as_str()]).is_empty() {
+                problems.push(format!("源码用到但表里缺：{key} / {lang}"));
+            }
+        }
+    }
+    for key in catalog_keys() {
+        for lang in SUPPORTED {
+            if !msgs.missing_in(lang, &[key]).is_empty() {
+                problems.push(format!("表内键缺译：{key} / {lang}"));
+            }
+        }
+    }
+    // 顺手拦住「把键名抄进了文案栏」：`tr()` 的回退行为会让这种抄错静默显示。
+    assert!(
+        used.len() <= 500,
+        "扫到 {} 个 tr 键，数量对不上 —— 扫描把别处的字符串也算进来了？",
+        used.len()
+    );
+    assert!(
+        problems.is_empty(),
+        "漏加条目会让画面上直接显示键名（不崩、不空，所以肉眼最容易漏）：\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 /// 控件参考页的**族切换**必须接线：九个 segmented key 都在树上，且真的点了
 /// 都会改 `Gallery::ref_family`。
 ///
 /// # 为什么取代了旧的 `segment_keys_are_all_wired`
 ///
-/// 十族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
+/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
 /// `seg:grid` / `seg:list` / `seg:card` 分段随 toggles 路由一起消失。
-/// 新的分段是 `ref:basics` … `ref:effects` 十族，走 [`crate::app::REF_FAMILIES`]
+/// 新的分段是 `ref:basics` … `ref:paging` 九族，走 [`crate::app::REF_FAMILIES`]
 /// 查表 —— 加一族只改那张表，而这条门禁**真的点一遍**证明接线。
+/// （液态玻璃 `ref:effects` 已提升为一等路由 `glass`，不在此表中。）
 ///
 /// # 为什么不能只查 key 在树上
 ///
@@ -1434,8 +1636,8 @@ fn reference_page_has_all_families() {
     // 内容没跟上」。
     assert_eq!(
         REF_FAMILIES.len(),
-        10,
-        "参考页当前是十族 —— 加族时同步改这里的数字，并确认新族一屏装得下"
+        9,
+        "参考页当前是九族 —— 加族时同步改这里的数字，并确认新族一屏装得下"
     );
     for (i, fam) in REF_FAMILIES.iter().enumerate() {
         let mut g = Gallery::default();
@@ -1456,7 +1658,6 @@ fn reference_page_has_all_families() {
             "navigation" => "subdemo:a",
             "status" => "progress",
             "dialogs" => "dp",
-            "effects" => "glass:a",
             "paging" => "swipe",
             _ => panic!("未知族 {fam}"),
         };
@@ -1705,8 +1906,7 @@ fn glass_params_are_not_hard_coded() {
 
     // ---- 基准树 ----
     let mut base = Gallery::default();
-    base.route = "reference";
-    base.ref_family = 8;
+    base.route = "glass";
     let warm = filters_at(&base);
     assert!(
         warm.len() >= 3,
@@ -1718,8 +1918,7 @@ fn glass_params_are_not_hard_coded() {
     // ---- 逐个参数各挪一档 ----
     for param in Param::ALL {
         let mut g = Gallery::default();
-        g.route = "reference";
-        g.ref_family = 8; // effects 是 REF_FAMILIES 的第 8 项
+        g.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
         assert!(
             g.glass.nudge(param, 1),
             "默认档位下 `{param:?}` 加一档被 clamp 掉了 —— 表的下界取得不对"
@@ -1766,8 +1965,7 @@ fn glass_params_are_not_hard_coded() {
     // 减起时成立，而这里真正的风险是 `nudge` 把加减**同一个方向**实现成两次
     // 加（那种形状下每条单参数门禁都绿，而画面上 `[−]` 与 `[+]` 效果一样）。
     let mut round = Gallery::default();
-    round.route = "reference";
-    round.ref_family = 8;
+    round.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
     for param in Param::ALL {
         assert!(round.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
     }
@@ -1904,7 +2102,7 @@ fn glass_param_tables_line_up() {
 /// 断言 8 个按钮全在树上；按钮少画了就会在这里报，而不是静默通过。
 #[test]
 fn glass_param_keys_all_wired() {
-    let root = laid_out_ref(8);
+    let root = laid_out_glass();
     let mut keys = Vec::new();
     for param in Param::ALL {
         keys.push(format!("glass-{}:dec", param.slug()));
@@ -1920,8 +2118,7 @@ fn glass_param_keys_all_wired() {
 
     // 逐个点「加」，每次都要求参数真的动了。
     let mut g = Gallery::default();
-    g.route = "reference";
-    g.ref_family = 8; // effects 是 REF_FAMILIES 的第 8 项
+    g.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
     for param in Param::ALL {
         let before = g.glass;
         g.click(&format!("glass-{}:inc", param.slug()));
@@ -2333,7 +2530,7 @@ const DISPLAY_ONLY: &[&str] = &[
 ///
 /// # 判据
 ///
-/// 对全部路由 × 参考页十族构造树，收集每个 `INTERACTIVE` 节点的 key；然后
+/// 对全部路由 × 参考页九族构造树，收集每个 `INTERACTIVE` 节点的 key；然后
 /// 对每个 key **真的点一遍**，比较点击前后树的形状指纹（类型/key/分类名/文本）。
 /// 有差异 = 接线了；无差异则必须在 [`DISPLAY_ONLY`] 里。
 ///

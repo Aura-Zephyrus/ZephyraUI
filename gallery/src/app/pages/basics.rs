@@ -28,14 +28,14 @@ pub fn page(g: &Gallery) -> Element {
             // 会变成第二个真相 —— 而且「点了没反应」的判断不该因页面而异。
             pages::section(
                 "sec-btns",
-                "Button",
+                g.tr("ui.button"),
                 vec![
                     pages::demo_many(
-                        "Variants",
+                        g.tr("ui.variants"),
                         vec![
                             controls::button(
                                 "act:standard",
-                                "Standard",
+                                g.tr("ui.standard"),
                                 None,
                                 "standard",
                                 g.hovers("act:standard"),
@@ -43,7 +43,7 @@ pub fn page(g: &Gallery) -> Element {
                             ),
                             controls::button(
                                 "act:accent",
-                                "Accent",
+                                g.tr("ui.accent"),
                                 None,
                                 "accent",
                                 g.hovers("act:accent"),
@@ -51,7 +51,7 @@ pub fn page(g: &Gallery) -> Element {
                             ),
                             controls::button(
                                 "act:subtle",
-                                "Subtle",
+                                g.tr("ui.subtle"),
                                 None,
                                 "subtle",
                                 g.hovers("act:subtle"),
@@ -60,11 +60,11 @@ pub fn page(g: &Gallery) -> Element {
                         ],
                     ),
                     pages::demo_many(
-                        "With icon / round",
+                        g.tr("ui.with-icon-round"),
                         vec![
                             controls::button(
                                 "act:send",
-                                "Send",
+                                g.tr("ui.send"),
                                 Some("pen"),
                                 "accent",
                                 g.hovers("act:send"),
@@ -72,7 +72,7 @@ pub fn page(g: &Gallery) -> Element {
                             ),
                             controls::pill_button(
                                 "pill-a",
-                                "Pill",
+                                g.tr("ui.pill"),
                                 Some("star"),
                                 g.pill_on,
                                 g.hovers("pill-a"),
@@ -105,7 +105,7 @@ pub fn page(g: &Gallery) -> Element {
             ),
             pages::section(
                 "sec-text",
-                "Text input",
+                g.tr("ui.text-input"),
                 // ⚠ 两个都是**展示型**：core 没有文本输入（无键盘事件路由、
                 // 无光标），画的是静态内容。门禁白名单里有它们；
                 // state 章把这条边界教给开发者。
@@ -113,31 +113,35 @@ pub fn page(g: &Gallery) -> Element {
                 // 同一行而不是两行：参考页高度固定（无滚动），字段与多行框各占
                 // 一行会把这一族的色板推出客户区（真实字体下实测）。
                 vec![pages::demo_many(
-                    "Text input (display)",
+                    g.tr("ui.text-input-display"),
                     vec![
                         controls::text_field(
                             "field-name",
                             None,
-                            "Your name",
+                            g.tr("ui.your-name"),
                             false,
                             g.hovers("field-name"),
                             g.holds("field-name"),
                         ),
                         controls::text_area(
                             "area-notes",
-                            &["Multi-line notes", "second line", "third line"],
+                            &[
+                                g.tr("ui.multi-line-notes"),
+                                g.tr("ui.second-line"),
+                                g.tr("ui.third-line"),
+                            ],
                         ),
                     ],
                 )],
             ),
             pages::section(
                 "sec-choice",
-                "Value pickers",
+                g.tr("ui.value-pickers"),
                 vec![
                     // ComboBox 与 SpinBox 同一行：两者都是「选一个值」，
                     // 而参考页高度固定（无滚动）—— 各占一行会把下面推出客户区。
                     pages::demo_many(
-                        "Value",
+                        g.tr("ui.value"),
                         vec![
                             controls::combo_box(
                                 // 这里取的正是 `Gallery::click` 推进下标时跳的那张表
@@ -165,7 +169,7 @@ pub fn page(g: &Gallery) -> Element {
                         // 拖动无法表达 —— 点了不滑是**正确的**。门禁
                         // `every_interactive_key_is_wired_or_whitelisted`
                         // 的白名单里有它；state 章把这条边界教给开发者。
-                        "Slider (display)",
+                        g.tr("ui.slider-display"),
                         controls::slider(
                             "slider-volume",
                             g.volume,
@@ -175,8 +179,13 @@ pub fn page(g: &Gallery) -> Element {
                         ),
                     ),
                     pages::demo(
-                        "ColorPicker",
-                        controls::color_picker("picker-color", g.color_idx),
+                        g.tr("ui.colorpicker"),
+                        controls::color_picker(
+                            "picker-color",
+                            g.color_idx,
+                            g.hovered_name(),
+                            g.pressed_name(),
+                        ),
                     ),
                 ],
             ),

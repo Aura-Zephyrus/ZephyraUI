@@ -62,49 +62,64 @@ pub fn page(g: &Gallery) -> Element {
         vec![
             pages::section(
                 "sec-dialog",
-                "Dialog",
+                g.tr("ui.dialog"),
                 vec![zephyra_ui::controls::caption(
                     "dlg-note",
-                    "Rendered inline — the core has no overlay layer yet.",
+                    g.tr("ui.rendered-inline-the-core-has-no-overlay-layer-yet"),
                 )],
             ),
             pages::section(
                 "sec-picker",
-                "Pickers",
+                g.tr("ui.pickers"),
                 vec![
                     pages::demo(
                         // 选中日走 `Gallery::date_sel`：格子（`dpc:RC`）可点，
                         // `click` 的 `dpc:` 分支把格子序号换算成 CALENDAR 里的
                         // 日期值回写。选不存在的格（None）不响应——那与
                         // 「日历上空白格本来就不是日期」一致。
-                        "Date",
-                        controls::date_picker("dp", WEEK_HEADS, CALENDAR, g.date_sel),
+                        g.tr("ui.date"),
+                        controls::date_picker(
+                            "dp",
+                            WEEK_HEADS,
+                            CALENDAR,
+                            g.date_sel,
+                            g.hovered_name(),
+                            g.pressed_name(),
+                        ),
                     ),
                     pages::demo(
                         // 小时/分钟各走一个字段：两个列是**独立**的选择器，
                         // 共用一个下标会出现「选了 15 点，分钟跳到 05」的
                         // 幽灵联动。
-                        "Time",
-                        controls::time_picker("tp", HOURS, g.time_hour, MINUTES, g.time_minute),
+                        g.tr("ui.time"),
+                        controls::time_picker(
+                            "tp",
+                            HOURS,
+                            g.time_hour,
+                            MINUTES,
+                            g.time_minute,
+                            g.hovered_name(),
+                            g.pressed_name(),
+                        ),
                     ),
                 ],
             ),
             pages::section(
                 "sec-tip",
-                "Tool tip",
+                g.tr("ui.tool-tip"),
                 vec![pages::demo(
-                    "Sample",
-                    controls::tool_tip("tip", "A tooltip"),
+                    g.tr("ui.sample"),
+                    controls::tool_tip("tip", g.tr("ui.a-tooltip")),
                 )],
             ),
             pages::section(
                 "sec-acrylic",
-                "Translucent card",
+                g.tr("ui.translucent-card"),
                 vec![controls::acrylic_card(
                     "acrylic",
                     vec![
-                        controls::text_label("acr-t", "Translucent", "text-body-strong"),
-                        controls::caption("acr-d", "See the effects page."),
+                        controls::text_label("acr-t", g.tr("ui.translucent"), "text-body-strong"),
+                        controls::caption("acr-d", g.tr("ui.see-the-effects-page")),
                     ],
                 )],
             ),

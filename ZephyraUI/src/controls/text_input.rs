@@ -74,7 +74,7 @@ pub fn text_field(
 }
 
 /// 多行文本区（RinUI TextArea）。
-pub fn text_area(key: &'static str, lines: &'static [&'static str]) -> Element {
+pub fn text_area(key: &'static str, lines: &[&'static str]) -> Element {
     let children: Vec<Element> = lines
         .iter()
         .enumerate()
@@ -95,11 +95,7 @@ pub fn text_area(key: &'static str, lines: &'static [&'static str]) -> Element {
 ///
 /// 滚动条不真的滚（core 无滚动），但 thumb 高度按 `ratio` 给 —— 那是
 /// 内容驱动的几何，放在 `fill:scroll` 键节点上（见 lib.rs 第 3 条）。
-pub fn scrollable_text_area(
-    key: &'static str,
-    lines: &'static [&'static str],
-    ratio: f32,
-) -> Element {
+pub fn scrollable_text_area(key: &'static str, lines: &[&'static str], ratio: f32) -> Element {
     Element::new(NodeTag::Container)
         .with_key(key)
         .style("scroll-area")

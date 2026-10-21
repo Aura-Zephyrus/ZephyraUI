@@ -103,7 +103,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-lang",
                 "Language",
                 vec![pages::demo(
-                    "Interface",
+                    g.tr("ui.interface"),
                     controls::segmented(
                         "langbar",
                         LANGS,

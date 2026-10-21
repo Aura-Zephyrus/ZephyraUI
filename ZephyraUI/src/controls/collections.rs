@@ -71,8 +71,10 @@ pub fn list_view(
 /// 表格（RinUI TableView）：表头 + 数据行，定列宽。
 pub fn table_view(
     key: &'static str,
-    headers: &'static [&'static str],
+    headers: &[&'static str],
     rows: &'static [&'static [&'static str]],
+    hovered: Option<&str>,
+    pressed: Option<&str>,
 ) -> Element {
     let mut children = vec![header_row(headers)];
     for (r, row) in rows.iter().enumerate() {
@@ -80,14 +82,23 @@ pub fn table_view(
             .iter()
             .enumerate()
             .map(|(c, cell)| {
-                Element::new(NodeTag::Text)
-                    .with_key(cell_key(r, c))
-                    // 数据格可点：选中哪一格是**应用**的状态（控件只发 key），
-                    // 与 `list_view` 的行同一模式。tag 仍是 `Text`（样式表按
-                    // 类型选择 `Text.table-cell`），INTERACTIVE 与 tag 无关。
-                    .with(&props::INTERACTIVE, PropertyValue::bool(true))
-                    .with(&props::TEXT, PropertyValue::static_str(cell))
-                    .style("table-cell")
+                let cell_key_str = cell_key(r, c);
+                let mut classes = Vec::new();
+                classes.extend(state(
+                    hovered == Some(cell_key_str),
+                    pressed == Some(cell_key_str),
+                ));
+                with_classes(
+                    Element::new(NodeTag::Text)
+                        .with_key(cell_key_str)
+                        // 数据格可点：选中哪一格是**应用**的状态（控件只发 key），
+                        // 与 `list_view` 的行同一模式。tag 仍是 `Text`（样式表按
+                        // 类型选择 `Text.table-cell`），INTERACTIVE 与 tag 无关。
+                        .with(&props::INTERACTIVE, PropertyValue::bool(true))
+                        .with(&props::TEXT, PropertyValue::static_str(cell))
+                        .style("table-cell"),
+                    &classes,
+                )
             })
             .collect();
         children.push(
@@ -111,6 +122,8 @@ pub fn swipe_view(
     key: &'static str,
     pages: &'static [(&'static str, &'static str)],
     index: usize,
+    hovered: Option<&str>,
+    pressed: Option<&str>,
 ) -> Element {
     // 元组形状是 `(title, desc)`：标题 + 一行说明。**不存在** id 字段 ——
     // 翻页靠 `<key>` 上的 `sw:<i>` 指示点，卡片内容里不该出现内部键名。
@@ -121,16 +134,21 @@ pub fn swipe_view(
     let (title, desc) = pages.get(index).copied().unwrap_or(("—", "—"));
     let pips: Vec<Element> = (0..pages.len())
         .map(|i| {
-            let mut d = Element::new(NodeTag::Container)
-                .with_key(swipe_pip_key(i))
-                // 指示点同时是**翻页按钮**：core 没有拖拽手势，翻页只能
-                // 由点击表达。当前页仍由 `index` 决定（应用的状态）。
-                .with(&props::INTERACTIVE, PropertyValue::bool(true))
-                .style("swipe-pip");
+            let pip_key = swipe_pip_key(i);
+            let mut classes = Vec::new();
+            classes.extend(state(hovered == Some(pip_key), pressed == Some(pip_key)));
             if i == index {
-                d = d.style("selected");
+                classes.push("selected");
             }
-            d
+            with_classes(
+                Element::new(NodeTag::Container)
+                    .with_key(pip_key)
+                    // 指示点同时是**翻页按钮**：core 没有拖拽手势，翻页只能
+                    // 由点击表达。当前页仍由 `index` 决定（应用的状态）。
+                    .with(&props::INTERACTIVE, PropertyValue::bool(true))
+                    .style("swipe-pip"),
+                &classes,
+            )
         })
         .collect();
     Element::new(NodeTag::Container)
@@ -260,7 +278,7 @@ pub fn setting_expander(
 
 // ---------------------------------------------------------------- 内部
 
-fn header_row(headers: &'static [&'static str]) -> Element {
+fn header_row(headers: &[&'static str]) -> Element {
     let cells: Vec<Element> = headers
         .iter()
         .enumerate()

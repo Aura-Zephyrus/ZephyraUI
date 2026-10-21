@@ -84,6 +84,16 @@ Text.table-cell {
     text-color: @content;
 }
 
+Text.table-cell.hovered {
+    background: @control_secondary;
+    corner-radius: 4px;
+}
+
+Text.table-cell.pressed {
+    background: @control_tertiary;
+    corner-radius: 4px;
+}
+
 /* ---- SwipeView ---- */
 
 Container.swipe-view {
@@ -124,6 +134,15 @@ Container.swipe-pip {
     height: 7px;
     corner-radius: 99px;
     background: @control_strong;
+}
+
+Container.swipe-pip.hovered {
+    background: @accent_fill;
+}
+
+Container.swipe-pip.pressed {
+    background: @accent_fill;
+    opacity: 0.7;
 }
 
 Container.swipe-pip.selected {

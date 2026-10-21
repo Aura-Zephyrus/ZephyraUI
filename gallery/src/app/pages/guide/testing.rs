@@ -41,28 +41,28 @@ pub fn page(g: &Gallery) -> Element {
         "testing",
         "page-testing",
         vec![
-            controls::text_label(
-                "testing-blurb",
+            controls::
+                text_label("testing-blurb",
                 "Three layers of self-verification, from fastest to slowest. Each guards a different class of silent failure.",
                 "text-body",
             ),
             // 当前状态：开发者跑命令时最想知道的三个值。
-            pages::section(
-                "testing-current",
+            pages::
+                section("testing-current",
                 "Current state",
                 vec![
-                    pages::demo("Route", controls::text_label(
-                        "testing-route",
+                    pages::demo(g.tr("ui.route"), controls::
+                        text_label("testing-route",
                         g.route,
                         "text-body",
                     )),
-                    pages::demo("Language", controls::text_label(
-                        "testing-lang",
+                    pages::demo(g.tr("ui.language"), controls::
+                        text_label("testing-lang",
                         SUPPORTED[g.lang.min(SUPPORTED.len() - 1)],
                         "text-body",
                     )),
-                    pages::demo("Theme", controls::text_label(
-                        "testing-theme",
+                    pages::demo(g.tr("ui.theme"), controls::
+                        text_label("testing-theme",
                         if g.wants_dark { "Dark" } else { "Light" },
                         "text-body",
                     )),
@@ -73,13 +73,13 @@ pub fn page(g: &Gallery) -> Element {
             // 开发者改了 `.zstyle`，第一条红线就是 zstylec 的语法检查。
             // 它防的是**拼错属性名** —— 那种错会让整条规则静默失效，
             // 而画面上只是「这个控件看起来不对」。
-            pages::section(
-                "testing-zstyle",
+            pages::
+                section("testing-zstyle",
                 "1. Stylesheet syntax",
-                vec![pages::demo(
-                    "Check a stylesheet",
-                    controls::text_label(
-                        "testing-zstyle-cmd",
+                vec![pages::
+                    demo(g.tr("ui.check-a-stylesheet"),
+                    controls::
+                        text_label("testing-zstyle-cmd",
                         "cargo run -p zstylec -- check pages.zstyle",
                         "text-caption",
                     ),
@@ -94,33 +94,33 @@ pub fn page(g: &Gallery) -> Element {
             // ⚠ `--route` 必须显式给：不给只出第一页，后面几页的样式错误
             // 要等窗口路才暴露。而**未知路由直接退出**，不静默回首页 ——
             // 出图工具静默给错图，比直接失败恶劣得多。
-            pages::section(
-                "testing-dump",
+            pages::
+                section("testing-dump",
                 "2. CPU raster dump",
                 vec![
-                    pages::demo(
-                        "Dump current route",
-                        controls::text_label(
-                            "testing-dump-cmd",
+                    pages::
+                        demo(g.tr("ui.dump-current-route"),
+                        controls::
+                            text_label("testing-dump-cmd",
                             "cargo run -p zephyra-gallery --bin gallery -- --dump-cpu",
                             "text-caption",
                         ),
                     ),
-                    pages::demo(
-                        "Dump a specific route",
-                        controls::text_label(
-                            "testing-dump-route",
+                    pages::
+                        demo(g.tr("ui.dump-a-specific-route"),
+                        controls::
+                            text_label("testing-dump-route",
                             "  --route reference --lang zh-Hans",
                             "text-caption",
                         ),
                     ),
-                    pages::demo(
-                        // 参考层的一族一屏：`--route reference` 只出第 0 族，
+                    pages::
+                        demo(// 参考层的一族一屏：`--route reference` 只出第 0 族，
                         // 另外几族要靠 `--family` 才看得见（无滚动的页面里，
                         // 「装不下被裁掉」只在逐族出图时暴露）。
                         "Dump one reference family",
-                        controls::text_label(
-                            "testing-dump-family",
+                        controls::
+                            text_label("testing-dump-family",
                             "  --family 3   # --list-families 列合法值",
                             "text-caption",
                         ),
@@ -132,22 +132,22 @@ pub fn page(g: &Gallery) -> Element {
             // 开发者改完结构（加页面、改状态、动样式表），跑一次门禁。
             // 它们全部按**整棵树 × 全部页面 × 全部交互态**判 —— 逐函数查
             // 只能查到「我记得去查的那个」。
-            pages::section(
-                "testing-gates",
+            pages::
+                section("testing-gates",
                 "3. Tree-level gates",
                 vec![
-                    pages::demo(
-                        "Run all gallery gates",
-                        controls::text_label(
-                            "testing-gates-cmd",
+                    pages::
+                        demo(g.tr("ui.run-all-gallery-gates"),
+                        controls::
+                            text_label("testing-gates-cmd",
                             "cargo test -p zephyra-gallery",
                             "text-caption",
                         ),
                     ),
-                    pages::demo(
-                        "What they guard",
-                        controls::text_label(
-                            "testing-gates-what",
+                    pages::
+                        demo(g.tr("ui.what-they-guard"),
+                        controls::
+                            text_label("testing-gates-what",
                             "Style tokens, dead rules, hit-test, breakpoints, no appearance in source",
                             "text-caption",
                         ),
@@ -160,11 +160,11 @@ pub fn page(g: &Gallery) -> Element {
             // 按新语言重建 —— 与出图路的 `--lang` 参数共享同一个状态字段。
             // 这不是装饰：门禁 `every_page_carries_its_own_controls` 要求每页
             // 至少一个真控件，而「切语言看出图对不对」恰好是这一页该有的动作。
-            pages::section(
-                "testing-try",
+            pages::
+                section("testing-try",
                 "Try it: switch language (same state as --lang)",
-                vec![pages::demo_many(
-                    "Language",
+                vec![pages::
+                    demo_many(g.tr("ui.language"),
                     SUPPORTED
                         .iter()
                         .enumerate()

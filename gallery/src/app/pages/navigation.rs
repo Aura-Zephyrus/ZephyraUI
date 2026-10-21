@@ -91,7 +91,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-sel",
                 "Selector bar",
                 vec![pages::demo(
-                    "Range",
+                    g.tr("ui.range"),
                     controls::selector_bar(
                         "selbar",
                         SELECTOR,

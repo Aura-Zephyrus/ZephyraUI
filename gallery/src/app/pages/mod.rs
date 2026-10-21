@@ -134,6 +134,14 @@ pub const PAGES: &[Page] = &[
         icon: "doc",
         build: reference::page,
     },
+    // 液态玻璃：一等路由（四个 `[−]/[+]` 步进器调折射参数），
+    // 不再是 reference 页的第 8 族。
+    Page {
+        id: "glass",
+        title: "Liquid Glass",
+        icon: "sliders",
+        build: effects::page,
+    },
     // Settings 排在最后，但**不是** `ROUTES` 的一员（它由 shell 置底）。
     Page {
         id: "settings",

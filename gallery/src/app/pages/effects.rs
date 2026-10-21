@@ -1,4 +1,10 @@
-//! 液态玻璃：折射（`Filter::Refraction`）+ 既有滤镜。
+//! 液态玻璃：折射（`Filter::Refraction`）+ 参数实验台。
+//!
+//! # 为什么提升为一等路由
+//!
+//! 液态玻璃是 core 滤镜能力最有说服力的展示：折射参数**运行期可调**，
+//! 点 `[−]/[+]` 就能看到位移实时变化。藏在 `reference` 页的第 8 族时要点两下
+//! 才看得到，而它的四个步进器正是本页最不该藏起来的东西。
 //!
 //! # 这一页要展示的是「透过玻璃看到后面是什么」
 //!
@@ -32,39 +38,39 @@ use crate::app::pages;
 use crate::app::Gallery;
 
 /// 玻璃**后面**铺的内容 —— **折射的输入**，不是装饰。
-const BACKDROP_TEXT: &[&str] = &[
-    "The quick brown fox jumps over the lazy dog.",
-    "Refraction samples what is already on screen.",
-    "Remove these lines and the glass looks broken.",
-];
-
-/// 三块玻璃的 key 与标题。
 ///
-/// ⚠ **不带强度分类名**。旧版这里是 `.weak` / `.medium` / `.strong`，参数由
-/// 样式表的 `filter: refraction(...)` 给 —— 那等于把参数钉死成三档。
-/// 现在参数由 [`Gallery::glass`] 逐帧算，三块玻璃**共用同一组**，于是拖一次
-/// 就能同时看���变化（分成三档反而看不出「改的到底是哪一项」）。
-const PANES: &[(&str, &str)] = &[
-    ("glass:a", "Thin"),
-    ("glass:b", "Normal"),
-    ("glass:c", "Thick"),
-];
+/// ⚠ 这是函数而不是 `const`：三行走 [`Gallery::tr`]，而 `g` 只在运行期有。
+fn backdrop_text(g: &Gallery) -> [&'static str; 3] {
+    [
+        g.tr("ui.the-quick-brown-fox-jumps-over-the-lazy-dog"),
+        g.tr("ui.refraction-samples-what-is-already-on-screen"),
+        g.tr("ui.remove-these-lines-and-the-glass-looks-broken"),
+    ]
+}
+
+/// 三块玻璃的 key（纯身份，不参与路由；标题是文案，走 [`Gallery::tr`]）。
+const PANE_KEYS: &[&str] = &["glass:a", "glass:b", "glass:c"];
 
 pub fn page(g: &Gallery) -> Element {
     pages::page_root(
-        "effects",
-        "page-effects",
+        "glass",
+        "page-glass",
         vec![
+            controls::text_label(
+                "glass-blurb",
+                g.tr("ui.liquid-glass-refraction-parameters-are-runtime-adjustable"),
+                "text-body",
+            ),
             pages::section(
                 "sec-params",
-                "Refraction parameters",
+                g.tr("ui.refraction-parameters"),
                 vec![params(g), stage(g)],
             ),
             pages::section(
                 "sec-filters",
-                "Filters",
+                g.tr("ui.filters"),
                 vec![pages::demo_many(
-                    "Progress",
+                    g.tr("ui.progress"),
                     vec![
                         controls::progress_bar("fx-soft", 0.35, "running"),
                         controls::progress_bar("fx-hard", 0.8, "error"),
@@ -150,7 +156,13 @@ fn stepper(g: &Gallery, param: Param, value: &'static str) -> Element {
 /// 位移 0 像素画出来几乎一样 —— 于是「折射没生效」与「折射生效但看不出来」
 /// 没法区分，而后者会被当成前者去查着色器。深蓝 + 白字把这个问题挡在门外。
 fn stage(g: &Gallery) -> Element {
-    pages::page_root("glass-stage", "glass-stage", vec![backdrop(), panes(g)])
+    pages::page_root("glass-stage", "glass-stage", vec![backdrop(g), panes(g)])
+}
+
+/// 三块玻璃的标题文案（走 [`Gallery::tr`]，三语）。
+/// 与 [`panes`] 分开是因为 titles 需要 `g.tr()` 而 key 不需要。
+fn pane_titles(g: &Gallery) -> Vec<&'static str> {
+    vec![g.tr("ui.thin"), g.tr("ui.normal"), g.tr("ui.thick")]
 }
 
 /// 玻璃**背后**的内容。
@@ -158,11 +170,11 @@ fn stage(g: &Gallery) -> Element {
 /// ⚠ 这些行不是装饰，它们是折射要采样的东西。删掉之后玻璃块与纯色底板背景
 /// 之间没有任何差别，于是「折射没生效」看起来像 bug，而真正的原因是
 /// **没有可供折射的内容**。
-fn backdrop() -> Element {
+fn backdrop(g: &Gallery) -> Element {
     pages::page_root(
         "glass-backdrop",
         "glass-backdrop",
-        BACKDROP_TEXT
+        backdrop_text(g)
             .iter()
             .enumerate()
             .map(|(i, l)| controls::text_label(backdrop_key(i), l, "glass-bg-text"))
@@ -180,19 +192,23 @@ fn panes(g: &Gallery) -> Element {
     // ⚠ 每块玻璃**各自重建**链，而不是建一次后复用：`FilterChain` 不是 `Copy`，
     // 而 `map` 的闭包是 `FnMut` —— 捕获一个要按值取用的变量会编译不过。
     // 重建的代价是四次数组下标，零分配。
+    // 标题走 `pane_titles(g)`（三语）；key 走 `PANE_KEYS`（静态身份）。
+    // 两者按下标对齐 —— 改块数时同步改 [`PANE_KEYS`] 与 [`pane_titles`]。
+    let titles = pane_titles(g);
     pages::page_root(
         "glass-panes",
         "glass-panes",
-        PANES
+        PANE_KEYS
             .iter()
-            .map(|(key, title)| {
+            .zip(titles.iter())
+            .map(|(&key, title)| {
                 pages::page_root(
                     "cell",
                     "glass-cell",
                     vec![
                         controls::text_label(pane_title_key(key), title, "glass-title"),
                         Element::new(NodeTag::Container)
-                            .with_key(*key)
+                            .with_key(key)
                             .style("glass-pane")
                             .with(
                                 &props::FILTER,

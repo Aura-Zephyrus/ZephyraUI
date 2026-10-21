@@ -50,7 +50,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-check",
                 "Checkbox",
                 vec![pages::demo_many(
-                    "Multiple",
+                    g.tr("ui.multiple"),
                     vec![
                         controls::check_box(
                             "check:alpha",
@@ -80,7 +80,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-radio",
                 "Radio",
                 vec![pages::demo_many(
-                    "Single",
+                    g.tr("ui.single"),
                     RADIO_ITEMS
                         .iter()
                         .enumerate()
@@ -100,7 +100,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-switch",
                 "Switch",
                 vec![pages::demo(
-                    "One state",
+                    g.tr("ui.one-state"),
                     controls::toggle_switch(
                         "switch:master",
                         g.switch_on,
@@ -113,7 +113,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-seg",
                 "Segmented",
                 vec![pages::demo(
-                    "Pick one",
+                    g.tr("ui.pick-one"),
                     controls::segmented(
                         "segbar",
                         SEGS,

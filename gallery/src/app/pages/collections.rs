@@ -33,12 +33,34 @@ pub const LIST_ITEMS: &[(&str, &str)] = &[
 ];
 
 /// TableView 的表头与行。
-const TABLE_HEAD: &[&str] = &["Backdrop", "Cost", "Available"];
+///
+/// 表头走 [`g_tr_head`]（文案）；数据行**不翻译** —— 材质名（Mica/Acrylic/Solid）
+/// 与系统版本（Win11/Win10+）是**内容数据**，不是 UI 文案，与 `COMBO_OPTIONS`
+/// 同一处理（见 `pages::basics`）。
 const TABLE_ROWS: &[&[&str]] = &[
     &["Mica", "Low", "Win11"],
     &["Acrylic", "High", "Win10+"],
     &["Solid", "None", "All"],
 ];
+
+/// 表头文案 → `g.tr()`。const 上下文调不了 `g.tr()`，所以是函数。
+fn g_tr_head(g: &Gallery, text: &'static str) -> &'static str {
+    match text {
+        "Backdrop" => g.tr("ui.backdrop"),
+        "Cost" => g.tr("ui.cost"),
+        "Available" => g.tr("ui.available"),
+        _ => text,
+    }
+}
+
+/// TableView 的表头（翻译后的文案）。
+fn table_head(g: &Gallery) -> [&'static str; 3] {
+    [
+        g_tr_head(g, "Backdrop"),
+        g_tr_head(g, "Cost"),
+        g_tr_head(g, "Available"),
+    ]
+}
 
 pub fn page(g: &Gallery) -> Element {
     pages::page_root(
@@ -47,7 +69,7 @@ pub fn page(g: &Gallery) -> Element {
         vec![
             pages::section(
                 "sec-list",
-                "List",
+                g.tr("ui.list"),
                 vec![controls::list_view(
                     "list",
                     LIST_ITEMS,
@@ -64,13 +86,19 @@ pub fn page(g: &Gallery) -> Element {
             ),
             pages::section(
                 "sec-table",
-                "Table",
+                g.tr("ui.table"),
                 vec![
                     // ⚠ 数据格（`td:RC`）是可点的：点击经 `click` 的 `td:`
                     // 分支写 `table_cell`，下面的 caption 显示选中格的内容。
-                    controls::table_view("table", TABLE_HEAD, TABLE_ROWS),
+                    controls::table_view(
+                        "table",
+                        &table_head(g),
+                        TABLE_ROWS,
+                        g.hovered_name(),
+                        g.pressed_name(),
+                    ),
                     pages::demo(
-                        "Selected cell",
+                        g.tr("ui.selected-cell"),
                         controls::text_label(
                             "table-cell",
                             table_cell_text(g.table_cell),
@@ -81,11 +109,11 @@ pub fn page(g: &Gallery) -> Element {
             ),
             pages::section(
                 "sec-avatar",
-                "Avatar",
+                g.tr("ui.avatar"),
                 // 头像是**展示**件：它的语义是「这个用户长这样」，没有点击
                 // 动作可言。白名单在门禁里注明。
                 vec![pages::demo_many(
-                    "Sizes",
+                    g.tr("ui.sizes"),
                     vec![
                         controls::avatar("avatar:a", "ZY", false),
                         controls::avatar("avatar:b", "AB", true),

@@ -1,19 +1,17 @@
-//! 布局与响应式：core 的三个真实边界。
+//! 布局与响应式：flex 的填充与折行，以及仍真实存在的边界。
 //!
 //! # 这一章教什么
 //!
-//! core 的三个边界，每条都配一个**看得见**的例子。开发者先知道边界在哪，
-//! 才不会把「内容太多」当成 bug 去查样式表。
+//! 两个 flex 例子（填充、折行）+ 两条仍然真实的边界（无滚动、断点）外加
+//! 44 epx 触控目标。先知道「flex 要容器**显式声明**才生效」，才不会把
+//! 「写了 flex-grow 却没反应」当成 bug 去查样式表 —— 没声明的容器走 Stack，
+//! 子项的 flex-grow 一概不生效（core 的门禁
+//! `layout_tests::a_container_without_flex_declarations_ignores_flex_grow` 钉住）。
 //!
-//! # 为什么这三条边界值得单独一页
+//! # 无滚动为什么还在
 //!
-//! 它们都不会报错：
-//! - **无滚动** → 内容超出的唯一表现是下沿被吃掉
-//! - **无折行** → 「横排几列」是排出来的，不是算出来的
-//! - **无 flex-grow** → 垂直方向的铺满要靠定高占位
-//!
-//! 三条合起来的症状是「画面上东西不见了」，而排查方向有十几种。把它们写在
-//! 一页上，比让开发者踩一遍划算。
+//! core 没有滚动容器：内容超出的唯一表现是下沿被裁掉。grow / 折行只改变
+//! 「内容怎么排」，不带来滚动 —— 所以它俩不是这一条的替代品。
 
 use zephyra_core::element::Element;
 use zephyra_ui::controls;
@@ -28,8 +26,65 @@ pub fn page(g: &Gallery) -> Element {
         vec![
             controls::text_label(
                 "layout-blurb",
-                "Three core boundaries: no scroll, no wrap, no flex-grow. Each is invisible until you hit it.",
+                g.tr(
+                    "ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll",
+                ),
                 "text-body",
+            ),
+            // ---- flex：填充与折行 ----
+            //
+            // 两个容器**并排**放在一行里（内容区高 756，分两行会把本页最后一节
+            // 的触控按钮顶出客户区 —— 而那正是这一页自己教的「没有滚动，掉出去
+            // 就是掉出去」）。两个容器都在样式表里声明了 `flex-direction`
+            // （`.fx-row` / `.fx-wrap`），所以它们走分配路径：左容器演示 grow，
+            // 右格吃掉余下的全部行宽（420 − 100 − 10 = 310）；右容器演示折行，
+            // 340px 装得下三个 100px 格 + 两个 10px 间距，第四个折到第二行。
+            pages::section(
+                "layout-flex",
+                g.tr("ui.flexbox-rows-that-grow-and-wrap"),
+                vec![pages::demo_many(
+                    g.tr("ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines"),
+                    vec![
+                        // grow：右格吃掉余下的全部行宽（420 − 100 − 10 = 310）。
+                        pages::page_root(
+                            "fx-grow-demo",
+                            "fx-row",
+                            vec![
+                                controls::card(
+                                    "fx-fixed",
+                                    "fx-cell",
+                                    vec![controls::text_label(
+                                        "fx-fixed-t",
+                                        g.tr("ui.fixed"),
+                                        "text-caption",
+                                    )],
+                                ),
+                                controls::card(
+                                    "fx-grow-cell",
+                                    "fx-grow",
+                                    vec![controls::text_label(
+                                        "fx-grow-t",
+                                        g.tr("ui.grows"),
+                                        "text-caption",
+                                    )],
+                                ),
+                            ],
+                        ),
+                        // 折行：340 装得下 100+10+100+10+100 = 330，装不下第四个。
+                        pages::page_root(
+                            "fx-wrap-demo",
+                            "fx-wrap",
+                            vec![
+                                controls::card("fx-w1", "fx-cell", vec![]),
+                                controls::card("fx-w2", "fx-cell", vec![]),
+                                controls::card("fx-w3", "fx-cell", vec![]),
+                                controls::card("fx-w4", "fx-cell", vec![]),
+                                controls::card("fx-w5", "fx-cell", vec![]),
+                                controls::card("fx-w6", "fx-cell", vec![]),
+                            ],
+                        ),
+                    ],
+                )],
             ),
             // ---- 边界一：无滚动 ----
             //
@@ -38,20 +93,49 @@ pub fn page(g: &Gallery) -> Element {
             // 那是 core 的当前边界，不是 bug。
             pages::section(
                 "layout-noscroll",
-                "No scroll — overflow is clipped",
+                g.tr("ui.no-scroll-overflow-is-clipped"),
                 vec![
-                    pages::demo("Card 1", controls::card("lc-1", "card", vec![
-                        controls::text_label("lc-1-t", "First", "text-body-strong"),
-                        controls::text_label("lc-1-d", "Fits inside the card", "text-caption"),
-                    ])),
-                    pages::demo("Card 2", controls::card("lc-2", "card", vec![
-                        controls::text_label("lc-2-t", "Second", "text-body-strong"),
-                        controls::text_label("lc-2-d", "Also fits", "text-caption"),
-                    ])),
-                    pages::demo("Card 3", controls::card("lc-3", "card", vec![
-                        controls::text_label("lc-3-t", "Third", "text-body-strong"),
-                        controls::text_label("lc-3-d", "Watch me when the window shrinks", "text-caption"),
-                    ])),
+                    pages::demo(
+                        g.tr("ui.card-1"),
+                        controls::card(
+                            "lc-1",
+                            "card",
+                            vec![
+                                controls::text_label("lc-1-t", g.tr("ui.first"), "text-body-strong"),
+                                controls::text_label(
+                                    "lc-1-d",
+                                    g.tr("ui.fits-inside-the-card"),
+                                    "text-caption",
+                                ),
+                            ],
+                        ),
+                    ),
+                    pages::demo(
+                        g.tr("ui.card-2"),
+                        controls::card(
+                            "lc-2",
+                            "card",
+                            vec![
+                                controls::text_label("lc-2-t", g.tr("ui.second"), "text-body-strong"),
+                                controls::text_label("lc-2-d", g.tr("ui.also-fits"), "text-caption"),
+                            ],
+                        ),
+                    ),
+                    pages::demo(
+                        g.tr("ui.card-3"),
+                        controls::card(
+                            "lc-3",
+                            "card",
+                            vec![
+                                controls::text_label("lc-3-t", g.tr("ui.third"), "text-body-strong"),
+                                controls::text_label(
+                                    "lc-3-d",
+                                    g.tr("ui.watch-me-when-the-window-shrinks"),
+                                    "text-caption",
+                                ),
+                            ],
+                        ),
+                    ),
                 ],
             ),
             // ---- 边界二：断点三档 ----
@@ -62,13 +146,19 @@ pub fn page(g: &Gallery) -> Element {
                 "layout-breakpoints",
                 "Breakpoints: small / medium / large",
                 vec![pages::demo(
-                    "Current breakpoint",
+                    g.tr("ui.current-breakpoint"),
                     controls::text_label(
                         "layout-bp",
                         match g.width_class() {
-                            zephyra_core::responsive::WidthClass::Small => "Small — nav collapsed to icons",
-                            zephyra_core::responsive::WidthClass::Medium => "Medium — nav shows labels",
-                            zephyra_core::responsive::WidthClass::Large => "Large — full layout",
+                            zephyra_core::responsive::WidthClass::Small => {
+                                g.tr("ui.small-nav-collapsed-to-icons")
+                            }
+                            zephyra_core::responsive::WidthClass::Medium => {
+                                g.tr("ui.medium-nav-shows-labels")
+                            }
+                            zephyra_core::responsive::WidthClass::Large => {
+                                g.tr("ui.large-full-layout")
+                            }
                         },
                         "text-body-strong",
                     ),
@@ -76,30 +166,36 @@ pub fn page(g: &Gallery) -> Element {
             ),
             // ---- 边界三：触控目标 ----
             //
-            // 官方触控目标是 44 epx。小于这个尺寸的按钮在触控设备上点不准 ——
-            // 而鼠标路径不受影响。`Gallery::touch_target` 给出官方换算，
+            // 官方触控目标是 44 epx。小于这个尺寸的按钮在触控设备上点不中 ——
+            // 而鼠标路径不受影响。`Gallery::touch_target` 给出官方换算公式，
             // 门禁 `touch_target_converts_to_official_ephemeral_px` 钉住它。
-            // 两个按钮都发 `act:` key —— 触发反馈与尺寸演示互不干扰。
+            // 两个按钮都发 `act:` key —— 反馈与尺寸演示互不干扰。
             pages::section(
                 "layout-touch",
                 "Touch targets need 44 epx",
                 vec![
-                    pages::demo("44 epx (correct)", controls::button(
-                        "act:touch-ok",
-                        "Big enough",
-                        None,
-                        "standard",
-                        g.hovers("act:touch-ok"),
-                        g.holds("act:touch-ok"),
-                    )),
-                    pages::demo("28 epx (too small)", controls::round_button(
-                        "act:touch-bad",
-                        "Tiny",
-                        None,
-                        false,
-                        g.hovers("act:touch-bad"),
-                        g.holds("act:touch-bad"),
-                    )),
+                    pages::demo(
+                        g.tr("ui.44-epx-correct"),
+                        controls::button(
+                            "act:touch-ok",
+                            "Big enough",
+                            None,
+                            "standard",
+                            g.hovers("act:touch-ok"),
+                            g.holds("act:touch-ok"),
+                        ),
+                    ),
+                    pages::demo(
+                        g.tr("ui.28-epx-too-small"),
+                        controls::round_button(
+                            "act:touch-bad",
+                            "Tiny",
+                            None,
+                            false,
+                            g.hovers("act:touch-bad"),
+                            g.holds("act:touch-bad"),
+                        ),
+                    ),
                 ],
             ),
         ],

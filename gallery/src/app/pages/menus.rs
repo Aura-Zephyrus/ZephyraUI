@@ -83,7 +83,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-tools",
                 "Toolbar",
                 vec![pages::demo_many(
-                    "Tools",
+                    g.tr("ui.tools"),
                     TOOLS
                         .iter()
                         .map(|(id, icon)| {
@@ -96,7 +96,7 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-dd",
                 "Drop-down",
                 vec![pages::demo(
-                    "Button",
+                    g.tr("ui.button"),
                     controls::drop_down_button(
                         "dd:demo",
                         "Options",

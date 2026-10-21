@@ -31,14 +31,14 @@ pub fn page(g: &Gallery) -> Element {
             // 页首一两句说明：开发者要的是「这页在讲什么」，不是一篇文档。
             controls::text_label(
                 "guide-blurb",
-                "Click the button. The count goes up. That is the whole pipeline.",
+                g.tr("ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline"),
                 "text-body",
             ),
             pages::demo(
-                "Counter",
+                g.tr("ui.counter"),
                 controls::button(
                     "guide-inc",
-                    "Click me",
+                    g.tr("ui.click-me"),
                     None,
                     "accent",
                     g.hovers("guide-inc"),

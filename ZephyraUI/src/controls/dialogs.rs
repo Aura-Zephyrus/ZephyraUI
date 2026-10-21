@@ -23,7 +23,7 @@ use zephyra_core::id::NodeTag;
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 
-use super::button;
+use super::{button, state, with_classes};
 
 /// 亚克力卡（RinUI AcrylicBrush 的语义降级形态）：半透明卡 + 边框。
 pub fn acrylic_card(key: &'static str, children: Vec<Element>) -> Element {
@@ -107,6 +107,8 @@ pub fn date_picker(
     heads: &'static [&'static str],
     cells: &'static [Option<u8>],
     selected: u8,
+    hovered: Option<&str>,
+    pressed: Option<&str>,
 ) -> Element {
     let mut children = vec![Element::new(NodeTag::Container)
         .with_key("heads")
@@ -129,12 +131,18 @@ pub fn date_picker(
             .iter()
             .enumerate()
             .map(|(c, day)| {
+                let cell_key_str = dp_cell_key(r, c);
                 let mut cell = Element::new(NodeTag::Container)
-                    .with_key(dp_cell_key(r, c))
+                    .with_key(cell_key_str)
                     .style("dp-cell");
                 if let Some(d) = day {
                     // 有日期的格子才可点：空白格不是日期，点了不该发生任何事
                     // （与日历的常规行为一致）。
+                    let mut classes = Vec::new();
+                    classes.extend(state(
+                        hovered == Some(cell_key_str),
+                        pressed == Some(cell_key_str),
+                    ));
                     cell = cell.with(&props::INTERACTIVE, PropertyValue::bool(true));
                     let mut filled = Element::new(NodeTag::Container)
                         .with_key("day")
@@ -149,6 +157,7 @@ pub fn date_picker(
                     }
                     filled = filled.with_children([label]);
                     cell = cell.with_children([filled]);
+                    cell = with_classes(cell, &classes);
                 }
                 cell
             })
@@ -178,12 +187,14 @@ pub fn time_picker(
     hour: &'static str,
     minutes: &'static [(&'static str, &'static str)],
     minute: &'static str,
+    hovered: Option<&str>,
+    pressed: Option<&str>,
 ) -> Element {
     let col =
         |id: &'static str, entries: &'static [(&'static str, &'static str)], sel: &'static str| {
             let items: Vec<Element> = entries
                 .iter()
-                .map(|(item_key, label)| tp_item(item_key, label, *label == sel))
+                .map(|(item_key, label)| tp_item(item_key, label, *label == sel, hovered, pressed))
                 .collect();
             Element::new(NodeTag::Container)
                 .with_key(id)
@@ -198,12 +209,23 @@ pub fn time_picker(
 
 // ---------------------------------------------------------------- 内部
 
-fn tp_item(item_key: &'static str, text: &'static str, selected: bool) -> Element {
-    let mut el = Element::new(NodeTag::Container)
-        .with_key(item_key)
-        // 每个时刻项是可点的：选中哪个时刻是应用的状态（控件只发 key）。
-        .with(&props::INTERACTIVE, PropertyValue::bool(true))
-        .style("tp-item");
+fn tp_item(
+    item_key: &'static str,
+    text: &'static str,
+    selected: bool,
+    hovered: Option<&str>,
+    pressed: Option<&str>,
+) -> Element {
+    let mut classes = Vec::new();
+    classes.extend(state(hovered == Some(item_key), pressed == Some(item_key)));
+    let mut el = with_classes(
+        Element::new(NodeTag::Container)
+            .with_key(item_key)
+            // 每个时刻项是可点的：选中哪个时刻是应用的状态（控件只发 key）。
+            .with(&props::INTERACTIVE, PropertyValue::bool(true))
+            .style("tp-item"),
+        &classes,
+    );
     let mut label = Element::new(NodeTag::Text)
         .with_key("label")
         .with(&props::TEXT, PropertyValue::static_str(text))

@@ -67,13 +67,19 @@ Container.page-reference { direction: vertical; spacing: 24px; cross-align: stre
  * reference 页里）。少一条就是「那一族嵌进来没有间距」。 */
 Container.page-basics   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-toggles  { direction: vertical; spacing: 24px; cross-align: stretch; }
-Container.page-layout   { direction: vertical; spacing: 24px; cross-align: stretch; }
+/* `.page-layout` 比别的页紧一档（16px 而不是 24px）：这一页现在挂**四**节
+ * （flex 演示 + 无滚动 + 断点 + 触控目标），24px 会把最后一节的按钮顶出
+ * 800px 高的客户区 —— 而那正好撞上这一页自己教的那条边界：掉出去就是
+ * 掉出去，没有滚动条可以救。门禁 `hit_test_agrees_with_the_painted_rects`
+ * 钉住这个：按钮矩形掉出客户区就红。 */
+Container.page-layout   { direction: vertical; spacing: 16px; cross-align: stretch; }
 Container.page-collections { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-menus    { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-navigation { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-status   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-dialogs  { direction: vertical; spacing: 24px; cross-align: stretch; }
-Container.page-effects  { direction: vertical; spacing: 24px; cross-align: stretch; }
+/* 液态玻璃页提升为一等路由后，根容器分类名从 .page-effects 改成 .page-glass。 */
+Container.page-glass    { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-paging   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-settings { direction: vertical; spacing: 20px; cross-align: stretch; }
 
@@ -253,3 +259,44 @@ Text.styling-note {
  * 44~48 这一档，参数面板是给人**点**的控件，不是给人看的装饰。实测（1400×800
  * 画布）一行四组共 684px，落在内容卡的 732px 里，压到 28px 省下的 128px 没有
  * 别的用途。 */
+
+/* ---- 布局页：flex 的填充与折行（`guide/layout.rs`）----
+ *
+ * flex 不是第三种排布词汇：容器**显式声明** `flex-direction` 或 `flex-wrap`
+ * 之后，那一个容器才从 Stack 切到分配路径（grow / shrink / 折行 / 对齐）。
+ * 没声明的一律走 Stack，子项的 `flex-grow` 一概不生效 —— core 的门禁
+ * `layout_tests::a_container_without_flex_declarations_ignores_flex_grow`
+ * 钉住这条。所以这里的 `flex-direction` 是**开关**，不是装饰。
+ *
+ * `gap` 是 `spacing` 的 CSS 别名（同一条属性，编译器里映射到同一个键）。
+ * 这一页同时示范别名，省得读者以为要记两套名字。 */
+Container.fx-row {
+    flex-direction: row;
+    gap: 10px;
+    /* 行宽定死才有 grow 可演示：右格拿走 420 − 100 − 10 = 310。
+     * 不给宽度的话容器按内容收窄，grow 没有自由空间，画面上什么都看不出。 */
+    width: 420px;
+}
+
+/* 折行演示：340 装得下 100+10+100+10+100 = 330，装不下第四个 → 折行。 */
+Container.fx-wrap {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 340px;
+}
+
+/* 格子：宽 100 让折行位置可预测；高 56 是为了装下 `.card` 的 14px 内边距
+ * 加一行 12px 文字（44 会把文字压出下沿）。 */
+Container.fx-cell {
+    width: 100px;
+    height: 56px;
+}
+
+/* 填充格：基数仍是 100，`flex-grow: 1` 让它吃掉行内余下的全部宽度。
+ * 与 `.fx-cell` 分开成两条规则，因为一个元素只在这两格里二选一。 */
+Container.fx-grow {
+    width: 100px;
+    height: 56px;
+    flex-grow: 1;
+}

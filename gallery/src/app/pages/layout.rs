@@ -28,16 +28,16 @@ pub fn page(g: &Gallery) -> Element {
                             "card-a",
                             "card",
                             vec![
-                                controls::text_label("ca-t", "Card", "text-body-strong"),
-                                controls::caption("ca-d", "A plain surface."),
+                                controls::text_label("ca-t", g.tr("ui.card"), "text-body-strong"),
+                                controls::caption("ca-d", g.tr("ui.a-plain-surface")),
                             ],
                         ),
                         controls::card(
                             "card-b",
                             "card",
                             vec![
-                                controls::text_label("cb-t", "Card", "text-body-strong"),
-                                controls::caption("cb-d", "Same class, other content."),
+                                controls::text_label("cb-t", g.tr("ui.card"), "text-body-strong"),
+                                controls::caption("cb-d", g.tr("ui.same-class-other-content")),
                             ],
                         ),
                     ],
@@ -51,8 +51,12 @@ pub fn page(g: &Gallery) -> Element {
                     "Advanced",
                     g.expanded,
                     vec![
-                        controls::text_label("exp-l1", "Hidden until expanded.", "text-caption"),
-                        controls::text_label("exp-l2", "Second line.", "text-caption"),
+                        controls::text_label(
+                            "exp-l1",
+                            g.tr("ui.hidden-until-expanded"),
+                            "text-caption",
+                        ),
+                        controls::text_label("exp-l2", g.tr("ui.second-line"), "text-caption"),
                     ],
                 )],
             ),

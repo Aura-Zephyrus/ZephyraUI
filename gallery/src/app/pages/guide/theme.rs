@@ -23,8 +23,8 @@ pub fn page(g: &Gallery) -> Element {
         "theme",
         "page-theme",
         vec![
-            controls::text_label(
-                "theme-blurb",
+            controls::
+                text_label("theme-blurb",
                 "Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins.",
                 "text-body",
             ),
@@ -32,11 +32,11 @@ pub fn page(g: &Gallery) -> Element {
             //
             // 开发者点这个开关，看到的不是「颜色变了」—— 而是「令牌值变了」。
             // 颜色全在 `.zstyle` 的 `@令牌` 里，所以切换主题不需要碰源码。
-            pages::section(
-                "theme-darklight",
+            pages::
+                section("theme-darklight",
                 "Dark / Light",
-                vec![pages::demo(
-                    "Toggle theme",
+                vec![pages::
+                    demo(g.tr("ui.toggle-theme"),
                     controls::toggle_switch(
                         "theme-toggle",
                         g.wants_dark,
@@ -53,8 +53,8 @@ pub fn page(g: &Gallery) -> Element {
             //
             // ⚠ 语言标签必须 `&'static`：`view()` 每帧重建树，运行期拼字符串
             // 会每帧泄漏。所以这里用 `SUPPORTED` 常量表，不用 `format!`。
-            pages::section(
-                "theme-i18n",
+            pages::
+                section("theme-i18n",
                 "Language (en / zh-Hans / ja)",
                 vec![
                     pages::demo("English", controls::pill_button(
@@ -88,11 +88,11 @@ pub fn page(g: &Gallery) -> Element {
             // 「我想要 Mica 外观」是应用层的表达；「平台能不能开」由平台层回答。
             // 所以这里无条件发 `.mica`：平台不支持时，半透明标题栏叠在不透明
             // clear 上仍是可读的半透明色 —— 降级不崩。
-            pages::section(
-                "theme-mica",
+            pages::
+                section("theme-mica",
                 "Mica backdrop",
-                vec![pages::demo(
-                    "Toggle Mica",
+                vec![pages::
+                    demo(g.tr("ui.toggle-mica"),
                     controls::toggle_switch(
                         "theme-mica",
                         g.mica,
@@ -106,13 +106,13 @@ pub fn page(g: &Gallery) -> Element {
             // 开发者会问「当前是哪门语言」。答案是：自称不进文案表
             // （任何语言的用户看到的都是同一组「English / 中文 / 日本語」），
             // 它直接来自 `LANG_SELFS` 常量。
-            pages::section(
-                "theme-current",
+            pages::
+                section("theme-current",
                 "Current locale",
-                vec![pages::demo(
-                    "You are here",
-                    controls::text_label(
-                        "theme-locale",
+                vec![pages::
+                    demo(g.tr("ui.you-are-here"),
+                    controls::
+                        text_label("theme-locale",
                         SUPPORTED[g.lang.min(SUPPORTED.len() - 1)],
                         "text-body-strong",
                     ),

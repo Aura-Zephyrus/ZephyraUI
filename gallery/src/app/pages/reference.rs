@@ -14,6 +14,9 @@
 //!
 //! [`crate::app::REF_FAMILIES`] 是唯一真相：segmented 的段、`click()` 的
 //! 查表、门禁的遍历都从它来。加一族只改那张表。
+//!
+//! ⚠ `effects`（液态玻璃）已不在此表中——它是一等路由，见 [`crate::app::ROUTES`]。
+//! 所以现在是 **9 族**，不是十族。
 
 use zephyra_core::element::Element;
 use zephyra_ui::controls;
@@ -72,7 +75,6 @@ fn family_content(g: &Gallery) -> Element {
         Some("navigation") => crate::app::pages::navigation::page(g),
         Some("status") => crate::app::pages::status::page(g),
         Some("dialogs") => crate::app::pages::dialogs::page(g),
-        Some("effects") => crate::app::pages::effects::page(g),
         Some("paging") => crate::app::pages::paging::page(g),
         _ => crate::app::pages::basics::page(g),
     }
@@ -89,7 +91,6 @@ fn family_label(id: &str) -> &'static str {
         "navigation" => "Navigation",
         "status" => "Status",
         "dialogs" => "Dialogs",
-        "effects" => "Liquid Glass",
         "paging" => "Paging",
         // ⚠ 不能写 `_ => id`：`id: &str` 的生命周期不是 `'static`，而函数
         // 返回 `&'static str`。未知 id 显示占位符 —— 与 [`family_content`]
@@ -103,7 +104,7 @@ fn family_label(id: &str) -> &'static str {
 /// # 为什么不是 `const fn`
 ///
 /// `&str` 上的 `match` 在常量上下文里还不允许（E0658，与
-/// `effects.rs::pane_title_key` 同一限制）。它每帧只调九次，运行期比较的
+/// `effects.rs::pane_title_key` 同一限制）。它每帧只调八次，运行期比较的
 /// 开销可忽略。
 fn seg_key(fam: &str) -> &'static str {
     match fam {
@@ -115,7 +116,6 @@ fn seg_key(fam: &str) -> &'static str {
         "navigation" => "ref:navigation",
         "status" => "ref:status",
         "dialogs" => "ref:dialogs",
-        "effects" => "ref:effects",
         "paging" => "ref:paging",
         _ => "ref:unknown",
     }

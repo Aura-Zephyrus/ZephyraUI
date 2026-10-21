@@ -56,6 +56,10 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("theme", "Theme & i18n", "settings"),
     ("testing", "Testing", "bell"),
     ("reference", "Controls", "doc"),
+    // 液态玻璃**提升为一等路由**：它有运行期可调的折射参数实验台，
+    // 藏在第 8 族要点两下才看得到，而四个 `[−]/[+]` 步进器正是最不该
+    // 藏起来的东西。图标选 `sliders` —— 这一页的核心是调参数。
+    ("glass", "Liquid Glass", "sliders"),
 ];
 
 /// 控件参考页的**族**（顺序即 segmented 的段顺序）。
@@ -81,10 +85,13 @@ pub const REF_FAMILIES: &[&str] = &[
     "navigation",
     "status",
     "dialogs",
-    "effects",
     // ⚠ 新族一律**追加在末尾**，不要插在中间：`ref_family` 是下标，
     // 门禁与 `--family` 都用下标引用（插中间会静默改掉已有序号的含义，
     // 而画面上只是「点了这一族出现那族」）。
+    //
+    // ⚠ `effects`（液态玻璃）已不在其中 —— 它提升为一等路由（见 [`ROUTES`]）：
+    // 四个 `[−]/[+]` 步进器是运行期调折射参数的实验台，藏在第 8 族要点两下
+    // 才看得到，而那是本页最不该藏的东西。现在 9 族。
     "paging",
 ];
 
@@ -129,7 +136,7 @@ pub const SUPPORTED: &[&str] = &["en", "zh-Hans", "ja"];
 /// 放进表里就得给 3 种语言各填 3 条共 9 条，而那 9 条内容两两相同 ——
 /// 表格里的重复迟早会被误改成"翻译"，而那正是错的。
 ///
-/// 对齐关系由门禁 `i18n_tests::self_described_locale_count_matches_supported_list` 钉住：
+/// 对齐关系由门禁 `every_language_name_is_counted_in_the_same_order` 钉住：
 /// 下标错位会让用户选了"English"却得到日文，而那在画面上完全看不出原因。
 pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 
@@ -143,11 +150,15 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 ///
 /// # 覆盖范围与未覆盖范围（不要误读这张表）
 ///
-/// 已接进视图：导航标题（11 条路由）、页头标题、应用名、页头工具按钮、
-/// 设置页几条。**未接**：各页正文（小节标题、控件标签、
-/// 演示文案）—— 那些仍是源码里的英文硬编码。这是**记账的债**，不是"已支持"：门禁
-/// `i18n_tests::no_locale_is_missing_keys` 覆盖的是本表列出的键，
-/// `i18n_tests::未接入的硬编码文案已记账` 钉住剩下的数量，见 `docs/developer/i18n.md` §5。
+/// 已接进视图：路由标题、页头、应用名、设置页、以及各页正文的
+/// demo 标签 / 控件标签。仍**未接**：少数分区标题与按钮标签
+/// （`guide/layout.rs` 的 "Breakpoints: small / medium / large" 之类）
+/// —— 那些仍是源码里的英文硬编码，是**记账的债**，不是"已支持"。
+///
+/// 键名是英文原文的 slug：[`Gallery::tr`] 找不到键时回退显示**键名本身**，
+/// 于是漏加条目时画面上是可读英文而不是乱码。这条覆盖由门禁
+/// `every_tr_key_used_in_source_exists_in_every_language` 逐语言查
+/// （它扫源码里每个 `g.tr("…")`，再反查 `catalog_keys()` —— 两个方向都查）。
 const CATALOG: &[(&str, &str, &str)] = &[
     // ---- en（默认语言）----
     ("en", "app.title", "ZephyraUI Gallery"),
@@ -158,6 +169,18 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "route.theme", "Theme & i18n"),
     ("en", "route.testing", "Testing"),
     ("en", "route.reference", "Controls"),
+    ("en", "route.glass", "Liquid Glass"),
+    (
+        "en",
+        "ui.small-nav-collapsed-to-icons",
+        "Small — nav collapsed to icons",
+    ),
+    (
+        "en",
+        "ui.medium-nav-shows-labels",
+        "Medium — nav shows labels",
+    ),
+    ("en", "ui.large-full-layout", "Large — full layout"),
     ("en", "route.settings", "Settings"),
     ("en", "action.feedback", "Feedback"),
     ("en", "action.language", "Language"),
@@ -179,6 +202,173 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "set.adv.logging", "Diagnostic logging"),
     ("en", "set.adv.hwaccel", "Hardware acceleration"),
     ("en", "set.adv.shortcuts", "Shortcuts"),
+    // ---- 页面正文（各页 demo 标签 / 控件标签 / 分区标题）----
+    //
+    // 键名是英文原文的 slug：`tr()` 找不到键时**回退显示键名本身**，于是
+    // 漏加条目时画面上出现的是可读的英文而不是乱码 —— 这也是键不另起
+    // 语义名（如 `ui.card-title-1`）的唯一理由。
+    ("en", "ui.zephyraui-gallery", "ZephyraUI Gallery"),
+    (
+        "en",
+        "ui.search-controls-and-samples",
+        "Search controls and samples...",
+    ),
+    ("en", "ui.interface", "Interface"),
+    ("en", "ui.language", "Language"),
+    ("en", "ui.theme", "Theme"),
+    ("en", "ui.route", "Route"),
+    ("en", "ui.button", "Button"),
+    ("en", "ui.variants", "Variants"),
+    ("en", "ui.standard", "Standard"),
+    ("en", "ui.accent", "Accent"),
+    ("en", "ui.subtle", "Subtle"),
+    ("en", "ui.primary", "Primary"),
+    ("en", "ui.pill", "Pill"),
+    ("en", "ui.with-icon-round", "With icon / round"),
+    ("en", "ui.send", "Send"),
+    ("en", "ui.click-me", "Click me"),
+    ("en", "ui.counter", "Counter"),
+    ("en", "ui.one-state", "One state"),
+    ("en", "ui.multiple", "Multiple"),
+    ("en", "ui.single", "Single"),
+    ("en", "ui.pick-one", "Pick one"),
+    ("en", "ui.text-input", "Text input"),
+    ("en", "ui.text-input-display", "Text input (display)"),
+    ("en", "ui.your-name", "Your name"),
+    ("en", "ui.multi-line-notes", "Multi-line notes"),
+    ("en", "ui.second-line", "second line"),
+    ("en", "ui.third-line", "third line"),
+    ("en", "ui.value-pickers", "Value pickers"),
+    ("en", "ui.value", "Value"),
+    ("en", "ui.slider", "Slider"),
+    ("en", "ui.slider-display", "Slider (display)"),
+    ("en", "ui.colorpicker", "ColorPicker"),
+    ("en", "ui.combobox", "ComboBox"),
+    ("en", "ui.checkbox", "CheckBox"),
+    ("en", "ui.toggle", "Toggle"),
+    ("en", "ui.progress", "Progress"),
+    ("en", "ui.progressbar", "ProgressBar"),
+    ("en", "ui.ring", "Ring"),
+    ("en", "ui.bar", "Bar"),
+    ("en", "ui.busy", "Busy"),
+    ("en", "ui.list", "List"),
+    ("en", "ui.table", "Table"),
+    ("en", "ui.selected-cell", "Selected cell"),
+    ("en", "ui.avatar", "Avatar"),
+    ("en", "ui.sizes", "Sizes"),
+    ("en", "ui.dialog", "Dialog"),
+    ("en", "ui.pickers", "Pickers"),
+    ("en", "ui.date", "Date"),
+    ("en", "ui.time", "Time"),
+    ("en", "ui.segmented", "Segmented"),
+    ("en", "ui.states", "States"),
+    ("en", "ui.position", "Position"),
+    ("en", "ui.range", "Range"),
+    ("en", "ui.filters", "Filters"),
+    ("en", "ui.tools", "Tools"),
+    ("en", "ui.severities", "Severities"),
+    ("en", "ui.sample", "Sample"),
+    ("en", "ui.backdrop", "Backdrop"),
+    ("en", "ui.cost", "Cost"),
+    ("en", "ui.available", "Available"),
+    ("en", "ui.card", "Card"),
+    ("en", "ui.translucent-card", "Translucent card"),
+    ("en", "ui.translucent", "Translucent"),
+    ("en", "ui.a-plain-surface", "A plain surface."),
+    (
+        "en",
+        "ui.same-class-other-content",
+        "Same class, other content.",
+    ),
+    ("en", "ui.token-colored-text", "Token-colored text"),
+    ("en", "ui.spacing-demo", "Spacing demo"),
+    ("en", "ui.what-they-guard", "What they guard"),
+    ("en", "ui.you-are-here", "You are here"),
+    ("en", "ui.tooltip", "ToolTip"),
+    ("en", "ui.tool-tip", "Tool tip"),
+    ("en", "ui.a-tooltip", "A tooltip"),
+    ("en", "ui.check-a-stylesheet", "Check a stylesheet"),
+    (
+        "en",
+        "ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline",
+        "Click the button. The count goes up. That is the whole pipeline.",
+    ),
+    ("en", "ui.dump-current-route", "Dump current route"),
+    ("en", "ui.dump-a-specific-route", "Dump a specific route"),
+    ("en", "ui.run-all-gallery-gates", "Run all gallery gates"),
+    ("en", "ui.toggle-theme", "Toggle theme"),
+    ("en", "ui.toggle-mica", "Toggle Mica"),
+    ("en", "ui.restore", "Restore"),
+    ("en", "ui.current-breakpoint", "Current breakpoint"),
+    ("en", "ui.card-1", "Card 1"),
+    ("en", "ui.card-2", "Card 2"),
+    ("en", "ui.card-3", "Card 3"),
+    ("en", "ui.first", "First"),
+    ("en", "ui.second", "Second"),
+    ("en", "ui.third", "Third"),
+    ("en", "ui.fits-inside-the-card", "Fits inside the card"),
+    ("en", "ui.also-fits", "Also fits"),
+    (
+        "en",
+        "ui.watch-me-when-the-window-shrinks",
+        "Watch me when the window shrinks",
+    ),
+    ("en", "ui.hidden-until-expanded", "Hidden until expanded."),
+    (
+        "en",
+        "ui.no-scroll-overflow-is-clipped",
+        "No scroll — overflow is clipped",
+    ),
+    ("en", "ui.44-epx-correct", "44 epx (correct)"),
+    ("en", "ui.28-epx-too-small", "28 epx (too small)"),
+    (
+        "en",
+        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
+        "The quick brown fox jumps over the lazy dog.",
+    ),
+    (
+        "en",
+        "ui.refraction-samples-what-is-already-on-screen",
+        "Refraction samples what is already on screen.",
+    ),
+    (
+        "en",
+        "ui.remove-these-lines-and-the-glass-looks-broken",
+        "Remove these lines and the glass looks broken.",
+    ),
+    (
+        "en",
+        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
+        "Rendered inline — the core has no overlay layer yet.",
+    ),
+    ("en", "ui.see-the-effects-page", "See the effects page."),
+    (
+        "en",
+        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
+        "Liquid glass: refraction parameters are runtime adjustable",
+    ),
+    ("en", "ui.refraction-parameters", "Refraction parameters"),
+    ("en", "ui.thin", "Thin"),
+    ("en", "ui.normal", "Normal"),
+    ("en", "ui.thick", "Thick"),
+    // ---- 布局页：flex ----
+    (
+        "en",
+        "ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll",
+        "Flex rows that grow and wrap — and the one boundary that is still real: no scroll.",
+    ),
+    (
+        "en",
+        "ui.flexbox-rows-that-grow-and-wrap",
+        "Flexbox: rows that grow and wrap",
+    ),
+    (
+        "en",
+        "ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines",
+        "flex-grow: 1 fills the row · flex-wrap packs items into lines",
+    ),
+    ("en", "ui.fixed", "Fixed"),
+    ("en", "ui.grows", "Grows"),
     // ---- zh-Hans ----
     ("zh-Hans", "app.title", "ZephyraUI 示例库"),
     ("zh-Hans", "route.guide", "快速开始"),
@@ -188,6 +378,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "route.theme", "主题与多语言"),
     ("zh-Hans", "route.testing", "测试"),
     ("zh-Hans", "route.reference", "控件参考"),
+    ("zh-Hans", "route.glass", "液态玻璃"),
+    (
+        "zh-Hans",
+        "ui.small-nav-collapsed-to-icons",
+        "小 — 导航收成图标列",
+    ),
+    ("zh-Hans", "ui.medium-nav-shows-labels", "中 — 导航显示文字"),
+    ("zh-Hans", "ui.large-full-layout", "大 — 完整布局"),
     ("zh-Hans", "route.settings", "设置"),
     ("zh-Hans", "action.feedback", "反馈"),
     ("zh-Hans", "action.language", "语言"),
@@ -201,6 +399,169 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "set.adv.logging", "诊断日志"),
     ("zh-Hans", "set.adv.hwaccel", "硬件加速"),
     ("zh-Hans", "set.adv.shortcuts", "快捷键"),
+    // ---- 页面正文（同 en 组，键序一致）----
+    ("zh-Hans", "ui.zephyraui-gallery", "ZephyraUI 示例库"),
+    (
+        "zh-Hans",
+        "ui.search-controls-and-samples",
+        "搜索控件与示例……",
+    ),
+    ("zh-Hans", "ui.interface", "界面"),
+    ("zh-Hans", "ui.language", "语言"),
+    ("zh-Hans", "ui.theme", "主题"),
+    ("zh-Hans", "ui.route", "路由"),
+    ("zh-Hans", "ui.button", "按钮"),
+    ("zh-Hans", "ui.variants", "变体"),
+    ("zh-Hans", "ui.standard", "标准"),
+    ("zh-Hans", "ui.accent", "强调"),
+    ("zh-Hans", "ui.subtle", "低调"),
+    ("zh-Hans", "ui.primary", "主要"),
+    ("zh-Hans", "ui.pill", "胶囊"),
+    ("zh-Hans", "ui.with-icon-round", "带图标 / 圆形"),
+    ("zh-Hans", "ui.send", "发送"),
+    ("zh-Hans", "ui.click-me", "点我"),
+    ("zh-Hans", "ui.counter", "计数器"),
+    ("zh-Hans", "ui.one-state", "单选"),
+    ("zh-Hans", "ui.multiple", "多选"),
+    ("zh-Hans", "ui.single", "单选"),
+    ("zh-Hans", "ui.pick-one", "选一个"),
+    ("zh-Hans", "ui.text-input", "文本输入"),
+    ("zh-Hans", "ui.text-input-display", "文本输入（展示）"),
+    ("zh-Hans", "ui.your-name", "你的名字"),
+    ("zh-Hans", "ui.multi-line-notes", "多行笔记"),
+    ("zh-Hans", "ui.second-line", "第二行"),
+    ("zh-Hans", "ui.third-line", "第三行"),
+    ("zh-Hans", "ui.value-pickers", "取值选择器"),
+    ("zh-Hans", "ui.value", "值"),
+    ("zh-Hans", "ui.slider", "滑块"),
+    ("zh-Hans", "ui.slider-display", "滑块（展示）"),
+    ("zh-Hans", "ui.colorpicker", "颜色选择器"),
+    ("zh-Hans", "ui.combobox", "组合框"),
+    ("zh-Hans", "ui.checkbox", "复选框"),
+    ("zh-Hans", "ui.toggle", "开关"),
+    ("zh-Hans", "ui.progress", "进度"),
+    ("zh-Hans", "ui.progressbar", "进度条"),
+    ("zh-Hans", "ui.ring", "环形"),
+    ("zh-Hans", "ui.bar", "条"),
+    ("zh-Hans", "ui.busy", "忙碌"),
+    ("zh-Hans", "ui.list", "列表"),
+    ("zh-Hans", "ui.table", "表格"),
+    ("zh-Hans", "ui.selected-cell", "选中单元格"),
+    ("zh-Hans", "ui.avatar", "头像"),
+    ("zh-Hans", "ui.sizes", "尺寸"),
+    ("zh-Hans", "ui.dialog", "对话框"),
+    ("zh-Hans", "ui.pickers", "选择器"),
+    ("zh-Hans", "ui.date", "日期"),
+    ("zh-Hans", "ui.time", "时间"),
+    ("zh-Hans", "ui.segmented", "分段"),
+    ("zh-Hans", "ui.states", "状态"),
+    ("zh-Hans", "ui.position", "位置"),
+    ("zh-Hans", "ui.range", "区间"),
+    ("zh-Hans", "ui.filters", "滤镜"),
+    ("zh-Hans", "ui.tools", "工具"),
+    ("zh-Hans", "ui.severities", "严重级别"),
+    ("zh-Hans", "ui.sample", "示例"),
+    ("zh-Hans", "ui.backdrop", "背景"),
+    ("zh-Hans", "ui.cost", "成本"),
+    ("zh-Hans", "ui.available", "可用"),
+    ("zh-Hans", "ui.card", "卡片"),
+    ("zh-Hans", "ui.translucent-card", "半透明卡片"),
+    ("zh-Hans", "ui.translucent", "半透明"),
+    ("zh-Hans", "ui.a-plain-surface", "一块纯色底板。"),
+    (
+        "zh-Hans",
+        "ui.same-class-other-content",
+        "同一个分类名，另一段内容。",
+    ),
+    ("zh-Hans", "ui.token-colored-text", "令牌着色的文字"),
+    ("zh-Hans", "ui.spacing-demo", "间距演示"),
+    ("zh-Hans", "ui.what-they-guard", "它们守住什么"),
+    ("zh-Hans", "ui.you-are-here", "你在这里"),
+    ("zh-Hans", "ui.tooltip", "提示"),
+    ("zh-Hans", "ui.tool-tip", "提示气泡"),
+    ("zh-Hans", "ui.a-tooltip", "一个提示气泡"),
+    ("zh-Hans", "ui.check-a-stylesheet", "校验样式表"),
+    (
+        "zh-Hans",
+        "ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline",
+        "点一下按钮，计数加一 —— 整条管线就这些。",
+    ),
+    ("zh-Hans", "ui.dump-current-route", "导出当前路由"),
+    ("zh-Hans", "ui.dump-a-specific-route", "导出指定路由"),
+    ("zh-Hans", "ui.run-all-gallery-gates", "跑全部画廊门禁"),
+    ("zh-Hans", "ui.toggle-theme", "切换主题"),
+    ("zh-Hans", "ui.toggle-mica", "切换 Mica"),
+    ("zh-Hans", "ui.restore", "恢复"),
+    ("zh-Hans", "ui.current-breakpoint", "当前断点"),
+    ("zh-Hans", "ui.card-1", "卡片 1"),
+    ("zh-Hans", "ui.card-2", "卡片 2"),
+    ("zh-Hans", "ui.card-3", "卡片 3"),
+    ("zh-Hans", "ui.first", "第一"),
+    ("zh-Hans", "ui.second", "第二"),
+    ("zh-Hans", "ui.third", "第三"),
+    ("zh-Hans", "ui.fits-inside-the-card", "装得进卡片"),
+    ("zh-Hans", "ui.also-fits", "也放得下"),
+    (
+        "zh-Hans",
+        "ui.watch-me-when-the-window-shrinks",
+        "窗口变小时看我",
+    ),
+    ("zh-Hans", "ui.hidden-until-expanded", "展开前看不到。"),
+    (
+        "zh-Hans",
+        "ui.no-scroll-overflow-is-clipped",
+        "无滚动 — 超出即裁剪",
+    ),
+    ("zh-Hans", "ui.44-epx-correct", "44 epx（正确）"),
+    ("zh-Hans", "ui.28-epx-too-small", "28 epx（太小）"),
+    (
+        "zh-Hans",
+        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
+        "敏捷的棕色狐狸跃过懒狗。",
+    ),
+    (
+        "zh-Hans",
+        "ui.refraction-samples-what-is-already-on-screen",
+        "折射采样的是屏幕上已有的内容。",
+    ),
+    (
+        "zh-Hans",
+        "ui.remove-these-lines-and-the-glass-looks-broken",
+        "删掉这几行，玻璃就像坏了一样。",
+    ),
+    (
+        "zh-Hans",
+        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
+        "内联渲染 —— core 还没有覆盖层。",
+    ),
+    ("zh-Hans", "ui.see-the-effects-page", "看效果页。"),
+    (
+        "zh-Hans",
+        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
+        "液态玻璃：折射参数运行期可调",
+    ),
+    ("zh-Hans", "ui.refraction-parameters", "折射参数"),
+    ("zh-Hans", "ui.thin", "薄"),
+    ("zh-Hans", "ui.normal", "普通"),
+    ("zh-Hans", "ui.thick", "厚"),
+    // ---- 布局页：flex ----
+    (
+        "zh-Hans",
+        "ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll",
+        "会填充、会折行的 flex 行 —— 而仍然真实的边界只剩一条：无滚动。",
+    ),
+    (
+        "zh-Hans",
+        "ui.flexbox-rows-that-grow-and-wrap",
+        "Flexbox：会填充、会折行的行",
+    ),
+    (
+        "zh-Hans",
+        "ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines",
+        "左：flex-grow: 1 把整行填满 · 右：flex-wrap 把内容折成多行",
+    ),
+    ("zh-Hans", "ui.fixed", "固定"),
+    ("zh-Hans", "ui.grows", "填充"),
     // ---- ja ----
     ("ja", "app.title", "ZephyraUI ギャラリー"),
     ("ja", "route.guide", "クイックスタート"),
@@ -210,6 +571,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "route.theme", "テーマと多言語"),
     ("ja", "route.testing", "テスト"),
     ("ja", "route.reference", "コントロール"),
+    ("ja", "route.glass", "リキッドグラス"),
+    (
+        "ja",
+        "ui.small-nav-collapsed-to-icons",
+        "小 — ナビはアイコン列に折りたたみ",
+    ),
+    ("ja", "ui.medium-nav-shows-labels", "中 — ナビにラベル表示"),
+    ("ja", "ui.large-full-layout", "大 — フルレイアウト"),
     ("ja", "route.settings", "設定"),
     ("ja", "action.feedback", "フィードバック"),
     ("ja", "action.language", "言語"),
@@ -227,6 +596,173 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "set.adv.logging", "診断ログ"),
     ("ja", "set.adv.hwaccel", "ハードウェアアクセラレーション"),
     ("ja", "set.adv.shortcuts", "ショートカット"),
+    // ---- ページ本文（en と同順）----
+    ("ja", "ui.zephyraui-gallery", "ZephyraUI ギャラリー"),
+    (
+        "ja",
+        "ui.search-controls-and-samples",
+        "コントロールとサンプルを検索…",
+    ),
+    ("ja", "ui.interface", "インターフェース"),
+    ("ja", "ui.language", "言語"),
+    ("ja", "ui.theme", "テーマ"),
+    ("ja", "ui.route", "ルート"),
+    ("ja", "ui.button", "ボタン"),
+    ("ja", "ui.variants", "バリエーション"),
+    ("ja", "ui.standard", "標準"),
+    ("ja", "ui.accent", "アクセント"),
+    ("ja", "ui.subtle", "サブトル"),
+    ("ja", "ui.primary", "プライマリ"),
+    ("ja", "ui.pill", "ピル"),
+    ("ja", "ui.with-icon-round", "アイコン付き / 丸"),
+    ("ja", "ui.send", "送信"),
+    ("ja", "ui.click-me", "クリックして"),
+    ("ja", "ui.counter", "カウンター"),
+    ("ja", "ui.one-state", "単一選択"),
+    ("ja", "ui.multiple", "複数選択"),
+    ("ja", "ui.single", "単一"),
+    ("ja", "ui.pick-one", "ひとつ選択"),
+    ("ja", "ui.text-input", "テキスト入力"),
+    ("ja", "ui.text-input-display", "テキスト入力（表示）"),
+    ("ja", "ui.your-name", "お名前"),
+    ("ja", "ui.multi-line-notes", "複数行のメモ"),
+    ("ja", "ui.second-line", "2行目"),
+    ("ja", "ui.third-line", "3行目"),
+    ("ja", "ui.value-pickers", "値のピッカー"),
+    ("ja", "ui.value", "値"),
+    ("ja", "ui.slider", "スライダー"),
+    ("ja", "ui.slider-display", "スライダー（表示）"),
+    ("ja", "ui.colorpicker", "カラーピッカー"),
+    ("ja", "ui.combobox", "コンボボックス"),
+    ("ja", "ui.checkbox", "チェックボックス"),
+    ("ja", "ui.toggle", "トグル"),
+    ("ja", "ui.progress", "進捗"),
+    ("ja", "ui.progressbar", "プログレスバー"),
+    ("ja", "ui.ring", "リング"),
+    ("ja", "ui.bar", "バー"),
+    ("ja", "ui.busy", "ビジー"),
+    ("ja", "ui.list", "リスト"),
+    ("ja", "ui.table", "テーブル"),
+    ("ja", "ui.selected-cell", "選択したセル"),
+    ("ja", "ui.avatar", "アバター"),
+    ("ja", "ui.sizes", "サイズ"),
+    ("ja", "ui.dialog", "ダイアログ"),
+    ("ja", "ui.pickers", "ピッカー"),
+    ("ja", "ui.date", "日付"),
+    ("ja", "ui.time", "時刻"),
+    ("ja", "ui.segmented", "セグメント"),
+    ("ja", "ui.states", "状態"),
+    ("ja", "ui.position", "位置"),
+    ("ja", "ui.range", "範囲"),
+    ("ja", "ui.filters", "フィルター"),
+    ("ja", "ui.tools", "ツール"),
+    ("ja", "ui.severities", "重要度"),
+    ("ja", "ui.sample", "サンプル"),
+    ("ja", "ui.backdrop", "背景"),
+    ("ja", "ui.cost", "コスト"),
+    ("ja", "ui.available", "利用可能"),
+    ("ja", "ui.card", "カード"),
+    ("ja", "ui.translucent-card", "半透明カード"),
+    ("ja", "ui.translucent", "半透明"),
+    ("ja", "ui.a-plain-surface", "ただのサーフェス。"),
+    (
+        "ja",
+        "ui.same-class-other-content",
+        "同じクラス、別の内容。",
+    ),
+    ("ja", "ui.token-colored-text", "トークンで着色した文字"),
+    ("ja", "ui.spacing-demo", "間隔のデモ"),
+    ("ja", "ui.what-they-guard", "何を守っているか"),
+    ("ja", "ui.you-are-here", "現在地"),
+    ("ja", "ui.tooltip", "ツールヒント"),
+    ("ja", "ui.tool-tip", "ツールチップ"),
+    ("ja", "ui.a-tooltip", "ツールチップひとつ"),
+    ("ja", "ui.check-a-stylesheet", "スタイルシートを検証"),
+    (
+        "ja",
+        "ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline",
+        "ボタンを押すとカウントが増える。それだけがこのパイプラインです。",
+    ),
+    ("ja", "ui.dump-current-route", "現在のルートをダンプ"),
+    ("ja", "ui.dump-a-specific-route", "指定ルートをダンプ"),
+    (
+        "ja",
+        "ui.run-all-gallery-gates",
+        "ギャラリーの全ゲートを実行",
+    ),
+    ("ja", "ui.toggle-theme", "テーマを切り替え"),
+    ("ja", "ui.toggle-mica", "Mica を切り替え"),
+    ("ja", "ui.restore", "復元"),
+    ("ja", "ui.current-breakpoint", "現在のブレークポイント"),
+    ("ja", "ui.card-1", "カード 1"),
+    ("ja", "ui.card-2", "カード 2"),
+    ("ja", "ui.card-3", "カード 3"),
+    ("ja", "ui.first", "1つ目"),
+    ("ja", "ui.second", "2つ目"),
+    ("ja", "ui.third", "3つ目"),
+    ("ja", "ui.fits-inside-the-card", "カードに収まる"),
+    ("ja", "ui.also-fits", "こちらも収まる"),
+    (
+        "ja",
+        "ui.watch-me-when-the-window-shrinks",
+        "ウィンドウを縮めると起きる",
+    ),
+    ("ja", "ui.hidden-until-expanded", "展開するまで隠れる。"),
+    (
+        "ja",
+        "ui.no-scroll-overflow-is-clipped",
+        "スクロールなし — はみ出しは切られる",
+    ),
+    ("ja", "ui.44-epx-correct", "44 epx（正しい）"),
+    ("ja", "ui.28-epx-too-small", "28 epx（小さすぎる）"),
+    (
+        "ja",
+        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
+        "素早い茶色のキツネがのろまな犬を飛び越える。",
+    ),
+    (
+        "ja",
+        "ui.refraction-samples-what-is-already-on-screen",
+        "屈折は画面に既にあるものをサンプリングする。",
+    ),
+    (
+        "ja",
+        "ui.remove-these-lines-and-the-glass-looks-broken",
+        "この行を消すとガラスが壊れて見える。",
+    ),
+    (
+        "ja",
+        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
+        "インライン描画 — core にはまだオーバーレイ層がない。",
+    ),
+    ("ja", "ui.see-the-effects-page", "エフェクトページを見る。"),
+    (
+        "ja",
+        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
+        "リキッドグラス：屈折のパラメータは実行時に変えられる",
+    ),
+    ("ja", "ui.refraction-parameters", "屈折のパラメータ"),
+    ("ja", "ui.thin", "薄い"),
+    ("ja", "ui.normal", "普通"),
+    ("ja", "ui.thick", "厚い"),
+    // ---- レイアウト頁：flex ----
+    (
+        "ja",
+        "ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll",
+        "伸びて折り返す flex 行 —— それでも残る境界は「スクロールなし」だけ。",
+    ),
+    (
+        "ja",
+        "ui.flexbox-rows-that-grow-and-wrap",
+        "Flexbox：伸びる行と折り返す行",
+    ),
+    (
+        "ja",
+        "ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines",
+        "左：flex-grow: 1 が行を埋める · 右：flex-wrap が項目を折り返す",
+    ),
+    ("ja", "ui.fixed", "固定"),
+    ("ja", "ui.grows", "伸びる"),
 ];
 
 /// 本表里出现过的**全部**键（按首次出现去重）。
@@ -249,7 +785,7 @@ pub fn catalog_keys() -> Vec<&'static str> {
 ///
 /// 源码里**没有面向用户的字符串** —— 与"源码零外观"是同一条纪律：
 /// 控件发分类名、不发颜色；页面发 key、不发文案。漏翻由门禁枚举
-/// （`i18n_tests::no_locale_is_missing_keys`），不靠肉眼。
+/// （`every_tr_key_used_in_source_exists_in_every_language`），不靠肉眼。
 pub fn messages() -> Messages {
     let mut m = Messages::new();
     for (locale, key, value) in CATALOG {
@@ -268,7 +804,7 @@ pub fn messages() -> Messages {
 /// 找不到时**返回 id 本身**而不是 `panic!` 或空串：调用方随后会拿它当键去
 /// `tr()`，而 `tr()` 的最后一档正是"返回键名"，于是画面上出现路由 id ——
 /// 看得见的降级。真正拦住这件事的是门禁
-/// `i18n_tests::every_route_has_a_copy_key`（新增路由忘了加译文会红）。
+/// `every_route_id_is_translated_in_every_supported_language`（新增路由忘了加译文会红）。
 pub fn route_key(id: &str) -> &'static str {
     // 只在默认语言那一组里找键 —— 键集合与语言无关，看第一组就够且更快。
     for (locale, key, _) in CATALOG {
@@ -728,7 +1264,7 @@ impl Gallery {
     /// 三级回退（见 [`Messages::select`]）：当前语言 → 语言段 → 默认语言。
     /// 连默认语言也没有才轮到这里，返回**键名**而不是空串：空串会让"漏翻"
     /// 看起来像"这里本来就是空的"，而键名在画面上立刻可辨。
-    /// 真正发现漏翻的是门禁，不是肉眼（`i18n_tests::no_locale_is_missing_keys`）。
+    /// 真正发现漏翻的是门禁，不是肉眼（`every_tr_key_used_in_source_exists_in_every_language`）。
     pub fn tr(&self, key: &'static str) -> &'static str {
         messages()
             .select(&self.prefs_for_current(), SUPPORTED[0], key)

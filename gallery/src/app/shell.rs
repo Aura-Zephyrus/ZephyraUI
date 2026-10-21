@@ -59,7 +59,7 @@ pub const CONTENT_W: f32 = CANVAS_W - NAV_W - 1.0;
 /// ⚠ 改路由数量时**必须**重算这里：差一项（46）时 `shell_layout_geometry`
 /// 会立刻红，而症状在画面上只是「置底项浮在半空」，不看几何门禁很容易归咎
 /// 成「间距不对」而去改样式表。
-pub const NAV_SPACER: f32 = 364.0;
+pub const NAV_SPACER: f32 = 324.0;
 
 /// 导航项数（= `ROUTES` 的长度 + Settings 置底项）。
 ///
@@ -86,15 +86,19 @@ fn titlebar(g: &Gallery) -> Element {
         // （见 docs/developer/win/02-mica.md §3）
         .styles(g.mica.then_some("mica"))
         .with_children([
-            text_label("app-title", "ZephyraUI Gallery", "text-body-strong"),
-            search_box(),
+            text_label(
+                "app-title",
+                g.tr("ui.zephyraui-gallery"),
+                "text-body-strong",
+            ),
+            search_box(g),
             caption_buttons(g),
         ])
 }
 
 /// 搜索框。**不可交互**：core 没有文本输入（见 README 的范围节）。
 /// 它仍然给 hover 视觉 —— 那证明 hover 链对非 Control 容器也成立。
-fn search_box() -> Element {
+fn search_box(g: &Gallery) -> Element {
     Element::new(NodeTag::Container)
         .with_key("search")
         .style("search")
@@ -105,7 +109,7 @@ fn search_box() -> Element {
                 .style("search-icon"),
             text_label(
                 "search-hint",
-                "Search controls and samples...",
+                g.tr("ui.search-controls-and-samples"),
                 "text-caption",
             ),
         ])

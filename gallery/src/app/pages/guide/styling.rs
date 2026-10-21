@@ -24,8 +24,8 @@ pub fn page(g: &Gallery) -> Element {
         "styling",
         "page-styling",
         vec![
-            controls::text_label(
-                "styling-blurb",
+            controls::
+                text_label("styling-blurb",
                 "Appearance lives in .zstyle. Source sends keys and class names only — no colors, no sizes.",
                 "text-body",
             ),
@@ -35,13 +35,13 @@ pub fn page(g: &Gallery) -> Element {
             // `Text.styling-note { text-color: @content_secondary }` 这一行，
             // 而 `@content_secondary` 的值由当前主题给。所以换主题时颜色自己变，
             // 源码一个字都不用改 —— 而这是门禁保证的，不是约定。
-            pages::section(
-                "styling-tokens",
+            pages::
+                section("styling-tokens",
                 "Colors come from theme tokens",
-                vec![pages::demo(
-                    "Token-colored text",
-                    controls::text_label(
-                        "styling-note",
+                vec![pages::
+                    demo(g.tr("ui.token-colored-text"),
+                    controls::
+                        text_label("styling-note",
                         "This color is @content_secondary",
                         "styling-note",
                     ),
@@ -51,11 +51,11 @@ pub fn page(g: &Gallery) -> Element {
             //
             // 同一个控件发不同的分类名，样式表就能给它不同的外观 ——
             // 而源码里看不出差别。这是「选择器」这个词的字面含义。
-            pages::section(
-                "styling-classes",
+            pages::
+                section("styling-classes",
                 "Class names are selectors",
                 vec![
-                    pages::demo("Primary", controls::button(
+                    pages::demo(g.tr("ui.primary"), controls::button(
                         "act:style-primary",
                         "Primary",
                         None,
@@ -63,7 +63,7 @@ pub fn page(g: &Gallery) -> Element {
                         g.hovers("act:style-primary"),
                         g.holds("act:style-primary"),
                     )),
-                    pages::demo("Subtle", controls::button(
+                    pages::demo(g.tr("ui.subtle"), controls::button(
                         "act:style-subtle",
                         "Subtle",
                         None,
@@ -71,7 +71,7 @@ pub fn page(g: &Gallery) -> Element {
                         g.hovers("act:style-subtle"),
                         g.holds("act:style-subtle"),
                     )),
-                    pages::demo("Standard", controls::button(
+                    pages::demo(g.tr("ui.standard"), controls::button(
                         "act:style-standard",
                         "Standard",
                         None,
@@ -86,13 +86,13 @@ pub fn page(g: &Gallery) -> Element {
             // `affects_layout` 是样式表向门禁声明的一个元信息：「这个属性变了
             // 要重排」。漏声明的后果是「只改颜色也触发全树重排」—— 画面上
             // 看不出来，只在 benchmark 里现形。
-            pages::section(
-                "styling-layout",
+            pages::
+                section("styling-layout",
                 "Layout-affecting properties",
-                vec![pages::demo(
-                    "Spacing demo",
-                    controls::text_label(
-                        "styling-layout-note",
+                vec![pages::
+                    demo(g.tr("ui.spacing-demo"),
+                    controls::
+                        text_label("styling-layout-note",
                         "Spacing is declared affects_layout so color-only changes skip relayout",
                         "text-caption",
                     ),
