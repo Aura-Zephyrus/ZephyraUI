@@ -2332,7 +2332,7 @@ fn glass_panes_cover_the_refraction_target() {
         "最窄的竖条只有 {narrowest:.1}px —— 位移（十几像素）比它还宽，弯起来看不出来"
     );
 
-    // ---- 玻璃块（**画出来的**位置）必须盖住竖条带 ----
+    // ---- 玻璃块（**画出来的**位置）必须整块压在竖条带上 ----
     //
     // `translate-y` 是绘制期位移：布局矩形在下面，绘制位置在上面。
     // 这里按 `.glass-panes` 的 `translate-y` 折算绘制位置。
@@ -2349,17 +2349,166 @@ fn glass_panes_cover_the_refraction_target() {
         .height;
     let pane_bottom = painted_top + pane_h;
 
+    // 玻璃块必须**整条落在竖条带里** —— 探出带外的那部分底下是空底板，
+    // 位移纯色 ⇒ 那一角读作「断裂 / 拖影」（真 GPU 截图上实测出现过：
+    // 薄那块底边一条橙/青断裂带、厚那块左边一条灰白拖影）。
     assert!(
-        (painted_top - t.y).abs() < 1.0,
+        painted_top >= t.y - 1.0,
         "玻璃块画出来的顶边在 {painted_top:.1}，竖条带的顶边在 {:.1} —— \
-         玻璃块没有压住竖条带（画面上等于没有折射）",
+         玻璃块**探出了**竖条带上方，那部分底下没有可折射的内容",
         t.y
     );
     assert!(
-        (pane_bottom - (t.y + t.height)).abs() < 1.0,
+        pane_bottom <= t.y + t.height + 1.0,
         "玻璃块画出来的底边在 {pane_bottom:.1}，竖条带的底边在 {:.1} —— \
-         玻璃块没有**盖满**竖条带",
+         玻璃块**探出了**竖条带下方，那部分底下没有可折射的内容",
         t.y + t.height
+    );
+}
+
+/// 竖条带必须**露在玻璃块外面** —— 只盖住是不够的，还得没盖满。
+///
+/// # 为什么这条和 `glass_panes_cover_the_refraction_target` 是两头夹
+///
+/// 「玻璃块盖住条带」保证块内有东西可弯；「条带露在块外」保证**块外**还有同一段
+/// 图案可看。缺了后者时真 GPU 截图上是三块**不透明的条纹贴片**：条纹只在玻璃里
+/// 有，玻璃外全黑 —— 于是「里面那些条纹到底有没有被掰弯」在画面上**无从对照**，
+/// 读出来就是「一点透明度都没有」。
+///
+/// 这是「有没有对照」的问题，不是「折射强弱」的问题：折射参数再对，没有外部
+/// 参照也读不出玻璃来。所以它单列一条，而不是并进上面那条的某个 assert。
+#[test]
+fn refraction_target_extends_beyond_the_glass() {
+    let root = laid_out_glass();
+
+    let t = find_by_key(&root, "glass-target")
+        .expect("舞台上要有竖条带")
+        .rect();
+    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
+    let painted_top = panes.rect().y + panes_translate_y();
+    let pane_h = find_by_key(&root, "glass:a")
+        .expect("要有玻璃块")
+        .rect()
+        .height;
+
+    let exposed_top = painted_top - t.y;
+    let exposed_bottom = (t.y + t.height) - (painted_top + pane_h);
+    // 30px 的判据：现值 40（条带 200 − 玻璃 120 = 80，上下各半），门槛取 30
+    // 留 10px 余量 —— 露区里得**放得下横边界**（行高 25px ⇒ 边界每 25px 一条，
+    // 40px 露区时上下各压到 25 与 175），才谈得上「同一段图案在块外继续」；
+    // 露成几像素时画面上只是一条亮边，对照就没了。
+    assert!(
+        exposed_top >= 30.0,
+        "竖条带只在玻璃块上方露出 {exposed_top:.1}px（要求 ≥30）—— \
+         条纹几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
+    );
+    assert!(
+        exposed_bottom >= 30.0,
+        "竖条带只在玻璃块下方露出 {exposed_bottom:.1}px（要求 ≥30）—— \
+         条纹几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
+    );
+}
+
+/// 玻璃块**上下边往内 20px 之内**必须有横着的颜色边界。
+///
+/// # 这条钉的是「折射算对了却看不见」
+///
+/// 位移本身由着色器门禁管（那侧断的是「算得对」）。这条管的是**图案侧**：
+/// 玻璃块上下边的位移是**竖直**的，只有图案在竖直方向**有颜色边界**，那段
+/// 位移才改得动画面。缺了边界时真 GPU 截图上的观感是「折射没生效」——
+/// 而着色器其实一直在算（逐像素取样能证明它在算：玻璃外 x=586..593 是深色
+/// 缝隙、玻璃内同一段变成了青条）。
+///
+/// # 20px 是算出来的，不是拍出来的
+///
+/// 默认参数（thickness=48 / bezel=40 / ior=1.50）下，玻璃块边缘往内的位移剖面
+/// —— 按 `PSRefraction` 的式子逐点代入，220×120 的玻璃块：
+///
+/// | 距边 | 位移 |
+/// |---|---|
+/// | 1px | ~23px |
+/// | 2px | ~23px（峰值） |
+/// | 4px | ~20px |
+/// | 10px | ~13px |
+/// | 20px | ~3px |
+/// | 40px（带内侧） | 0 |
+///
+/// 边界落在往内 `d` 处要被看见，得存在某个更靠外的像素满足
+/// `d' + disp(d') > d` —— 代进去解出 `d ≈ 23px`。取 20 留 3px 余量。
+/// 再往外的边界**够不着**：那儿的位移已经衰减到 3px 以下。
+///
+/// ⚠ 这个 20 跟着**默认档**走：把 `Glass::default()` 的厚度 / 倒角带调小，
+/// 位移剖面整体收缩，这条断言就该跟着收紧（上一版默认 28/26 时算出来是 12px）。
+///
+/// ⚠ 同样地，这条与 `.glass-seg` 的 `height: 25px`、`.glass-target` 的 `height`、
+/// `.glass-panes` 的 `translate-y` 三者**绑死**。改任何一个都会让边界滑出
+/// 20px，而症状只是「看着不像玻璃」—— 不报错、不红别的。
+#[test]
+fn refraction_target_has_structure_within_reach_of_both_pane_edges() {
+    const REACH: f32 = 20.0;
+
+    let root = laid_out_glass();
+
+    // 玻璃块**画出来的**上下边（`translate-y` 是绘制期位移，布局矩形不含它）。
+    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
+    let pane_top = panes.rect().y + panes_translate_y();
+    let pane_h = find_by_key(&root, "glass:a")
+        .expect("要有玻璃块")
+        .rect()
+        .height;
+    let pane_bottom = pane_top + pane_h;
+
+    // 棋盘的横边界 = 每一列里、除最后一个方格外的**底边**。
+    // 列的 key 是 `gx:{i}`（见 `effects.rs::target_key`）。
+    let col = find_by_key(&root, "gx:0").expect("棋盘至少要有第一列");
+    let col_w = col.rect().width;
+    let segs = col.children();
+    assert!(
+        segs.len() >= 3,
+        "棋盘第一列只有 {} 个方格 —— 横边界太少，上下边大概率一条都碰不上",
+        segs.len()
+    );
+    // ⚠ 必须连**宽**一起断：方格是空容器，列改成竖排后它的横向尺寸由
+    // `.glass-bar` 的 `cross-align: stretch` 决定 —— 少了那条时方格量成
+    // **0 宽**，`height` 与 `y` 却都正常，于是只看边界的断言会**照常绿**，
+    // 而画面上棋盘根本不存在（整列退回一根纯色竖条）。去掉那条样式复现过、
+    // 这条门禁当场红。
+    for s in segs {
+        assert!(
+            (s.rect().width - col_w).abs() < 1.0,
+            "方格宽 {:.1}px，列宽 {col_w:.1}px —— 方格没铺满列，棋盘在画面上不存在",
+            s.rect().width
+        );
+        assert!(
+            s.rect().height >= 8.0,
+            "方格高 {:.1}px —— 太薄的横边界等于没有（横向位移看不出来）",
+            s.rect().height
+        );
+    }
+    let mut horiz: Vec<f32> = Vec::new();
+    for s in segs.iter().take(segs.len() - 1) {
+        let r = s.rect();
+        horiz.push(r.y + r.height);
+    }
+
+    let near_top = horiz
+        .iter()
+        .any(|b| *b > pane_top && *b <= pane_top + REACH);
+    assert!(
+        near_top,
+        "玻璃块上边（{pane_top:.1}）往内 {REACH}px 里没有横边界 —— \
+         那段竖直位移撞不上颜色变化，**上边的折射在画面上等于不存在**。\
+         现有边界在 {horiz:?}"
+    );
+
+    let near_bottom = horiz
+        .iter()
+        .any(|b| *b < pane_bottom && *b >= pane_bottom - REACH);
+    assert!(
+        near_bottom,
+        "玻璃块下边（{pane_bottom:.1}）往内 {REACH}px 里没有横边界 —— \
+         那段竖直位移撞不上颜色变化，**下边的折射在画面上等于不存在**。\
+         现有边界在 {horiz:?}"
     );
 }
 
@@ -2404,7 +2553,7 @@ fn panes_translate_y() -> f32 {
 ///
 /// # 这条钉的是「一点液态玻璃的形状都没有了」
 ///
-/// 玻璃块的底色是**白 @ 30%**（`#ffffff4d`）。而**白 @ 30% 压在白上还是白**
+/// 玻璃块的底色是**白 @ 15%** 的一层纱（`#ffffff26`）。而**白纱压在白上还是白**
 /// —— 玻璃块在白竖条上就完全看不见（实测：压上与不压逐像素相同）。
 /// 竖条占舞台内容宽的 78%（27/35），于是玻璃块**七成八的面积**「消失」，
 /// 只剩下缝隙那一小条还看得出边界。
@@ -2418,12 +2567,12 @@ fn panes_translate_y() -> f32 {
 /// 做法是**渲染两遍**（一遍正常、一遍把 `.glass-pane` 的底色改成全透明），
 /// 比**同一处**像素的差别。
 ///
-/// 为什么不用「玻璃块内 vs 玻璃块外」那种比法：三块玻璃**紧挨着**排满整个
-/// 竖条带（3 × 220 + 2 × 16 = 692 = 舞台内容宽），**块外没有同段图案**可比
-/// —— 拿缝隙那 16px 去比，量到的是「一块亮条 vs 一块暗条」，与玻璃无关。
+/// 为什么不用「玻璃块内 vs 玻璃块外」那种比法：那种比法量的是**两处不同图案**的
+/// 差（条纹相位、竖条 vs 缝隙），折射与纱的效果混在一起，分不开。两遍只差一个
+/// alpha，剩下的渲染路径逐位相同，于是差值**只**归给玻璃底色。
 ///
 /// 用 CPU 光栅（`zephyra_fx::cpu_only`）—— 不需要 GPU，而这是本仓**唯一**的
-/// 像素级自验手段。
+/// 像素级自验手段。真 GPU 那侧靠人工截图复核（见 dev-log 里「真 GPU 截图」那段）。
 #[test]
 fn the_glass_block_is_distinguishable_from_what_it_covers() {
     use zephyra_core::core::Color;
@@ -2447,7 +2596,7 @@ fn the_glass_block_is_distinguishable_from_what_it_covers() {
         let mut sheet = zephyra_style::ir::StyleSheet::new();
         for (name, css) in zephyra_gallery::styles::all() {
             let css: String = if transparent_fill && name == "pages" {
-                let patched = css.replace("background: #ffffff4d;", "background: #ffffff00;");
+                let patched = css.replace("background: #ffffff26;", "background: #ffffff00;");
                 assert_ne!(
                     patched, css,
                     "`.glass-pane` 的底色写法变了 —— 这条门禁的对照渲染没打中，\
@@ -2515,15 +2664,18 @@ fn the_glass_block_is_distinguishable_from_what_it_covers() {
     let frac = changed as f64 / total as f64;
     // 判据是**面积占比**而不是平均差 —— 平均差会被「只有一小块变了」稀释。
     //
-    // 玻璃压在**白**竖条上时：白 @30% 压白 = 白 ⇒ 竖条上**一点变化都没有**，
+    // 玻璃压在**白**竖条上时：白纱压白 = 白 ⇒ 竖条上**一点变化都没有**，
     // 只有 8/35 的缝隙变了 ⇒ 占比 ≈ 0.23。而玻璃块**七成八的面积**「消失」。
     // 中间调竖条上则几乎处处都变（实测占比 ≈ 1.0）。
     //
-    // 门槛 0.6：两种情形差着一个数量级，放在中间。
+    // 门槛 0.9：两种情形差着一个数量级，放在中间。
+    //
+    // ⚠ 纱改薄（30% → 15%）不会把这条压红：判据是**有没有变**（阈值 0.02），
+    // 不是变了多少。15% 白纱在最暗的竖条上也改出 ≈0.08 的线性差，离阈值 7 倍远。
     assert!(
         frac >= 0.9,
         "玻璃底色只影响了玻璃块内 {frac:.1}% 的像素（要求 ≥ 90%）—— \
-         玻璃块压在**白**竖条上时就是这个样子：白 @30% 压白 = 白，\
+         玻璃块压在**白**竖条上时就是这个样子：白纱压白 = 白，\
          那部分竖条上玻璃块整个「消失」（实测白竖条时只剩 64.5% 的像素有变化）"
     );
 }
