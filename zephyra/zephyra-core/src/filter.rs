@@ -109,6 +109,17 @@ pub enum Filter {
         /// `zephyra.hlsl` 的 `PSRefraction`）。于是同一个 `thickness` 在
         /// 厚玻璃（倒角窄）上弯得多、在薄玻璃（倒角宽）上弯得少，这与
         /// 「位移 = 强度 × 系数」的线性手感是两回事。
+        ///
+        /// # 它也是**位移的上界**
+        ///
+        /// 着色器里的位移是 `δ = h · thickness · sin(Δ) / cos(Θr)`，
+        /// 其中 `h ∈ [0, 1]` 是高度剖面、`Δ = Θs - Θr` 是偏折角。
+        /// 而 `sin(Δ)/cos(Θr) = sin(Θs) - cos(Θs)·tan(Θr) ≤ 1`
+        /// （`Θs → 90°` 时取等号）—— 于是 **δ ≤ thickness 恒成立**。
+        ///
+        /// 这条不等式是**契约**：离屏外扩、玻璃边缘的采样范围、参数面板上
+        /// 「厚度 = 位移上限」这三件事都按它推导。改着色器里的位移式子时
+        /// 必须重新验它（`refraction_displacement_is_bounded_by_the_thickness`）。
         strength: f32,
         /// 倒角带**宽度**（像素）：折射只发生在这条带子里。
         ///
@@ -177,23 +188,30 @@ impl Filter {
                     bottom: (r + offset.y).max(0.0),
                 }
             }
-            // 折射的采样会**往元素外**多读 `strength` 那么多像素（边缘处背景被
-            // 推开的方向是朝外的），所以离屏矩形必须留出这一圈，否则边缘的
-            // 位移在 RT 边界被硬切 —— 症状是玻璃边缘出现一道平直的硬边，
-            // 而那看起来像"边框画歪了"而不是"离屏算小了"。
-            Filter::Refraction { strength, .. } => {
-                let s = if param_active(*strength) {
-                    *strength
-                } else {
-                    0.0
-                };
-                Outset {
-                    left: s,
-                    top: s,
-                    right: s,
-                    bottom: s,
-                }
-            }
+            // 折射**不外扩** —— 而且这不是「忘了填」，是它的采样对象决定的。
+            //
+            // ⚠⚠ 早先这里写的是「折射的采样会往元素外多读 `strength` 那么多
+            // 像素，所以离屏矩形必须留出这一圈，否则边缘的位移在 RT 边界被
+            // 硬切」。那句话**把采样对象搞错了**：
+            //
+            // | | 读的是哪张纹理 | 覆盖范围 |
+            // |---|---|---|
+            // | 折射 | **`g_dst`** = 目标的**全屏**副本 | 整块屏幕 |
+            // | 模糊 / 投影 | 离屏 RT（元素自己的内容） | 元素 ± 外扩 |
+            //
+            // 折射的合成趟画的是**元素矩形**、采样的��**全屏副本**，所以
+            // 「元素外那一圈」根本不在离屏 RT 里 —— 外扩它**不解决任何问题**，
+            // 只是把离屏 RT 撑大（每块玻璃四周各多一圈 `strength` 像素），
+            // 而那张 RT 在折射路径上**根本没人采样**：`PSRefraction` 只采
+            // `g_dst`，元素自己的内容是之后由 `redraw_original` 那趟画回屏幕的。
+            //
+            // 而且外扩还有**副作用**：拿不到目标副本时（`refresh_dst_copy`
+            // 失败）会降级成普通合成，那一趟画的是 `pass.bounds` —— 外扩
+            // 之后它会把元素自己的内容**多画一圈**到元素外面，症状是
+            // 玻璃四周多出一圈同色毛边。
+            //
+            // 所以这里给**零**外扩：离屏 RT 正好等于元素矩形。
+            Filter::Refraction { .. } => Outset::default(),
         }
     }
 
@@ -207,26 +225,42 @@ impl Filter {
                 blur_radius(*sigma_x) <= 0.0 && blur_radius(*sigma_y) <= 0.0
             }
             Filter::DropShadow { .. } => false,
-            // 两个参数**分别**判：strength=0 但 dispersion>0 时仍然有效果
-            //（R/B 相对 G 偏移），所以不能"strength 为 0 就整条链恒等"。
+            // 折射的**唯一**有效参数是 `strength`（玻璃厚度）。
             //
-            // ⚠ 这里必须是 `!A && !B`，**不能**写成 `!(A && B)` —— 那是
-            //    「两个都不生效才算恒等」的**反面**（`||` 的语义），
-            //    会让「只有色散」被误判成恒等。
+            // ⚠ `dispersion` **不参与**这条判据 —— 而这不是「省事」，
+            // 是着色器那边的**事实**：`PSRefraction` 里三条通道的采样点是
+            //
+            //     uvR = uv + off_uv * (1 + dispersion)
+            //     uvG = uv + off_uv
+            //     uvB = uv + off_uv * (1 - dispersion)
+            //
+            // 而 `off_uv = -n * displacement * px2uv`，`displacement` 里
+            // **带 `strength` 这个因子**。所以 `strength = 0` ⇒ `off_uv = 0`
+            // ⇒ 三条通道采样同一点 ⇒ 色散**乘的是 0** ⇒ 整条链是恒等。
+            //
+            // 早先这里写的是「strength=0 但 dispersion>0 时仍然有效果」——
+            // 那句话**与着色器不符**（它以为色散是独立于位移的一条通道偏移）。
+            // 后果：厚度调成 0 的那一档，链被判成「非恒等」⇒ 照样开离屏 pass、
+            // 照样拷一份全屏目标副本，而画面一个字都不变 —— 纯浪费，
+            // 而 `RenderReport::offscreen_passes` 还多记一次。
+            //
+            // ⚠ `ior` 同样**不参与**：它是 1.0 就等于「没有折射」，而那正是
+            // `strength = 0` 的情形；把它判进来会写出 `strength=0 但 ior=1.5
+            // ⇒ 非恒等`，于是「没写厚度却写了折射率」的样式表会让整条滤镜
+            // 命令**既不恒等也不生效** —— 离屏照开、像素照弯成 0，白付一遍
+            // 离屏开销。
+            //
+            // 而 `ior = 1`（其余参数正常）**要**判成非恒等：那一档是
+            // 「位移应当恰好为 0」的诊断位 —— 门禁要的是「跑了 PSRefraction
+            // 且画面没变」，所以 pass 必须真的跑起来。
             Filter::Refraction {
                 strength,
                 bezel,
                 dispersion,
                 ior,
             } => {
-                // ⚠ `ior` **不参与**这条判据。
-                //
-                // 它是 1.0 就等于「没有折射」，而那正是 `strength = 0` 的情形；
-                // 把两者一起判进来会写出 `strength=0 但 ior=1.5 ⇒ 非恒等`，
-                // 于是「没写厚度却写了折射率」的样式表会让整条滤镜命令**既不恒等
-                // 也不生效** —— 离屏照开、像素照弯成 0，白付一遍离屏开销。
-                let _ = (bezel, ior);
-                !param_active(*strength) && !param_active(*dispersion)
+                let _ = (bezel, dispersion, ior);
+                !param_active(*strength)
             }
         }
     }
@@ -238,6 +272,85 @@ impl Filter {
 /// 判据（`strength=0` 在两处必须得出同一个结论），而内联写两遍就有漂移的机会。
 fn param_active(v: f32) -> bool {
     v.is_finite() && v > 0.0
+}
+
+/// 折射位移的**纯 Rust 镜像**（与 `zephyra.hlsl` 的 `PSRefraction` 逐字对应）。
+///
+/// # 为什么要有它
+///
+/// 位移公式住在**着色器**里（GPU 上才算得出来），而「位移有多大」这条
+/// **契约**住在 core 里（离屏外扩、参数面板的语义都按它推导）。
+/// 两边如果各写各的，公式一改契约就悄悄失效 —— 而失效的样子是
+/// 「玻璃边缘把屏幕上几百像素外的内容拉进来」，看不出是契约错了。
+///
+/// 所以这里把同一条式子写成**纯函数**：它不参与渲染，只用来**验**那条契约
+/// （见 `tests/filter_tests.rs` 的 `refraction_displacement_is_bounded_by_the_thickness`）。
+/// 着色器那边改了式子，这里必须同步改 —— 门禁会红。
+///
+/// # 与着色器的对应
+///
+/// | 本函数 | `PSRefraction` |
+/// |---|---|
+/// | `glass_surface_height(t)` | `glass_surface_height(t)` |
+/// | `dh`（前向差分，`dt = 0.001`） | 同 |
+/// | `slope = atan(dh * strength / bezel)` | 同 |
+/// | `theta_r = asin(clamp(sin(slope) / ior, -1, 1))` | 同 |
+/// | `δ = h · strength · sin(Δ) / cos(Θr)` | 同 |
+pub mod refraction {
+    /// 深度归一化 `t` → 玻璃表面高度。`t = 0` 在边缘（高度 0），`t = 1` 在带内侧。
+    ///
+    /// 圆拱的四次方根：它在 `t → 0` 处**斜率发散** —— 那正是「光在边缘斜着进出」
+    /// 的数学表达。
+    pub fn glass_surface_height(t: f32) -> f32 {
+        let s = 1.0 - t;
+        (1.0 - s * s * s * s).max(0.0).powf(0.25)
+    }
+
+    /// 倒角带内某一点的**横向位移**（像素，带符号）。
+    ///
+    /// `t` = 倒角带里的归一化深度（0 在边缘，1 在带内侧）。
+    ///
+    /// # 返回 0 的两种情形
+    ///
+    /// - `ior = 1` ⇒ `Δ = 0` ⇒ 不折射（这是诊断位：门禁要「画面逐像素不变」）；
+    /// - `t = 0` ⇒ 高度为 0 ⇒ 楔形没有高度 ⇒ 没有偏折。
+    pub fn displacement(t: f32, strength: f32, bezel: f32, ior: f32) -> f32 {
+        if !(t.is_finite() && strength.is_finite() && bezel.is_finite() && ior.is_finite()) {
+            return 0.0;
+        }
+        if bezel <= 0.0 || ior <= 0.0 {
+            return 0.0;
+        }
+        let t = t.clamp(0.0, 1.0);
+        let dt = 0.001;
+        let h = glass_surface_height(t);
+        let dh = (glass_surface_height((t + dt).min(1.0)) - h) / dt;
+        let slope = (dh * (strength / bezel)).atan();
+        let sin_r = (slope.sin() / ior).clamp(-1.0, 1.0);
+        let theta_r = sin_r.asin();
+        let delta = slope - theta_r;
+        h * strength * (delta.sin() / theta_r.cos().max(1e-3))
+    }
+
+    /// 整个倒角带里的**最大位移**（像素）。
+    ///
+    /// 采样 `t ∈ [0, 1]`（步长 1/2000）。**采样**而不是解析求极值，是因为
+    /// 着色器那边也是**离散**地算斜率（有限差分）—— 契约要跟实现同口径。
+    ///
+    /// 契约：结果 **≤ `strength`**（见 [`Filter::Refraction`](super::Filter::Refraction)
+    /// 的 `strength` 文档）。
+    pub fn max_displacement(strength: f32, bezel: f32, ior: f32) -> f32 {
+        const STEPS: usize = 2000;
+        let mut max = 0.0f32;
+        for i in 0..=STEPS {
+            let t = i as f32 / STEPS as f32;
+            let d = displacement(t, strength, bezel, ior).abs();
+            if d > max {
+                max = d;
+            }
+        }
+        max
+    }
 }
 
 /// blur 的 σ → 半径，挡掉非有限值。

@@ -256,6 +256,159 @@ fn identity_chain_does_not_allocate_offscreen() {
     .is_identity());
 }
 
+/// 折射的位移**不得超过玻璃厚度**。
+///
+/// # 这条钉住的是什么
+///
+/// `PSRefraction` 里的位移式是 `δ = h · thickness · sin(Δ) / cos(Θr)`。
+/// `h ∈ [0,1]`、`sin(Δ)/cos(Θr) ≤ 1`，于是 `δ ≤ thickness` 恒成立。
+///
+/// 早先那版用的是薄棱镜近似 `δ = h · (tan Θs - tan Θr)` —— 它只在**小角度**
+/// 成立，而高度剖面在 `t → 0` 处斜率发散（`Θs → 90°`），于是 `tan Θs` 发散：
+/// **实测**默认参数（thickness=28 / bezel=26 / ior=1.50）下位移峰值是 **491px**
+/// （最大参数下 2181px），而契约的标称值是 28px。
+///
+/// 后果不是「看起来怪」，是**玻璃边缘把屏幕上几百像素外的内容拉进来**，
+/// 且离屏外扩按 28px 算 ⇒ 采样落在副本之外 ⇒ 被 `saturate` 夹到屏幕边上。
+///
+/// 这条门禁在 core 侧用**纯 Rust 镜像**验（`filter::refraction`）——
+/// 它不参与渲染，只用来钉住契约。着色器那边改了式子，这里必须同步改。
+#[test]
+fn refraction_displacement_is_bounded_by_the_thickness() {
+    // 默认档（gallery 的 `Glass::default()`：thickness 28 / bezel 26 / ior 1.50）
+    // 与参数面板的四个角（最小 / 最大）。
+    let cases = [
+        (28.0_f32, 26.0_f32, 1.50_f32, "默认档"),
+        (4.0, 2.0, 1.05, "最小档"),
+        (80.0, 48.0, 2.00, "最大档"),
+        (28.0, 12.0, 1.50, "窄倒角带"),
+    ];
+    for (thickness, bezel, ior, what) in cases {
+        let d = refraction::max_displacement(thickness, bezel, ior);
+        assert!(
+            d <= thickness,
+            "{what}：位移峰值 {d:.2}px 超过玻璃厚度 {thickness}px —— \
+             契约（位移 ≤ 厚度）破了，离屏外扩与边缘采样都按错了尺寸算"
+        );
+        // 同时给一个**下界**：恒等于 0 说明公式退化成「什么都不做」，
+        // 那样这条门禁会恒真地绿。
+        assert!(
+            d > 0.0,
+            "{what}：位移峰值是 0 —— 公式退化了（IOR=1 那一档才允许为 0）"
+        );
+    }
+}
+
+/// `ior = 1` 必须是**零位移** —— 那是「不折射」的诊断位。
+///
+/// 门禁 `refraction_resamples_the_backdrop_on_d3d12` 要靠这条性质做反向断言：
+/// `IOR = 1` 时画面必须与「没有玻璃」逐像素相同。若这条破了，那个门禁
+/// 的容差就不再有意义。
+///
+/// # 判据是**亚像素**，不是「恰好 0」
+///
+/// 着色器里 `theta_r = asin(sin(slope) / ior)`，而 `ior = 1` 时它要走一趟
+/// `sin → asin` 的往返；f32 的舍入误差（约 1e-7）在 `1/cos(Θr)` 上被放大
+/// （`Θr → 90°` 时 `cos` 趋零），最后落在**千分之一像素**量级 —— 实测
+/// 0.00086px（thickness=28）。
+///
+/// 那是**渲染上不可见**的量（比一个像素小三个数量级），而 D3D12 那边
+/// 「IOR=1 ⇒ 与没有玻璃几乎逐像素相同」的门禁容差是 0.5% —— 三个数量级
+/// 的余量，判据稳。
+#[test]
+fn refraction_with_ior_one_has_no_displacement() {
+    // 0.01px = 百分之一像素。实测最大 0.0025px（thickness=80），
+    // 留 4 倍余量。
+    const SUB_PIXEL: f32 = 0.01;
+    for (thickness, bezel) in [(28.0_f32, 26.0_f32), (80.0, 48.0), (4.0, 2.0)] {
+        let d = refraction::max_displacement(thickness, bezel, 1.0);
+        assert!(
+            d < SUB_PIXEL,
+            "IOR=1（不折射）时位移应当是亚像素的（< {SUB_PIXEL}px），\
+             实测 {d:.6}px（thickness={thickness}）"
+        );
+    }
+}
+
+/// 厚度为 0 时整条折射链是**恒等**。
+///
+/// # 为什么这条重要
+///
+/// 着色器里色散是**乘**在位移上的（`uvR = uv + off_uv * (1 + dispersion)`），
+/// 而 `off_uv` 带 `thickness` 因子 —— 所以 `thickness = 0` ⇒ 采样点不动
+/// ⇒ 三条通道采同一点 ⇒ **色散也乘的是 0** ⇒ 整条链恒等。
+///
+/// 早先的实现把 `dispersion` 也算进判据，于是「厚度 0 + 色散 > 0」被判成
+/// **非恒等**：照样开离屏 pass、照样拷一份**全屏**目标副本，而画面一个字
+/// 都不变 —— 纯浪费，且 `RenderReport::offscreen_passes` 多记一次。
+#[test]
+fn refraction_without_thickness_is_the_identity() {
+    let f = Filter::Refraction {
+        strength: 0.0,
+        bezel: 26.0,
+        dispersion: 0.0,
+        ior: 1.5,
+    };
+    assert!(f.is_identity(), "厚度 0 ⇒ 恒等（色散乘的是 0）");
+
+    // 色散不为 0 也一样 —— 它乘的是位移，而位移是 0。
+    let f = Filter::Refraction {
+        strength: 0.0,
+        bezel: 26.0,
+        dispersion: 0.8,
+        ior: 1.5,
+    };
+    assert!(
+        f.is_identity(),
+        "厚度 0 ⇒ 恒等，色散不改变这一点（色散乘的是位移）"
+    );
+
+    // 而厚度非 0 时，即便 IOR = 1（不折射）也**不是**恒等 ——
+    // 那一档是诊断位：pass 必须真的跑起来，门禁才能验「画面逐像素不变」。
+    let f = Filter::Refraction {
+        strength: 28.0,
+        bezel: 26.0,
+        dispersion: 0.0,
+        ior: 1.0,
+    };
+    assert!(
+        !f.is_identity(),
+        "IOR=1 但厚度非 0：pass 仍要跑（诊断位），不能判成恒等"
+    );
+}
+
+/// 折射**不外扩**离屏矩形。
+///
+/// # 为什么
+///
+/// 折射合成趟采的是 `g_dst` —— 目标的**全屏**副本；离屏 RT 里装的是
+/// 元素自己的内容，而 `PSRefraction` **不采它**（元素的内容是之后由
+/// `redraw_original` 那趟画回屏幕的）。所以「元素外那一圈」根本不在
+/// 离屏 RT 里，外扩它不解决任何问题。
+///
+/// 而且外扩有**副作用**：拿不到目标副本时降级成普通合成，那一趟画的是
+/// `pass.bounds` —— 外扩之后会把元素自己的内容多画一圈到元素外面。
+#[test]
+fn refraction_does_not_grow_the_offscreen_rect() {
+    let f = Filter::Refraction {
+        strength: 28.0,
+        bezel: 26.0,
+        dispersion: 0.2,
+        ior: 1.5,
+    };
+    let o = f.outsets();
+    assert!(
+        o.is_zero(),
+        "折射不外扩：离屏 RT 应当正好等于元素矩形，实测 {o:?}"
+    );
+    let content = Rect::new(100.0, 200.0, 220.0, 120.0);
+    assert_eq!(
+        FilterChain::single(f).bounds_for(content),
+        content,
+        "离屏矩形应当与元素矩形逐项相同"
+    );
+}
+
 /// 链的顺序被保留：`then` 追加到末尾。
 #[test]
 fn chain_order_is_execution_order() {

@@ -2068,13 +2068,29 @@ fn glass_params_are_not_hard_coded() {
                 );
             }
         }
-        // 其余三块玻璃必须**跟着一起变**（共用一组参数）—— 若有人给某一块
-        // 单独特判，这一条会绿而画面上三块玻璃参数不一致。
+        // 三块玻璃共用**除厚度以外**的参数（倒角带宽 / 色散 / 折射率必须**逐项
+        // 相同**）；而**厚度**必须**各不相同**且**有序**（薄 < 常规 < 厚）——
+        // 标题写着「薄 / 常规 / 厚」，三块一样厚的话那三个标题在**说谎**。
+        //
+        // ⚠ 这两条一起断，缺一不可：只断「厚度不同」挡不住「厚度不同、但倒角
+        // 带宽各写各的」；只断「其余三项相同」挡不住「三块厚度一样」。
+        let p0 = pick(0, &moved);
         for k in 1..moved.len() {
-            assert_eq!(
-                pick(0, &moved),
-                pick(k, &moved),
-                "`{param:?}` 改动后第 {k} 块玻璃与第 0 块参数不一致 —— 玻璃块本该共用一组参数"
+            let pk = pick(k, &moved);
+            for j in 1..4 {
+                assert_eq!(
+                    p0[j], pk[j],
+                    "`{param:?}` 改动后第 {k} 块玻璃的第 {j} 个字段与第 0 块不一致 \
+                     （{} vs {}）—— 倒角带宽 / 色散 / 折射率是三块**共用**的",
+                    p0[j], pk[j]
+                );
+            }
+            assert!(
+                p0[0] < pk[0],
+                "第 {k} 块玻璃的厚度（{}）必须比第 0 块（{}）大 —— \
+                 三块要按「薄 / 常规 / 厚」**有序**",
+                pk[0],
+                p0[0]
             );
         }
     }
@@ -2254,6 +2270,134 @@ fn glass_param_keys_all_wired() {
         g.click(&format!("glass-{}:dec", param.slug()));
     }
     assert_eq!(g.glass, Glass::default(), "加减一轮之后没回到默认值");
+}
+
+/// 三块玻璃必须**压在可折射的内容上**。
+///
+/// # 这条钉住的是整页的**前提**
+///
+/// 折射采样的是「**已经画在屏幕上**的东西」。玻璃块下面没有内容 ⇒ 位移纯色
+/// ⇒ 画面上「折射没生效」。而那不是着色器的问题，是**几何**的问题 —— 于是
+/// 排查方向会整个跑偏（去查 HLSL、查滤镜链、查离屏尺寸）。
+///
+/// # 为什么要有「贯穿整个舞台的竖条」
+///
+/// 早先这一页只有三行说明文字，而文字**只有 312px 宽**、三块玻璃占 692px ——
+/// 于是第三块玻璃下面**一整块纯色底板**，「折射没生效」是**必然**的。
+/// 竖条铺满整宽（`27 × 20 + 8 × 19 = 692`），每一块玻璃下面都有可弯的东西。
+///
+/// # 判据是「画出来的位置」，不是「布局出来的位置」
+///
+/// `translate-y` 是**绘制期**的位移（`paint.rs` 的 `translate_x/y`），**不**改
+/// 布局矩形。所以布局上玻璃块在竖条带**下面**，画出来才压上去。
+/// 判据必须按**画出来的**位置算 —— 否则这条门禁会恒真地绿。
+#[test]
+fn glass_panes_cover_the_refraction_target() {
+    let root = laid_out_glass();
+
+    let target = find_by_key(&root, "glass-target").expect("舞台上要有竖条带");
+    let t = target.rect();
+    assert!(
+        t.height > 0.0,
+        "竖条带高度为 0 —— 玻璃块压在上面时底下什么也没有"
+    );
+
+    // 竖条必须**铺满**舞台内容宽 —— 否则靠右的玻璃块下面没有东西。
+    let stage = find_by_key(&root, "glass-stage").expect("要有舞台");
+    let s = stage.rect();
+    let content_w = s.width - 40.0; // 20px padding 两侧
+    assert!(
+        (t.width - content_w).abs() < 1.0,
+        "竖条带只占了 {:.1}px，舞台内容宽是 {:.1}px —— \
+         靠右的玻璃块下面没有可折射的内容（实测第三块玻璃原本完全在文字之外）",
+        t.width,
+        content_w
+    );
+
+    // 竖条要**够宽**，位移才看得见：位移是十几像素量级，窄条弯起来看不出来。
+    let mut bars = 0usize;
+    let mut narrowest = f32::MAX;
+    walk(&root, &mut |n: &Node| {
+        if n.key()
+            .and_then(|k| k.as_name())
+            .is_some_and(|k| k.starts_with("gx:"))
+        {
+            bars += 1;
+            narrowest = narrowest.min(n.rect().width);
+        }
+    });
+    assert!(bars >= 8, "竖条只有 {bars} 根 —— 折射的输入太稀疏");
+    assert!(
+        narrowest >= 16.0,
+        "最窄的竖条只有 {narrowest:.1}px —— 位移（十几像素）比它还宽，弯起来看不出来"
+    );
+
+    // ---- 玻璃块（**画出来的**位置）必须盖住竖条带 ----
+    //
+    // `translate-y` 是绘制期位移：布局矩形在下面，绘制位置在上面。
+    // 这里按 `.glass-panes` 的 `translate-y` 折算绘制位置。
+    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
+    let pr = panes.rect();
+    let shift = panes_translate_y();
+    let painted_top = pr.y + shift;
+
+    // 玻璃块本体是 `.glass-cell` 的**第一个**子节点（标签在下面），
+    // 所以它的高度就是 `.glass-pane` 的高度（120px）。
+    let pane_h = find_by_key(&root, "glass:a")
+        .expect("要有玻璃块")
+        .rect()
+        .height;
+    let pane_bottom = painted_top + pane_h;
+
+    assert!(
+        (painted_top - t.y).abs() < 1.0,
+        "玻璃块画出来的顶边在 {painted_top:.1}，竖条带的顶边在 {:.1} —— \
+         玻璃块没有压住竖条带（画面上等于没有折射）",
+        t.y
+    );
+    assert!(
+        (pane_bottom - (t.y + t.height)).abs() < 1.0,
+        "玻璃块画出来的底边在 {pane_bottom:.1}，竖条带的底边在 {:.1} —— \
+         玻璃块没有**盖满**竖条带",
+        t.y + t.height
+    );
+}
+
+/// 读 `.glass-panes` 的 `translate-y`（绘制期位移，布局矩形不含它）。
+///
+/// # 为什么要从样式表里**读**而不是硬编码
+///
+/// 这个数是「玻璃块与竖条带对齐」的全部依据，而它住在 `.zstyle` 里。
+/// 硬编码一份的话，样式表改了而门禁还按老数算 ⇒ 门禁恒真。
+/// 于是从**同一份**样式表解析出来 —— 与 `shell_metrics_match_stylesheet`
+/// 同一手法。
+fn panes_translate_y() -> f32 {
+    let css = zephyra_gallery::styles::app_only()
+        .iter()
+        .find(|(name, _)| *name == "pages")
+        .map(|(_, src)| *src)
+        .expect("有 pages 这一张表");
+    // 在 `.glass-panes` 那一段里找 `translate-y: <n>px`。
+    let mut in_panes = false;
+    for line in css.lines() {
+        let t = line.trim();
+        if t.starts_with("Container.glass-panes") {
+            in_panes = true;
+            continue;
+        }
+        if in_panes {
+            if t.starts_with('}') {
+                break;
+            }
+            if let Some(rest) = t.strip_prefix("translate-y:") {
+                let v = rest.trim().trim_end_matches("px;").trim();
+                return v
+                    .parse()
+                    .unwrap_or_else(|_| panic!(".glass-panes 的 translate-y 读不出来：{rest:?}"));
+            }
+        }
+    }
+    panic!(".glass-panes 规则里没有 translate-y —— 玻璃块与竖条带的对齐就无从谈起");
 }
 
 /// 边界上的 `[−] [+] 必须是**无副作用**的 no-op。

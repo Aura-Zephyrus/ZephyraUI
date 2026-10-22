@@ -413,13 +413,32 @@ fn blend_mode_creates_no_offscreen_requirement() {
 //  折射（液态玻璃）
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// 折射的外扩必须等于 `strength`（像素）。
+/// 折射**不外扩**离屏矩形 —— 离屏矩形就等于元素矩形。
 ///
-/// ⚠ 这条钉的是**像素**语义而不是"比例"：折射要把背景往外推 `strength`
-/// 那么多像素，所以离屏矩形少一圈就在边缘被硬切 —— 症状是玻璃边缘出现一道
-/// 平直的硬边，看起来像"边框画歪了"而不是"离屏算小了"。
+/// # 这条门禁的判据改过一次（而且原来那个是错的）
+///
+/// 早先这里写的是「折射的外扩必须等于 `strength`（像素）」，理由是
+/// 「折射要把背景往外推 `strength` 那么多像素，所以离屏矩形少一圈就在边缘被
+/// 硬切」。
+///
+/// 那个理由**把采样对象搞错了**：
+///
+/// | | 读的是哪张纹理 | 覆盖范围 |
+/// |---|---|---|
+/// | 折射 | **`g_dst`** = 目标的**全屏**副本 | 整块屏幕 |
+/// | 模糊 / 投影 | 离屏 RT（元素自己的内容） | 元素 ± 外扩 |
+///
+/// 折射的合成趟画的是**元素矩形**、采样的是**全屏副本**，所以「元素外那一圈」
+/// 根本不在离屏 RT 里 —— 外扩它**不解决任何问题**，只是把离屏 RT 撑大
+/// （每块玻璃四周各多一圈 `strength` 像素），而那张 RT 在折射路径上**根本没人
+/// 采样**：`PSRefraction` 只采 `g_dst`，元素自己的内容是之后由
+/// `redraw_original` 那趟画回屏幕的。
+///
+/// 而且外扩还有**副作用**：拿不到目标副本时（`refresh_dst_copy` 失败）会降级成
+/// 普通合成，那一趟画的是 `pass.bounds` —— 外扩之后它会把元素自己的内容**多画
+/// 一圈**到元素外面，症状是玻璃四周多出一圈同色毛边。
 #[test]
-fn refraction_outsets_by_strength_in_pixels() {
+fn refraction_does_not_grow_the_offscreen_rect() {
     let content = Rect::new(100.0, 50.0, 80.0, 40.0);
     for s in [1.0f32, 8.0, 24.0] {
         let f = FilterChain::single(Filter::Refraction {
@@ -428,11 +447,10 @@ fn refraction_outsets_by_strength_in_pixels() {
             dispersion: 0.0,
             ior: 1.5,
         });
-        let b = f.bounds_for(content);
         assert_eq!(
-            b,
-            Rect::new(100.0 - s, 50.0 - s, 80.0 + 2.0 * s, 40.0 + 2.0 * s),
-            "strength={s} 的外扩不对"
+            f.bounds_for(content),
+            content,
+            "strength={s} 的折射不该外扩离屏矩形"
         );
     }
 }
@@ -478,19 +496,45 @@ fn zero_refraction_is_identity() {
     );
 }
 
-/// 但 `strength = 0` + `dispersion > 0` **不是**恒等。
+/// `strength = 0` 时折射是**恒等** —— **色散也不例外**。
 ///
-/// 色散只需要强度为 0 的法线方向就能生效（R/B 相对 G 偏移）—— 所以这一条
-/// 把两个参数分开判，而不是"strength 为 0 就恒等"。
+/// # 这条门禁的判据改过一次（而且原来那个是错的）
+///
+/// 早先这里写的是「`strength = 0` + `dispersion > 0` **不是**恒等」，理由是
+/// 「色散只需要强度为 0 的法线方向就能生效（R/B 相对 G 偏移）」。
+///
+/// 那个理由**与着色器不符**。`PSRefraction` 里三条通道的采样点是
+///
+/// ```text
+/// uvR = uv + off_uv * (1 + dispersion)
+/// uvG = uv + off_uv
+/// uvB = uv + off_uv * (1 - dispersion)
+/// ```
+///
+/// 而 `off_uv = -n * displacement * px2uv`，`displacement` 里**带 `strength`
+/// 这个因子**。所以 `strength = 0` ⇒ `off_uv = 0` ⇒ 三条通道采同一点 ⇒
+/// 色散**乘的是 0** ⇒ 整条链是恒等。
+///
+/// 后果（早先那一版）：厚度调成 0 的那一档，链被判成「非恒等」⇒ 照样开离屏
+/// pass、照样拷一份**全屏**目标副本，而画面一个字都不变 —— 纯浪费，
+/// 且 `RenderReport::offscreen_passes` 多记一次。
+///
+/// 判据在 core 侧（`Filter::is_identity`），这里断的是**它传下去的后果**：
+/// 恒等 ⇒ `plan_pass` 不产出离屏 pass。
 #[test]
-fn dispersion_alone_is_still_an_effect() {
+fn dispersion_alone_cannot_survive_without_strength() {
     let f = FilterChain::single(Filter::Refraction {
         strength: 0.0,
         bezel: 20.0,
         dispersion: 0.5,
         ior: 1.5,
     });
-    assert!(!f.is_identity(), "只有色散时仍需离屏");
+    assert!(f.is_identity(), "厚度 0 ⇒ 恒等：色散乘的是位移，而位移是 0");
+    let content = Rect::new(0.0, 0.0, 10.0, 10.0);
+    assert!(
+        plan_pass(&quad(f, BlendMode::default(), content)).is_none(),
+        "厚度 0 的折射不该产出离屏 pass（哪怕色散不为 0）"
+    );
 }
 
 /// 折射必须把原图**重画一遍**。

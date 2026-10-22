@@ -63,8 +63,30 @@ impl Glass {
     /// `PropertyValue::Filter` 参与 `PartialEq`（`property.rs` 的相等表里有一项），
     /// 所以改参数能被 `diff` 正确识别为「这棵树变了」——不需要额外的失效通道。
     pub fn filter(&self) -> zephyra_core::filter::Filter {
+        self.filter_with_thickness_offset(0)
+    }
+
+    /// 厚度按 `offset` 挪几档后的滤镜。
+    ///
+    /// # 为什么要「偏移」而不是三个独立参数
+    ///
+    /// 三块玻璃（薄 / 常规 / 厚）**共用**面板调的那一组参数 —— 拖一次面板，
+    /// 三块**一起**变（这页要教的是**单项**参数的因果：厚度影响多少像素位移、
+    /// IOR 到 1 时位移消失）。而厚度**各不相同** —— 那是「薄 / 常规 / 厚」
+    /// 这三个标题**名副其实**的唯一办法。
+    ///
+    /// 早先那一版三块玻璃用的是**完全相同**的滤镜，标题却写着 Thin / Normal /
+    /// Thick —— 画面上三块一模一样，标题在**说谎**。
+    ///
+    /// # 偏移量按**档位**给，不按像素
+    ///
+    /// 厚度存的是档位下标（见 [`Glass`]），所以偏移也是档位数：厚度的档位
+    /// 步长是 4px，偏移 4 档 = 16px。
+    pub fn filter_with_thickness_offset(&self, offset: isize) -> zephyra_core::filter::Filter {
+        let idx =
+            (self.thickness as isize + offset).clamp(0, THICKNESS.len() as isize - 1) as usize;
         zephyra_core::filter::Filter::Refraction {
-            strength: THICKNESS[self.thickness],
+            strength: THICKNESS[idx],
             bezel: BEZEL[self.bezel],
             dispersion: DISPERSION[self.dispersion],
             ior: IOR[self.ior],
@@ -109,6 +131,21 @@ impl Glass {
         moved
     }
 }
+
+/// 三块玻璃各自的**厚度档位偏移**（相对面板调的那一档）。
+///
+/// # 为什么是偏移而不是三组独立参数
+///
+/// 三块玻璃共用面板调的那一组参数（拖一次，三块一起变），但厚度**各不相同**
+/// —— 那是「薄 / 常规 / 厚」三个标题**名副其实**的唯一办法。详见
+/// [`Glass::filter_with_thickness_offset`]。
+///
+/// # 为什么是 ±4 档
+///
+/// 厚度的档位步长是 4px，所以 ±4 档 = **±16px**。实测三块玻璃的位移峰值
+/// （默认档：bezel=26 / ior=1.50）约 3px / 13px / 26px —— 一眼能分出厚薄，
+/// 而不会大到「厚的那块把画面揉成一团」。
+pub const PANE_THICKNESS_OFFSETS: [isize; 3] = [-4, 0, 4];
 
 /// 四个参数之一（用来索引 [`Glass::nudge`] 与 click 分派）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

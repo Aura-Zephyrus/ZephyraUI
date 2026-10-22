@@ -33,7 +33,7 @@ use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_ui::controls;
 
-use crate::app::glass::Param;
+use crate::app::glass::{Param, PANE_THICKNESS_OFFSETS};
 use crate::app::pages;
 use crate::app::Gallery;
 
@@ -66,17 +66,11 @@ pub fn page(g: &Gallery) -> Element {
                 g.tr("ui.refraction-parameters"),
                 vec![params(g), stage(g)],
             ),
-            pages::section(
-                "sec-filters",
-                g.tr("ui.filters"),
-                vec![pages::demo_many(
-                    g.tr("ui.progress"),
-                    vec![
-                        controls::progress_bar("fx-soft", 0.35, "running"),
-                        controls::progress_bar("fx-hard", 0.8, "error"),
-                    ],
-                )],
-            ),
+            // ⚠ 这里**曾经**还有一节 `sec-filters`，内容是「两个进度条」。
+            //   那是旧「效果页」的遗留（那时这一页叫 effects、演示的是各种效果），
+            //   页面改成「液态玻璃」之后它没被删掉 —— 于是在液态玻璃页上出现
+            //   一节标题写着「Filters」、内容却是进度条的演示。标题与内容对不上，
+            //   而两样都与本页无关。
         ],
     )
 }
@@ -146,17 +140,22 @@ fn stepper(g: &Gallery, param: Param, value: &'static str) -> Element {
 /// 只有 `translate-x/y`，见 `zstylec/src/props_map.rs`）—— 于是重叠只有一条路：
 /// 负 `translate-y`。
 ///
-/// ⚠ 这是**有意为之的脆弱**：`.glass-panes` 的位移量必须与 `.glass-stage` 的
-/// padding + 文字高度对得上，否则玻璃块会滑出底板 —— 症状是「折射不生效」，
-/// 而真正的原因是**玻璃块下面没有内容可折射**。改文字行数时记得一起改样式表。
+/// ⚠ 这是**有意为之的脆弱**：`.glass-panes` 的位移量必须与目标条带的高度
+/// 对得上，否则玻璃块会滑出条带 —— 症状是「折射不生效」，而真正的原因是
+/// **玻璃块下面没有内容可折射**。改条带高度时记得一起改样式表；
+/// 门禁 `glass_panes_cover_the_refraction_target` 会替你盯着这件事。
 ///
 /// # 为什么底板要挑这种深蓝而不是深灰
 ///
 /// 折射位移在**色差大**的地方才看得见。深灰底上的深色玻璃，位移 20 像素与
 /// 位移 0 像素画出来几乎一样 —— 于是「折射没生效」与「折射生效但看不出来」
-/// 没法区分，而后者会被当成前者去查着色器。深蓝 + 白字把这个问题挡在门外。
+/// 没法区分，而后者会被当成前者去查着色器。深蓝 + 白竖条把这个问题挡在门外。
 fn stage(g: &Gallery) -> Element {
-    pages::page_root("glass-stage", "glass-stage", vec![backdrop(g), panes(g)])
+    pages::page_root(
+        "glass-stage",
+        "glass-stage",
+        vec![backdrop(g), target(), panes(g)],
+    )
 }
 
 /// 三块玻璃的标题文案（走 [`Gallery::tr`]，三语）。
@@ -182,12 +181,103 @@ fn backdrop(g: &Gallery) -> Element {
     )
 }
 
+/// 折射的**主输入**：一排贯穿整个舞台的竖条。
+///
+/// # 为什么需要它（而不能只靠那三行字）
+///
+/// 折射采样的是「**已经画在屏幕上**的东西」，所以玻璃块下面必须有内容。
+/// 早先这一页只有三行说明文字，而文字**只有 312px 宽**（三块玻璃加起来
+/// 占 692px）—— 于是：
+///
+/// | 玻璃块 | 横向范围 | 下面有字吗 |
+/// |---|---|---|
+/// | `glass:a` | 308..528 | 有（整块都在字上） |
+/// | `glass:b` | 544..764 | 只有 1/3（字到 620 就没了） |
+/// | `glass:c` | 780..1000 | **完全没有** |
+///
+/// 第三块玻璃下面是**一整块纯色底板** —— 位移纯色等于没位移，于是那一块
+/// 看上去「折射没生效」。而它其实是**没有可折射的东西**。
+///
+/// 竖条比文字更适合当折射输入：位移是十几像素量级，15px 的细笔画弯起来
+/// 看不清，而 27px 宽的竖条边缘一弯就看得见 —— 这正是液态玻璃该有的样子。
+///
+/// # 尺寸为什么是 27px × 20 根
+///
+/// 舞台内容宽 692px。`27 × 20 + 8 × 19 = 540 + 152 = 692` —— **正好铺满**，
+/// 不用留残边。（竖条的宽度是解出来的：`(692 + 8) / (n + 1) - 8` 对某个整数
+/// n 是整数，取 n = 20 时 27px。）
+fn target() -> Element {
+    pages::page_root(
+        "glass-target",
+        "glass-target",
+        (0..TARGET_BARS)
+            .map(|i| {
+                let bar = Element::new(NodeTag::Container)
+                    .with_key(target_key(i))
+                    .style("glass-bar");
+                // ⚠ 第二个分类名必须用 `styles()` **分开加**：`style()` 只收**一个**
+                // 词，不按空白切分。写成 `style("glass-bar alt")` 会得到一个
+                // 名字里带空格的分类名 —— 它匹配不上任何规则，于是那根竖条
+                // **宽度为 0**（`width: 27px` 那条规则没选中它）。
+                // 症状是「隔一根竖条就消失一根」，而且不报错。
+                if i % 2 == 0 {
+                    bar
+                } else {
+                    bar.styles(["alt"])
+                }
+            })
+            .collect(),
+    )
+}
+
+/// 竖条的数量 —— 与 [`target_key`] 的下标范围一致。
+const TARGET_BARS: usize = 20;
+
+/// 竖条的 key（**不能 `format!`**，见模块文档的每帧泄漏那条）。
+const fn target_key(i: usize) -> &'static str {
+    match i {
+        0 => "gx:0",
+        1 => "gx:1",
+        2 => "gx:2",
+        3 => "gx:3",
+        4 => "gx:4",
+        5 => "gx:5",
+        6 => "gx:6",
+        7 => "gx:7",
+        8 => "gx:8",
+        9 => "gx:9",
+        10 => "gx:10",
+        11 => "gx:11",
+        12 => "gx:12",
+        13 => "gx:13",
+        14 => "gx:14",
+        15 => "gx:15",
+        16 => "gx:16",
+        17 => "gx:17",
+        18 => "gx:18",
+        _ => "gx:19",
+    }
+}
+
 /// 三块玻璃并排。
 ///
 /// # `filter` 写在这里、而不是样式表 —— 见模块文档
 ///
 /// 值来自 [`Gallery::glass`]，每帧重算。它是**逐帧**的（`view()` 每帧重建整棵
 /// 树），但查表是零成本的：四次数组下标，没有分配、没有浮点运算。
+///
+/// # 三块的厚度**不同**（档位偏移）
+///
+/// 标题写着「薄 / 常规 / 厚」，所以三块必须真的厚薄不同 —— 否则标题在**说谎**。
+/// 偏移量见 [`PANE_THICKNESS_OFFSETS`]；其余三个参数三块**共用**（拖一次面板，
+/// 三块一起变）。
+///
+/// # 标签放在玻璃**下面**而不是上面
+///
+/// 这是为了让 `.glass-panes` 的 `translate-y` 恰好等于**目标条带的高度**
+/// （一个整数），而不是「目标高度 + 标题高度 + 间距」—— 后者里的标题高度
+/// 取决于**字体度量**，换个字体那个数就错位了，而错位的症状是「玻璃块没有
+/// 压在竖条上」（画面上等于没有折射）。
 fn panes(g: &Gallery) -> Element {
     // ⚠ 每块玻璃**各自重建**链，而不是建一次后复用：`FilterChain` 不是 `Copy`，
     // 而 `map` 的闭包是 `FnMut` —— 捕获一个要按值取用的变量会编译不过。
@@ -201,21 +291,23 @@ fn panes(g: &Gallery) -> Element {
         PANE_KEYS
             .iter()
             .zip(titles.iter())
-            .map(|(&key, title)| {
+            .enumerate()
+            .map(|(i, (&key, title))| {
                 pages::page_root(
                     "cell",
                     "glass-cell",
                     vec![
-                        controls::text_label(pane_title_key(key), title, "glass-title"),
                         Element::new(NodeTag::Container)
                             .with_key(key)
                             .style("glass-pane")
                             .with(
                                 &props::FILTER,
                                 PropertyValue::filter(zephyra_core::filter::FilterChain::single(
-                                    g.glass.filter(),
+                                    g.glass
+                                        .filter_with_thickness_offset(PANE_THICKNESS_OFFSETS[i]),
                                 )),
                             ),
+                        controls::text_label(pane_title_key(key), title, "glass-title"),
                     ],
                 )
             })

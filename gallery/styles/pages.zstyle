@@ -113,11 +113,11 @@ Container.nav-list {
 /* ⚠ 这一节的每一处位移都是**配对**的，改一处必须改另一处。
  *
  * 折射采样的是「已经画在屏幕上的东西」，所以玻璃块必须与要折射的图案**重叠**。
- * core 没有浮层 / 负 margin / 绝对定位，于是重叠只有 `translate-y` 一条路：
- * `.glass-panes` 往上抬的量 = `.glass-stage` 的 padding + 文字块高度。
+ * core 没有浮层 / 负 margin / 绝对定位，于是重叠只有 `translate-y` 一条路。
  *
  * 抬歪了不会报错，只是「玻璃块下面没有内容可折射」—— 画面上等于没折射，
- * 而真正的原因不在着色器里。
+ * 而真正的原因不在着色器里。门禁 `glass_panes_cover_the_refraction_target`
+ * 盯着这件事：玻璃块没有盖住竖条带 ⇒ 那条门禁红。
  */
 Container.glass-stage {
     direction: vertical;
@@ -125,8 +125,10 @@ Container.glass-stage {
     corner-radius: 12px;
     background: #14294d;
     /* 固定高：玻璃块靠位移压上来，而位移不改变布局，容器高度得自己留出来。
-     * 255 = 20(padding) + 69(三行文字) + 16(标题) + 8(间距) + 120(玻璃) + 22(余量)。 */
-    height: 255px;
+     * 370 = 20(padding) + 66(三行文字) + 120(竖条带) + 144(玻璃块 + 间距 + 标签) + 20(padding)。
+     * 竖条带与玻璃块**同高**（都是 120px）⇒ 位移量正好是一个整数（-120px），
+     * 不依赖字体度量 —— 见下面 `.glass-panes` 的注释。 */
+    height: 370px;
 }
 
 /* 底板自己也是一个竖排容器 —— 不给 `direction` 的话三行字会挤成一行
@@ -142,16 +144,50 @@ Text.glass-bg-text {
     text-color: #ffffff;
 }
 
-/* 位移量：把玻璃块从「文字下方」提到「与文字下半段重叠」。
- * 算式 = 底板高度(20 padding + 3×19 文字 + 2×6 间距 = 89) - 目标起点(191) = -102。
- * 改 BACKDROP_TEXT 的行数时必须回来重算这个数 —— 歪了就是「玻璃不在图案上」。 */
+/* 折射的**主输入**：一排竖条，贯穿整个舞台。
+ *
+ * ⚠ 为什么不能只靠上面那三行字：文字只有 312px 宽，而三块玻璃占 692px ——
+ * 第三块玻璃下面**什么都没有**，位移纯色等于没位移。竖条铺满整宽，于是
+ * 每一块玻璃下面都有可折射的东西。
+ *
+ * 竖条 27px 宽、间距 8px、20 根：27 × 20 + 8 × 19 = 692 = 舞台内容宽，
+ * 正好铺满不留残边。 */
+Container.glass-target {
+    direction: horizontal;
+    spacing: 8px;
+    height: 120px;
+    /* ⚠ 必须 `stretch`：竖条是**空容器**，不给高度就量成 0 —— 整排竖条
+     * 高度为 0 ⇒ 玻璃块压在上面时底下什么也没有，位移纯色等于没位移。 */
+    cross-align: stretch;
+}
+
+Container.glass-bar {
+    width: 27px;
+    background: #ffffff;
+}
+
+Container.glass-bar.alt {
+    background: #6ea8ff;
+}
+
+/* 位移量：把玻璃块从「竖条带下方」提到「正好压在竖条带上」。
+ *
+ * 算式 = 竖条带的高度（120px）—— 玻璃块与竖条带**同高**，所以往下挪一个
+ * 竖条带的高度就正好盖住它。
+ *
+ * ⚠ 这个数**必须**与 `.glass-target` 的 height 一致，而它之所以能是个
+ * 整数，是因为玻璃块的**标签放在下面**（`.glass-cell` 的顺序是
+ * 「玻璃块 → 标签」）：标签在玻璃块**上面**时，位移量就得再减去标签高度，
+ * 而标签高度取决于**字体度量** —— 换个字体那个数就错位了，错位的症状是
+ * 「玻璃块没压在竖条上」（画面上等于没有折射）。 */
 Container.glass-panes {
     direction: horizontal;
     spacing: 16px;
     cross-align: stretch;
-    translate-y: -102px;
+    translate-y: -120px;
 }
 
+/* 玻璃块与它的标签。标签在**下面** —— 见上面 `.glass-panes` 的注释。 */
 Container.glass-cell {
     direction: vertical;
     spacing: 8px;
