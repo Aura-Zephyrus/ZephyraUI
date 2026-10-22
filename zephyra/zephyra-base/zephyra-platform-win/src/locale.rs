@@ -24,12 +24,18 @@
 
 use windows::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER};
 
-/// `MUI_LANGUAGE_NAME` 的取值 —— 官方 `winnls.h`：`#define MUI_LANGUAGE_NAME 0x4`。
+/// `MUI_LANGUAGE_NAME` 的取值 —— 官方 `winnls.h`：`#define MUI_LANGUAGE_NAME 0x8`。
 ///
-/// ⚠️ 传 0（`MUI_LANGUAGE_ID`）会得到 **LCID 的十进制串**（如 `1033`）而不是语言名，
-/// 而 `1033` 不是 BCP 47 标签，协商会**全部落空**且不报错。
-/// `windows` crate 未把它暴露在本 crate 启用的 feature 里，所以自己定义。
-const MUI_LANGUAGE_NAME: u32 = 0x4;
+/// ⚠️ 与 `MUI_LANGUAGE_ID`（`0x4`）**只差一位，写错不报错**：
+/// 传 ID 会得到 **LCID 的十六进制串**而不是语言名 —— 实测本机
+/// （`GetUserPreferredUILanguages(0x4, …)`）得到 `["0804", "0409"]`，
+/// 换成 `0x8` 才得到 `["zh-CN", "en-US"]`。
+/// 而 LCID 串不是 BCP 47 标签 ⇒ 协商全部落空 ⇒ 界面回落英文。
+///
+/// `windows` crate 未把它暴露在本 crate 启用的 feature 里，所以自己定义 ——
+/// **照抄 `windows` 0.62 的值**（`MUI_LANGUAGE_NAME = 8` / `MUI_LANGUAGE_ID = 4`），
+/// 不凭记忆：写错的那个值不会编译失败，只是安静地返回另一种东西。
+const MUI_LANGUAGE_NAME: u32 = 0x8;
 
 /// 首次探测用的缓冲（字符数）。
 ///

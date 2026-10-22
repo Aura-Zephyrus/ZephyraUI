@@ -46,7 +46,7 @@ fn system_locale_readable_on_real_machine() {
     assert!(
         !langs.is_empty(),
         "本机读不到首选 UI 语言。先查是不是签名或标志位写错：\
-             dwflags 必须是 MUI_LANGUAGE_NAME(0x4)，两个长度参数都是 *mut u32"
+             dwflags 必须是 MUI_LANGUAGE_NAME(0x8)，两个长度参数都是 *mut u32"
     );
     let mut sorted = langs.clone();
     sorted.sort();
@@ -55,15 +55,30 @@ fn system_locale_readable_on_real_machine() {
     assert_eq!(sorted.len(), n, "不该有重复项：{langs:?}");
     for l in &langs {
         assert!(!l.is_empty() && l.len() <= 16, "语言名形状可疑：{l:?}");
+        // ⚠️ 必须查**形状**，不能只查非空：标志位写错时拿回来的是 LCID 串
+        // （实测本机 `0x4` → `["0804", "0409"]`），非空、长度也对，
+        // 但主语言子标签必须是**字母** —— 数字开头就说明拿到的是 LCID。
+        //
+        // 那不是「看起来怪」而是**真故障**：LCID 串不是 BCP 47 标签，
+        // 协商会全部落空，于是界面永远回落英文。
+        assert!(
+            l.chars().next().is_some_and(|c| c.is_ascii_alphabetic()),
+            "语言名不是 BCP 47 标签（首字符不是字母）：{l:?} —— \
+             多半是拿到了 LCID 串，检查 dwflags 是不是误传了 MUI_LANGUAGE_ID"
+        );
     }
 }
 
-/// flags_are_pinned：`MUI_LANGUAGE_NAME` = `0x4`。
+/// flags_are_pinned：`MUI_LANGUAGE_NAME` = `0x8`。
 ///
-/// 传 0 会返回 LCID（如 `1033`）而非语言名 —— 而 `1033` 不是 BCP 47 标签，
+/// ⚠️ `0x4` 是 `MUI_LANGUAGE_ID` —— 传它会返回 LCID 串（实测本机
+/// `["0804", "0409"]`）而不是语言名，而 LCID 串不是 BCP 47 标签，
 /// 协商会全部落空。这条是那个坑的护栏。
 #[test]
 fn flags_are_pinned() {
-    assert_eq!(MUI_LANGUAGE_NAME, 0x4);
-    assert_ne!(MUI_LANGUAGE_NAME, 0, "0 = MUI_LANGUAGE_ID，会返回 LCID");
+    assert_eq!(MUI_LANGUAGE_NAME, 0x8);
+    assert_ne!(
+        MUI_LANGUAGE_NAME, 0x4,
+        "0x4 = MUI_LANGUAGE_ID，会返回 LCID 串而不是语言名"
+    );
 }

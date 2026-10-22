@@ -1579,6 +1579,126 @@ fn every_tr_key_used_in_source_exists_in_every_language() {
     );
 }
 
+/// 系统语言**不得**盖过用户的手动选择。
+///
+/// # 这条钉住的是「在设置里点中文没反应」
+///
+/// 宿主每帧都把系统语言偏好传进来（[`InputState::languages`]）。而协商
+/// **可能得到空表** —— 宿主给的语言串不是合法 BCP 47 标签时（平台层
+/// 误给 LCID 串时就是如此），`Preferences::from_owned` 会把每一项都丢掉。
+///
+/// 判据若写成「`prefs` 是空表 ⇒ 还没协商过」，那么**每帧**都会重跑协商，
+/// 而每帧的结果是「回落 [`SUPPORTED`] 第一项」⇒ 用户刚点的语言在同一帧
+/// 末尾被改回去 ⇒ 看起来「点击完全没反应」。
+///
+/// 症状之所以难查：点击**真的**生效了（`lang` 一度变成 1），只是同一次
+/// `on_input` 调用的末尾又被改回 0 —— 于是回读状态时看到的永远是旧值。
+#[test]
+fn a_manual_language_choice_survives_the_system_negotiation() {
+    use zephyra_core::id::ElementKey;
+    use zephyra_fx::InputState;
+
+    // 平台层误给 LCID 串时的真实形状（实测本机 `GetUserPreferredUILanguages`
+    // 传错标志位就得到这两个）。它们**不是**合法 BCP 47 标签 ⇒ 协商得到空表。
+    let broken_system_langs = vec!["0804".to_string(), "0409".to_string()];
+
+    let mut g = Gallery::default();
+    let frame = |pressed: Option<ElementKey>| {
+        let pointers = usize::from(pressed.is_some());
+        InputState {
+            hovered: Some(ElementKey::Name("zh-Hans")),
+            pressed,
+            pointers,
+            viewport: (1400.0, 800.0),
+            scale: 1.0,
+            dt_ms: 16.0,
+            languages: broken_system_langs.clone(),
+        }
+    };
+
+    // 首帧：协商（空表 ⇒ 回落英文）
+    g.on_input(&frame(None));
+    assert_eq!(g.locale(), "en", "空表时应当回落第一项");
+
+    // 按下 → 抬起：抬起那一帧 click 生效
+    g.on_input(&frame(Some(ElementKey::Name("zh-Hans"))));
+    g.on_input(&frame(None));
+    assert_eq!(
+        g.lang, 1,
+        "点「中文」后语言必须是 zh-Hans —— 被系统协商改回去了"
+    );
+    assert_eq!(g.locale(), "zh-Hans");
+
+    // 后续帧继续带着系统语言：手动选择必须活下来
+    for _ in 0..5 {
+        g.on_input(&frame(None));
+    }
+    assert_eq!(
+        g.lang, 1,
+        "系统语言不得在后续帧把手动选择改回去 —— 协商必须只跑一次"
+    );
+    assert_ne!(
+        g.tr("route.guide"),
+        "Quick start",
+        "界面文案必须真的切到中文，而不只是状态字段变了"
+    );
+}
+
+/// 系统语言**只**协商一次；协商失败也不重跑。
+///
+/// 与上一条互补：上一条钉「手动选择活下来」，这条钉「协商只发生一次」——
+/// 后者是前者的**前提**（协商若每帧重跑，第一次失败后仍会不停重来）。
+///
+/// # 为什么这条要单独钉
+///
+/// 协商的结果被拿去做「初始语言」，而初始语言只在应用刚起来时有意义。
+/// 每帧重跑它 = 每帧都在重新决定界面语言，于是任何一帧的偶然输入都可能
+/// 把界面语言改回去 —— 即便协商**成功**（表非空）也一样。
+#[test]
+fn the_system_language_is_negotiated_at_most_once() {
+    use zephyra_fx::InputState;
+
+    let mut g = Gallery::default();
+    let frame = |langs: Vec<String>| InputState {
+        hovered: None,
+        pressed: None,
+        pointers: 0,
+        viewport: (1400.0, 800.0),
+        scale: 1.0,
+        dt_ms: 16.0,
+        languages: langs,
+    };
+
+    // ⚠️ 用**真机形状**：`GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)`
+    // 交回的是**区域**标签（实测本机 `["zh-CN", "en-US"]`），而应用声明的
+    // 可用语言写的是**文字**子标签（`zh-Hans`）。用 `["zh-Hans", …]` 写这条
+    // 会绕过「区域标签 ↔ 文字标签」这一跳 —— 而那正是线上真实走的那一跳。
+    let real_system_langs = vec!["zh-CN".to_string(), "en-US".to_string()];
+
+    // 合法标签：协商成功 ⇒ 初始语言是中文（`zh-CN` 落到 `zh-Hans`）
+    g.on_input(&frame(real_system_langs.clone()));
+    assert_eq!(
+        g.locale(),
+        "zh-Hans",
+        "系统偏好 zh-CN 时初始语言应当是 zh-Hans"
+    );
+    assert!(g.lang_negotiated, "协商后必须标记成「已做过」");
+
+    // 用户切到英文
+    g.click("en");
+    assert_eq!(g.locale(), "en");
+
+    // 后续帧继续带着系统语言：不得改回去
+    for _ in 0..5 {
+        g.on_input(&frame(real_system_langs.clone()));
+    }
+    assert_eq!(
+        g.locale(),
+        "en",
+        "协商成功后，后续帧也不得重跑协商 —— 否则界面语言会被系统偏好反复改回"
+    );
+}
+
 /// 控件参考页的**族切换**必须接线：九个 segmented key 都在树上，且真的点了
 /// 都会改 `Gallery::ref_family`。
 ///

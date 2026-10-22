@@ -41,6 +41,35 @@ fn negotiation_follows_preference_order_not_globally_nearest() {
     assert_eq!(negotiate(&prefs, &available).unwrap().as_str(), "en-US");
 }
 
+/// 宿主交回的**真实**系统偏好必须能落到应用的可用语言上。
+///
+/// # 这条钉的是真机形状
+///
+/// Windows 的 `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)` 交回的是
+/// **区域**标签（实测本机 `["zh-CN", "en-US"]`），而应用声明的可用语言里
+/// 常常写的是**文字**子标签（`zh-Hans`）。两者必须能对上，否则中文系统的
+/// 用户打开应用看到的是英文 —— 而协商本身**不报错**。
+///
+/// 形状：`zh-CN`（无 script）对 `zh-Hans`（有 script、无 region）⇒
+/// 按 `Tag::distance` 的规则，丢 script 与 region ⇒ 命中。
+#[test]
+fn a_region_only_system_tag_matches_a_script_only_available_tag() {
+    let available = [
+        Tag::parse("en").unwrap(),
+        Tag::parse("zh-Hans").unwrap(),
+        Tag::parse("ja").unwrap(),
+    ];
+    let prefs = Preferences::from_list(&["zh-CN", "en-US"]);
+    assert_eq!(
+        negotiate(&prefs, &available).unwrap().as_str(),
+        "zh-Hans",
+        "系统偏好 zh-CN 必须落到应用声明的 zh-Hans 上"
+    );
+    // 反过来：系统偏好英文时选英文。
+    let prefs = Preferences::from_list(&["en-US", "zh-CN"]);
+    assert_eq!(negotiate(&prefs, &available).unwrap().as_str(), "en");
+}
+
 /// 回退优先级：全中 > 丢 region > 只语言段。
 #[test]
 fn fallback_distance_follows_official_order() {

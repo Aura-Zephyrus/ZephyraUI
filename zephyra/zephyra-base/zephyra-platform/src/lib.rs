@@ -306,6 +306,12 @@ pub trait Platform {
     /// 返回线程的首选 UI 语言名列表，正是「有序、语言名标签」这一形状。
     /// 它与 `GetSystemDefaultUILanguage` 的区别：后者只有一项且是系统安装语言，
     /// 不是**用户偏好**。文档：`docs/developer/i18n.md` §3。
+    ///
+    /// ⚠️ `MUI_LANGUAGE_NAME` 是 `0x8`，而 `0x4` 是 `MUI_LANGUAGE_ID` ——
+    /// 两者只差一位，传错**不报错**，只是把语言名换成 LCID 串，而那不是
+    /// BCP 47 标签 ⇒ 上层协商全部落空 ⇒ 界面永远回落默认语言。
+    /// 实测本机（Windows 11，zh-CN 系统）：`0x8` → `["zh-CN", "en-US"]`，
+    /// `0x4` → `["0804", "0409"]`。
     fn system_languages(&self) -> Vec<String>;
 
     /// 对窗口施加外观。

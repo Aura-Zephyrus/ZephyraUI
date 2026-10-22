@@ -1077,6 +1077,21 @@ pub struct Gallery {
     /// 首帧由宿主经 on_input 推进来。空表 = 读不到 ⇒ 回落 [SUPPORTED] 第一项，
     /// **不**把界面钉死在某一门语言上（与「读不到系统主题就不跟随」同一纪律）。
     pub prefs: Preferences,
+    /// 系统语言协商**已经做过**（成功或放弃）。
+    ///
+    /// # 为什么不能拿 `prefs.is_empty()` 当这个判据
+    ///
+    /// 协商**可能得到空表**：宿主给的语言串若不是合法的 BCP 47 标签
+    /// （平台层误给 LCID 串时就是如此），`Preferences::from_owned` 会把
+    /// 每一项都丢掉 —— 空表。于是「空表」有两种含义：「还没协商」与
+    /// 「协商了但没结果」，拿同一个判据的后果是**每帧重跑协商**。
+    ///
+    /// 而每帧协商的结果是「回落 [SUPPORTED] 第一项」⇒ **每一帧都把用户
+    /// 刚选的语言改回英文**。症状：点「中文」毫无反应 —— 点击其实生效了，
+    /// 同一帧末尾又被改回去了。
+    ///
+    /// 所以这里用一个**与协商结果无关**的独立标志。
+    pub lang_negotiated: bool,
     /// 入场动画已过去的**毫秒**数。
     ///
     /// # 为什么是应用层的字段而不是 core 的
@@ -1327,6 +1342,7 @@ impl Default for Gallery {
             scale: 1.0,
             lang: 0,
             prefs: Preferences::new(),
+            lang_negotiated: false,
             enter_ms: 0.0,
             // 初值 = `route` 的初值（"home"），否则第一帧会被判成"路由变了"
             // 而归零一次 —— 那恰好是想要的，所以两者必须**相同**。
@@ -1412,6 +1428,10 @@ impl Gallery {
         let lang_key = key.strip_prefix("lang:").unwrap_or(key);
         if let Some(i) = SUPPORTED.iter().position(|s| *s == lang_key) {
             self.lang = i;
+            // 手动选择**优先于**系统协商：把协商标记成「已做过」，
+            // 这样即使这一帧恰好是系统语言首次到达（协商就发生在
+            // `on_input` 末尾），也不会把用户刚选的语言改回去。
+            self.lang_negotiated = true;
             return;
         }
         // ---- 3) 其余按 key 分派 ----
@@ -1676,12 +1696,21 @@ impl View for Gallery {
         // （状态改变 → 声明改变 → diff 落到保留树），不需要任何回调。
         self.viewport = state.viewport;
         self.scale = state.scale;
-        // 系统语言偏好：只记**第一次**收到的，之后用户手动切了就以其为准。
+        // 系统语言偏好：**只协商一次**，之后用户手动切了就以其为准。
         //
-        // 判据用 `is_empty()` 而不是 `Option`：空表就是"读不到"，而读到时表
-        // 至少有一项。手动切语言不修改 `prefs`、只改 `lang` —— 否则再收到一次
-        // 输入就把手动选择冲掉了。
-        if self.prefs.is_empty() && !state.languages.is_empty() {
+        // ⚠ 判据是 `lang_negotiated` 而不是 `prefs.is_empty()`。
+        //
+        // 理由（这条曾经是「点中文无反应」的真凶）：协商**可能得到空表**
+        // —— 宿主给的语言串不是合法 BCP 47 标签时（平台层误给 LCID 串），
+        // `Preferences::from_owned` 会把每一项都丢掉。于是「空表」既表示
+        // 「还没协商」也表示「协商了但没结果」，用空表当判据就会**每帧重跑**；
+        // 而每帧的结果是「回落英文」⇒ 用户刚点的语言在同一帧末尾被改回去。
+        //
+        // 手动切换不修改 `prefs`、只改 `lang` —— 而且它自己也会把
+        // `lang_negotiated` 置真（见 `click`），所以**任何**时机的系统语言
+        // 都盖不过用户的选择。
+        if !self.lang_negotiated && !state.languages.is_empty() {
+            self.lang_negotiated = true;
             self.prefs = zephyra_core::i18n::Preferences::from_owned(&state.languages);
             self.lang = Self::pick_initial_language(&self.prefs);
         }
