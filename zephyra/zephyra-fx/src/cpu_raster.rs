@@ -78,6 +78,31 @@ impl CpuCanvas {
     /// 混合组合与 D3D11 侧一致：`Src/InvSrc = ALPHA/INV_SRC_ALPHA`，
     /// alpha 通道 `ONE/INV_SRC_ALPHA`。抄错这条会让半透明区域整体偏暗 ——
     /// 那时看起来像「颜色不对」，而根因在参考实现自己身上，是最难查的一类。
+    ///
+    /// # ⚠⚠ 顶点色**已经预乘过 alpha**（`quad::expand` 里做的，见
+    /// `quad::tests::vertex_color_is_premultiplied`）
+    ///
+    /// 所以这里**不能**再乘一次 alpha：
+    ///
+    /// ```text
+    /// 预乘源 + ONE/INV_SRC_ALPHA  ⇒  dst = src + dst·(1 − src.a)
+    /// ```
+    ///
+    /// 而早先写的是 `dst = src·a + dst·(1 − src.a)` —— 那是**把 alpha 用了两次**
+    /// （一次在预乘里，一次在这里）。
+    ///
+    /// # 实测症状（液态玻璃页）
+    ///
+    /// 玻璃块的底色是 `#ffffff4d`（白 @ 30%），压在**白**竖条上。
+    /// 正确的结果是**白叠白 = 白**（255）；双重预乘那一版算出
+    /// `0.302² × 255 + 0.698 × 255 = 201`（线性）⇒ 编码回 sRGB 是 **229**。
+    /// 于是「玻璃块压在白条上」从「完全看不出来」变成「差一点点灰」——
+    /// 两种都不是想要的，而**只有对照 GPU 才分得清是哪一个**。
+    ///
+    /// # `coverage` 还要再乘一次
+    ///
+    /// 抗锯齿覆盖率是**覆盖率**，不是 alpha：它同时缩放源色与源 alpha。
+    /// 顶点色里的 alpha 是「这个图元自己的不透明度」，两者不能混。
     fn blend(&mut self, x: i32, y: i32, color: [f32; 4], coverage: f32) {
         if coverage <= 0.0 || x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
@@ -90,9 +115,10 @@ impl CpuCanvas {
         let i = (y as u32 * self.width + x as u32) as usize * 4;
         let dst_a = self.pixels[i + 3] as f32 / 255.0;
         for (ch, dst) in self.pixels[i..i + 3].iter_mut().enumerate() {
-            let s = color[ch] * 255.0;
+            // 源色已按自己的 alpha 预乘过；这里只再乘一次**覆盖率**。
+            let s = color[ch] * 255.0 * coverage;
             let d = *dst as f32;
-            *dst = (s * a + d * inv).round().clamp(0.0, 255.0) as u8;
+            *dst = (s + d * inv).round().clamp(0.0, 255.0) as u8;
         }
         self.pixels[i + 3] = ((a + dst_a * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
     }

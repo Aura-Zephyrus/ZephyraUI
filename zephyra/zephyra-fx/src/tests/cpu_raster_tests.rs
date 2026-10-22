@@ -338,6 +338,85 @@ fn blank_canvas_is_clear_colour() {
     assert_eq!(&c.pixels[0..4], &[255, 128, 0, 255]);
 }
 
+/// 半透明必须**只乘一次** alpha。
+///
+/// # 这条钉的是什么
+///
+/// 顶点色在 `quad::expand` 里**已经预乘过 alpha**（`quad::tests::
+/// vertex_color_is_premultiplied`），而混合若再乘一次就是「alpha 用了两次」。
+/// 于是每一层半透明都比它该有的**暗**一截。
+///
+/// # 判据取「白叠白」
+///
+/// 源与目标都是不透明白时，任何**正确**的 alpha 合成都必须给出**白**：
+///
+/// ```text
+/// dst = src + dst·(1 − src.a) = 1.0 + 1.0·0 = 1.0
+/// ```
+///
+/// 双重预乘那一版算出 `0.3·1.0 + 0.7·1.0` 之外还要再乘一次 0.3 ⇒ 0.21，
+/// 编码回 sRGB 约 **229** —— 于是「白玻璃压在白条上」从「看不出来」变成
+/// 「差一点点灰」，两者都不是想要的，而**只有对照 GPU 才分得清**。
+///
+/// 这条不是为液态玻璃写的，是为**所有**半透明图元写的：参考图里每一个
+/// 半透明元素都偏暗，而参考图是本仓唯一的像素级自验手段。
+#[test]
+fn translucent_source_is_not_premultiplied_twice() {
+    // 画布：白色不透明底。
+    let mut c = CpuCanvas::new(2, 2, [1.0, 1.0, 1.0, 1.0]);
+    // 源：白色 @ 30%（**已预乘** —— 与 `quad::expand` 产出的顶点色同形）。
+    let src = [0.3, 0.3, 0.3, 0.3];
+    c.blend(0, 0, src, 1.0);
+    // 白叠白 = 白。缓冲里存的是**线性**值，所以这里也按线性比。
+    assert!(
+        (c.pixels[0] as f32 / 255.0 - 1.0).abs() < 0.01,
+        "白 @30% 压在白底上应当还是白，实得 {}/255（线性 {}）",
+        c.pixels[0],
+        c.pixels[0] as f32 / 255.0
+    );
+    assert_eq!(c.pixels[3], 255, "alpha 应当不透明");
+
+    // 半透明压黑：结果就是源色本身（目标为 0 时 dst = src）。
+    let mut c = CpuCanvas::new(2, 2, [0.0, 0.0, 0.0, 1.0]);
+    c.blend(0, 0, src, 1.0);
+    assert!(
+        (c.pixels[0] as f32 / 255.0 - 0.3).abs() < 0.01,
+        "白 @30% 压在纯黑上应当是 0.3（线性），实得 {}",
+        c.pixels[0] as f32 / 255.0
+    );
+}
+
+/// 覆盖率是**覆盖率**，不是 alpha：它同时缩放源色与源 alpha。
+///
+/// 这条与上一条一起钉住混合式：源色已按自己的 alpha 预乘，`coverage` 只
+/// 再乘一次 —— 早先那一版把 `coverage` 也当成了 alpha 的一部分。
+#[test]
+fn coverage_scales_both_source_colour_and_alpha() {
+    // 源：不透明白（alpha = 1）。覆盖率 0.5 ⇒ 一半不透明。
+    let mut c = CpuCanvas::new(2, 2, [0.0, 0.0, 0.0, 1.0]);
+    c.blend(0, 0, [1.0, 1.0, 1.0, 1.0], 0.5);
+    assert!(
+        (c.pixels[0] as f32 / 255.0 - 0.5).abs() < 0.01,
+        "覆盖率 0.5 的白压在黑上应当是 0.5（线性），实得 {}",
+        c.pixels[0] as f32 / 255.0
+    );
+    // 目标本来就不透明，所以**结果**的 alpha 仍是不透明 —— 覆盖率缩放的
+    // 是**源**的贡献（`src.a`），不是最终 alpha。
+    assert_eq!(
+        c.pixels[3], 255,
+        "不透明目标 + 覆盖率 0.5 的源 ⇒ 最终 alpha 仍是不透明"
+    );
+
+    // 目标**透明**时才能看出 alpha 也被覆盖率缩放。
+    let mut c = CpuCanvas::new(2, 2, [0.0, 0.0, 0.0, 0.0]);
+    c.blend(0, 0, [1.0, 1.0, 1.0, 1.0], 0.5);
+    assert!(
+        (c.pixels[3] as f32 / 255.0 - 0.5).abs() < 0.01,
+        "覆盖率 0.5 应当把源的 alpha 也缩到 0.5，实得 {}",
+        c.pixels[3] as f32 / 255.0
+    );
+}
+
 #[test]
 fn atlas_sampling_takes_the_alpha_channel() {
     let mut px = vec![0u8; 4 * 4 * 4];
