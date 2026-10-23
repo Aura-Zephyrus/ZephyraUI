@@ -2549,135 +2549,85 @@ fn panes_translate_y() -> f32 {
     panic!(".glass-panes 规则里没有 translate-y —— 玻璃块与竖条带的对齐就无从谈起");
 }
 
-/// 玻璃块必须**真的**盖住东西 —— 拿掉它的底色，画面必须明显不同。
+/// 玻璃块**不许有底色** —— 「上面盖着一层玻璃」只由折射 + 描边亮线表达。
 ///
-/// # 这条钉的是「一点液态玻璃的形状都没有了」
+/// # 这条钉的是「玻璃要是透明的，不要有底色，纯靠折射反应层级关系」
 ///
-/// 玻璃块的底色是**白 @ 15%** 的一层纱（`#ffffff26`）。而**白纱压在白上还是白**
-/// —— 玻璃块在白竖条上就完全看不见（实测：压上与不压逐像素相同）。
-/// 竖条占舞台内容宽的 78%（27/35），于是玻璃块**七成八的面积**「消失」，
-/// 只剩下缝隙那一小条还看得出边界。
+/// 任何底色（哪怕 15% 的一层白纱）都会在玻璃后面与真实背景之间隔上一层颜色：
+/// 那读起来是**贴片**不是玻璃。前两轮把纱从 30% 调到 15%（dev-log 第八节），
+/// 而这条需求把方向整个反过来 —— **不加**才是对的，纱被整个删掉。
 ///
-/// 症状与「折射没接上」**长得一样**（都是「看不出玻璃」），而排查方向完全相反：
-/// 一个在几何与配色，一个在着色器。所以这条门禁断的是**看得见**，
-/// 不是「算得对」。
+/// # 判据：字符串级，不是像素级
 ///
-/// # 判据：同一块像素，玻璃底色在 / 不在，画面必须差得开
+/// 替代的是像素门禁 `the_glass_block_is_distinguishable_from_what_it_covers`：
+/// 它的前提（「底色必须影响画面 ≥90% 的像素」）被这条需求**反转** —— 玻璃
+/// 恰恰必须**不**影响画面，那条判据会恒红。反过来的「玻璃不改变画面」也做不成
+/// 像素门禁：CPU 光栅不实现滤镜，两遍渲染只差一个 alpha 混合，而「有底色的
+/// 那一遍」已经不存在了（唯一还能比的是把块藏起来，但那会把标签挪进取样区）。
 ///
-/// 做法是**渲染两遍**（一遍正常、一遍把 `.glass-pane` 的底色改成全透明），
-/// 比**同一处**像素的差别。
-///
-/// 为什么不用「玻璃块内 vs 玻璃块外」那种比法：那种比法量的是**两处不同图案**的
-/// 差（条纹相位、竖条 vs 缝隙），折射与纱的效果混在一起，分不开。两遍只差一个
-/// alpha，剩下的渲染路径逐位相同，于是差值**只**归给玻璃底色。
-///
-/// 用 CPU 光栅（`zephyra_fx::cpu_only`）—— 不需要 GPU，而这是本仓**唯一**的
-/// 像素级自验手段。真 GPU 那侧靠人工截图复核（见 dev-log 里「真 GPU 截图」那段）。
+/// 于是可见性（位移本身）由几何门禁（`refraction_target_*` 三条）+ 着色器侧
+/// 门禁钉住，「看得见玻璃」由真 GPU 截图复核（dev-log 第九节）。
 #[test]
-fn the_glass_block_is_distinguishable_from_what_it_covers() {
-    use zephyra_core::core::Color;
-    use zephyra_fx::cpu_only::CpuHost;
-
-    // ---- 布局：玻璃块**画出来的**矩形 ----
-    let root = laid_out_glass();
-    let pane = find_by_key(&root, "glass:a").expect("要有第一块玻璃");
-    let pr = pane.rect();
-    let shift = panes_translate_y();
-    let px = pr.x;
-    let py = pr.y + shift;
-    let pw = pr.width;
-    let ph = pr.height;
-
-    // ---- 渲染两遍：带玻璃底色 / 不带 ----
+fn the_glass_pane_has_no_fill() {
+    // ---- 先剥掉 `/* … */` 注释再找规则 ----
     //
-    // 去掉底色的办法是把样式表里那条规则的 alpha 改成 0 —— **只动一个字节**，
-    // 规则本身（宽度/圆角/描边）原样保留，于是两遍的差别**只**是玻璃底色。
-    let render = |transparent_fill: bool| -> zephyra_fx::cpu_raster::CpuCanvas {
-        let mut sheet = zephyra_style::ir::StyleSheet::new();
-        for (name, css) in zephyra_gallery::styles::all() {
-            let css: String = if transparent_fill && name == "pages" {
-                let patched = css.replace("background: #ffffff26;", "background: #ffffff00;");
-                assert_ne!(
-                    patched, css,
-                    "`.glass-pane` 的底色写法变了 —— 这条门禁的对照渲染没打中，\
-                     判据会变成「两遍一样」而恒真地绿"
-                );
-                patched
+    // 规则上方的注释讨论的就是「为什么不许有 background」，里面有
+    // `.glass-pane` 的字样；不剥注释的话，注释里的字就会被当成规则文本。
+    fn strip_comments(css: &str) -> String {
+        let mut out = String::with_capacity(css.len());
+        let mut it = css.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '/' && it.peek() == Some(&'*') {
+                it.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match it.next() {
+                        Some('/') if it.peek() == Some(&'*') => {
+                            it.next();
+                            depth += 1;
+                        }
+                        Some('*') if it.peek() == Some(&'/') => {
+                            it.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
             } else {
-                css.to_string()
-            };
-            let parsed = zstylec::parse(name, &css);
-            assert!(
-                parsed.is_ok(),
-                "{name}.zstyle must parse: {:?}",
-                parsed.errors
-            );
-            sheet = sheet.merge(parsed.sheet);
+                out.push(c);
+            }
         }
-        let mut g = Gallery::default();
-        g.route = "glass";
-        let mut host = CpuHost::new(g, (1400, 800));
-        host.set_styler(Box::new(zephyra_style::SheetStyler(std::sync::Arc::new(
-            sheet,
-        ))));
-        // ⚠ 必须先跑一帧：`render_cpu` 画的是**上一帧**的顶点流（`self.batch()`），
-        // 还没跑帧时那批顶点是空的 —— 于是整张图全黑，而判据会读到 0。
-        host.frame();
-        host.render_cpu(Color::rgb(0.0, 0.0, 0.0))
-    };
+        out
+    }
 
-    let with_glass = render(false);
-    let without_glass = render(true);
+    for (name, css) in zephyra_gallery::styles::all() {
+        let code = strip_comments(css);
 
-    // ---- 同一块像素：玻璃底色在 / 不在，差别必须够大 ----
-    //
-    // 取样区**避开边缘 10px**：那里有描边（亮线）与圆角 AA，
-    // 混进来量的是「描边有多亮」而不是「玻璃块有多明显」。
-    let inset = 10.0;
-    let x0 = (px + inset).round() as i64;
-    let y0 = (py + inset).round() as i64;
-    let w = (pw - 2.0 * inset).round() as i64;
-    let h = (ph - 2.0 * inset).round() as i64;
+        // 玻璃块那条规则里不许出现 `background`。
+        if let Some(at) = code.find("Container.glass-pane") {
+            let rest = &code[at..];
+            let body_start = rest.find('{').expect("`.glass-pane` 规则后面要跟 `{`");
+            let body_end = rest[body_start..]
+                .find('}')
+                .expect("`.glass-pane` 规则没有闭合的 `}`");
+            let body = &rest[body_start..body_start + body_end];
+            assert!(
+                !body.contains("background"),
+                "{name}.zstyle 的 `.glass-pane` 规则里有 `background` —— \
+                 玻璃必须是纯透明的，层级感只由折射 + 描边表达（贴片回来了）"
+            );
+        }
 
-    let mut changed = 0usize;
-    let mut total = 0usize;
-    for yy in y0..(y0 + h) {
-        for xx in x0..(x0 + w) {
-            if xx < 0 || yy < 0 || xx >= with_glass.width as i64 || yy >= with_glass.height as i64 {
-                continue;
-            }
-            let i = ((yy as u32) * with_glass.width + xx as u32) as usize * 4;
-            // 缓冲里存的是**线性**值（sRGB 编码只发生在写 BMP 时）。
-            let mut diff = 0.0f64;
-            for c in 0..3 {
-                let a = with_glass.pixels[i + c] as f64 / 255.0;
-                let b = without_glass.pixels[i + c] as f64 / 255.0;
-                diff = diff.max((a - b).abs());
-            }
-            total += 1;
-            if diff > 0.02 {
-                changed += 1;
-            }
+        // 两代白纱的颜色不许再出现在任何样式表里。
+        for veil in ["#ffffff26", "#ffffff4d"] {
+            assert!(
+                !code.to_lowercase().contains(veil),
+                "{name}.zstyle 里出现了 {veil} —— 那是被删掉的玻璃白纱\
+                 （15% / 30% 白），底色不许回来"
+            );
         }
     }
-    assert!(total > 0, "取样区是空的");
-    let frac = changed as f64 / total as f64;
-    // 判据是**面积占比**而不是平均差 —— 平均差会被「只有一小块变了」稀释。
-    //
-    // 玻璃压在**白**竖条上时：白纱压白 = 白 ⇒ 竖条上**一点变化都没有**，
-    // 只有 8/35 的缝隙变了 ⇒ 占比 ≈ 0.23。而玻璃块**七成八的面积**「消失」。
-    // 中间调竖条上则几乎处处都变（实测占比 ≈ 1.0）。
-    //
-    // 门槛 0.9：两种情形差着一个数量级，放在中间。
-    //
-    // ⚠ 纱改薄（30% → 15%）不会把这条压红：判据是**有没有变**（阈值 0.02），
-    // 不是变了多少。15% 白纱在最暗的竖条上也改出 ≈0.08 的线性差，离阈值 7 倍远。
-    assert!(
-        frac >= 0.9,
-        "玻璃底色只影响了玻璃块内 {frac:.1}% 的像素（要求 ≥ 90%）—— \
-         玻璃块压在**白**竖条上时就是这个样子：白纱压白 = 白，\
-         那部分竖条上玻璃块整个「消失」（实测白竖条时只剩 64.5% 的像素有变化）"
-    );
 }
 
 /// 边界上的 `[−] [+] 必须是**无副作用**的 no-op。
