@@ -739,6 +739,45 @@ mod text_pipeline {
     }
 
     #[test]
+    fn changing_text_content_reshapes_on_the_next_render() {
+        // 回归（2026-10「点击值不更新」）：`TEXT` 被刻意判成**只重绘**属性 —— 改它既不清
+        // 测量缓存、也不触发重排（见 `layout_classification_tests`）。但旧版绘制趟在
+        // `glyph_quads` 未命中时复用**测量趟**存下的 `shaped`，于是改文本后仍按旧文本算
+        // 字形，再把**新**文本写进 `glyph_quads` 缓存 ⇒ 旧字形被永久钉住，直到一次
+        // resize / 换页（约束变了、测量重跑）才自愈。实测：gallery 玻璃页连点 3 次减号，
+        // 读数一直停在 48，resize 后跳成正确的 40。
+        //
+        // 判据用**不同长度**的文本：过期的 "48" 排出 2 个字形，按当前文本重排的 "4" 排 1 个。
+        // 不能用同长度的 "48"→"44" —— `NullEngine` 对所有字符给同样的 uv 与宽度，同长度
+        // 在它下面不可区分。
+        let engine = engine();
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+
+        let mut node = Node::from_element(&text_node("48", 20.0));
+        layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx);
+
+        let mut before = DisplayList::new();
+        render(&node, ctx, &mut before);
+        assert_eq!(
+            text_commands(&before),
+            vec![("null-atlas", 2)],
+            "初始 \"48\" 必须产出 2 个字形"
+        );
+
+        // 只改文本内容、**不重排** —— 这正是 `TEXT` 被判成只重绘属性的语义。
+        node.set_prop(&props::TEXT, PropertyValue::static_str("4"));
+
+        let mut after = DisplayList::new();
+        render(&node, ctx, &mut after);
+        assert_eq!(
+            text_commands(&after),
+            vec![("null-atlas", 1)],
+            "改成 \"4\" 后绘制趟必须按当前文本重排、产出 1 个字形；拿到 2 个说明它复用了过期的 shaped"
+        );
+    }
+
+    #[test]
     fn text_measured_size_drives_layout() {
         let engine = engine();
         // char_width 0.5 × size 20 = 每字符 10px；"Hello" = 50px 宽。

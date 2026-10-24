@@ -774,9 +774,21 @@ impl<V: View> HostWindow<V> {
         } else {
             self.theme.surface
         };
-        // 可分离 / 非可分离混合模式要读 `dst`，必须把后缓冲当**资源**传进去。
-        // 取失败时传 `None`：那 14 个模式会退回 `SrcOver`，画面仍然正确只是少了效果。
-        let rt = self.chain.back_buffer().ok();
+        // 折射 / 可分离混合要读「本帧**已经画在目标上**的内容」，必须把目标当**资源**
+        // 传进去。取失败时传 `None`：那 14 个模式会退回 `SrcOver`，画面仍然正确只是少了效果。
+        //
+        // ⚠⚠ 源**不是**后缓冲，而是「本帧实际画进去的那张」——MSAA 开启时那是多重
+        // 采样纹理，后缓冲要等帧末 `resolve_msaa` 之后才有内容。
+        //
+        // 拿后缓冲当源的症状：折射玻璃里残留**上一页**的控件残影（实测：gallery
+        // 玻璃页导航回来后，两块玻璃里浮着状态页的滑块/开关，而玻璃外一切正常）。
+        // 因为绘制中途读到的后缓冲是**上一帧** resolve 后的旧画面。
+        // `ZEPHYRA_MSAA=0` 时绘制目标本就是后缓冲，两者合一，故该缺陷只在 MSAA 开时出现。
+        let rt = self
+            .chain
+            .msaa_tex()
+            .cloned()
+            .or_else(|| self.chain.back_buffer().ok());
         let report = match self.renderer.record(RenderCtx {
             device: &self.gpu.device,
             list: self.gpu.list(),

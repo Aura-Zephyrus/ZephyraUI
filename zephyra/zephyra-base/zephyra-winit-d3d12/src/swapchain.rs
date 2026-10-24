@@ -368,6 +368,21 @@ impl Swapchain {
         self.samples
     }
 
+    /// 多重采样颜色目标的**资源本体**。`samples <= 1` 时返回 `None`。
+    ///
+    /// # 为什么要把它暴露出去（而不是只给 RTV）
+    ///
+    /// MSAA 开启时**本帧画进去的是这张纹理**，后缓冲要等帧末 [`Self::resolve_msaa`]
+    /// 之后才有内容。任何"读当前渲染目标"的中途拷贝（折射的 `g_dst`、可分离混合的
+    /// `dst`）都必须以**这张**为源；拿后缓冲当源会读到**上一帧**解析后的画面 ——
+    /// 症状是折射玻璃里残留上一页的控件残影（`refresh_dst_copy` 实测踩过）。
+    ///
+    /// 与 [`Self::msaa_rtv`] 的分工：RTV 用来绑渲染目标，资源本体用来当
+    /// `ResolveSubresource` 的源（`refresh_dst_copy` 用它取折射的 backdrop）。
+    pub fn msaa_tex(&self) -> Option<&ID3D12Resource> {
+        self.msaa.as_ref().map(|m| &m.tex)
+    }
+
     /// MSAA 渲染目标视图。`samples <= 1` 时返回 `Err`（该画到后缓冲上）。
     pub fn msaa_rtv(&self) -> Result<D3D12_CPU_DESCRIPTOR_HANDLE, SurfaceError> {
         if self.msaa.is_none() {

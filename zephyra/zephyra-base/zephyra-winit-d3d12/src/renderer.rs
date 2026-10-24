@@ -76,9 +76,45 @@ pub const OFFSCREEN_SRV_B: u32 = ATLAS_SLOTS - 1;
 ///
 /// D3D12 的 SRV 是堆里的一个**槽位**而不是对象，所以这里只持有资源本体；
 /// 视图在 `refresh_dst_copy` 里建一次，之后直接用槽位。
+///
+/// `state` 记的是资源**当前**处于什么状态。屏障的 `StateBefore` 必须与实际一致，
+/// 否则调试层报「Before state does not match」——而那不只是报错：把真实的
+/// `PIXEL_SHADER_RESOURCE` 谎报成 `COPY_DEST` 会让下一次拷贝把「上一帧还挂在
+/// SRV 表里的资源」当成可写副本，静悄悄给出错画面。
 struct DstCopy {
     resource: ID3D12Resource,
     size: (u32, u32),
+    state: D3D12_RESOURCE_STATES,
+}
+
+/// 解析目标（`ResolveSubresource` 的 destination）的合法状态。
+///
+/// # 为什么不是 `RENDER_TARGET`
+///
+/// `RENDER_TARGET` 当解析目标**只对交换链后缓冲成立** —— `swapchain.rs` 的
+/// [`resolve_msaa`](crate::swapchain::Swapchain::resolve_msaa) 走的正是那条路，所以它
+/// 一直没踩到坑。换成普通提交式纹理后，`ResolveSubresource` **照样能被记录进命令
+/// 列表**，错要到 `Close()` 才现形：
+///
+/// ```text
+/// [zephyra-d3d12] 提交失败: Close 命令列表失败: 参数错误 (0x80070057)
+/// [zephyra-d3d12] 开帧失败: Reset 命令列表失败: 参数错误 (0x80070057)   ← 此后每帧
+/// ```
+///
+/// 于是整帧提交失败、`Reset` 也失败，画面**永久冻结**在最后一帧。外部症状极具欺骗性：
+/// 「点导航页面不换」「点控件没反应」—— 看着像输入/路由坏了，实际是渲染循环死了。
+/// 实测（gallery，导航 state → glass）第一次点导航就触发。
+const RESOLVE_DST_STATE: D3D12_RESOURCE_STATES = D3D12_RESOURCE_STATE_RESOLVE_DEST;
+
+/// `g_dst` 副本的纹理描述。
+///
+/// 要求三条：格式与源一致（否则解析/采样整体错位）、单采样（解析目标必须单采样）、
+/// 带 `ALLOW_RENDER_TARGET`。最后一条不是可选的：`RESOLVE_DEST` 与 `RENDER_TARGET`
+/// 一样受同一条 flag 门禁，缺了它 `CreateCommittedResource` 只回「参数错误」，
+/// 不提是哪个字段（`D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET` 的文档明写它
+/// "enables the resource to transition into the state of ... RENDER_TARGET"）。
+fn dst_copy_desc(size: (u32, u32)) -> D3D12_RESOURCE_DESC {
+    texture_desc(size, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
 }
 
 pub struct Renderer {
@@ -1171,22 +1207,24 @@ impl Renderer {
         const DST_SLOT: u32 = DST_SRV_SLOT;
         let rt = rt?;
 
+        // 采样数与尺寸从**源资源本体**读，不是从调用方约定：同一个函数要同时伺候三种源 ——
+        // 多重采样纹理（MSAA 开）、后缓冲（MSAA 关）、离屏 RT（可分离混合读自己）。
+        // 采样数不同 ⇒ 拷贝类调用一律拒绝，必须走 resolve。
+        let src_desc = unsafe { rt.GetDesc() };
+        let src_samples = src_desc.SampleDesc.Count.max(1);
+
         let mut slot = self.dst_copy.borrow_mut();
         if slot
             .as_ref()
             .is_none_or(|d| d.size != size || size.0 == 0 || size.1 == 0)
         {
-            // 格式固定 R8G8B8A8_UNORM：与 `create_pso` 的 `RTVFormats[0]` 一致，也
-            // 与 `Offscreen` / 后缓冲一致。**SRV 格式必须与纹理一致**，否则采样
-            // 结果整体错位（红蓝对调是这一类错的典型表现）。
-            //
-            // 资源标志用 `NONE`：默认就允许被采样与拷贝；`ALLOW_RENDER_TARGET`
-            // 反而会**禁止**采样。初始状态 `COPY_DEST`，马上就要往里拷。
+            // 格式与源相同（本仓所有渲染目标都是 R8G8B8A8_UNORM），否则解析与采样
+            // 都会错位。标志与初始状态的理由见 [`dst_copy_desc`] / [`RESOLVE_DST_STATE`]。
             let dst = create_resource(
                 device,
                 &heap_props(D3D12_HEAP_TYPE_DEFAULT),
-                &texture_desc(size, D3D12_RESOURCE_FLAG_NONE),
-                D3D12_RESOURCE_STATE_COPY_DEST,
+                &dst_copy_desc(size),
+                RESOLVE_DST_STATE,
             )
             .ok()?;
             unsafe {
@@ -1195,36 +1233,109 @@ impl Renderer {
             *slot = Some(DstCopy {
                 resource: dst,
                 size,
+                state: RESOLVE_DST_STATE,
             });
         }
-        let d = slot.as_ref()?;
+        // 取出来当本地变量：`state` 收尾要写回去，而借用不能同时读写。
+        let (dst_res, before) = {
+            let d = slot.as_ref()?;
+            (d.resource.clone(), d.state)
+        };
 
-        // 拷贝前后各一道屏障：源得是 `COPY_SOURCE`，拷完还得回 `RENDER_TARGET`，
-        // 否则后续绘制对目标的写入是非法的。漏掉第二道的症状特别会骗人 ——
-        // 调试层报的是「某次 OMSetRenderTargets 的目标状态不对」，让人往别的
-        // 地方找。
-        gpu_barrier(
-            list,
-            rt,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,
-            D3D12_RESOURCE_STATE_COPY_SOURCE,
-        );
-        unsafe {
-            list.CopyResource(&d.resource, rt);
+        // 只取**内容区**：源纹理按「交换链容量」建（`Swapchain::resize` 里按 25% 余量
+        // 增长，≥ 内容），而 `g_dst` 的采样 uv 走 `DstUv`（NDC → 视口），所以副本必须是
+        // 内容尺寸、且内容落在左上角。源不可能小于内容，这里 `min` 只是给 API 兜底。
+        let cw = size.0.min(src_desc.Width as u32);
+        let ch = size.1.min(src_desc.Height);
+
+        if src_samples > 1 {
+            // 多重采样源 ⇒ `ResolveSubresource`（逐样本求平均，与帧末
+            // `Swapchain::resolve_msaa` 同一份调用）。
+            //
+            // 为什么不能 `CopyResource` / `CopyTextureRegion`：两者都要求源与目标
+            // **采样数相同**，4× → 1× 是非法的。D3D11 后端的同名函数栽过这点
+            // （`zephyra-winit/src/renderer.rs` 的 `refresh_dst_copy`），它的注释写着
+            // 「某些驱动只警告就继续，于是画面停在上一帧的内容上」—— 与本仓 MSAA 开启时
+            // 折射玻璃里浮现上一页控件残影是同一类症状，只是触发条件不同。
+            //
+            // ⚠ `ResolveSubresource` 解析的是**整个子资源**，所以源与目标必须逐位同尺寸。
+            // 交换链带 25% 余量时（`Swapchain::resize`）会不成立 —— 那一档本来就还缺
+            // 「按区解析」，此处保守地**放弃本次折射**（返回 `None` ⇒ 调用方退回
+            // `SrcOver`）：宁可少个效果，也不要录进一条非法命令。非法命令的后果不是
+            // 画错，是 `Close()` 报 `E_INVALIDARG`、整帧提交失败、此后每帧 `Reset` 都失败 ——
+            // 画面**永久冻结**在最后一帧（实测踩过，表现为「点了导航页面不换」）。
+            //
+            // 源的状态不转：MSAA 纹理从建起来就一直是 `RENDER_TARGET`
+            // （见 `swapchain.rs` `resolve_msaa` 的文档），且它整帧都是那个渲染目标。
+            if (src_desc.Width as u32, src_desc.Height) != (cw, ch) {
+                return None;
+            }
+            // 目标状态必须走 [`RESOLVE_DST_STATE`]（`RESOLVE_DEST`），不能用
+            // `RENDER_TARGET` —— 理由与后果都写在那个常量的文档里。
+            gpu_barrier(list, &dst_res, before, RESOLVE_DST_STATE);
+            unsafe {
+                list.ResolveSubresource(&dst_res, 0, rt, 0, src_desc.Format);
+            }
+            slot.as_mut()?.state = RESOLVE_DST_STATE;
+        } else {
+            // 单采样源 ⇒ `CopyTextureRegion` + 源框。不用 `CopyResource`：容量可能大于
+            // 内容，而它要求源与目标尺寸逐位相同（resize 之后就不再成立）。
+            //
+            // 源前后各一道屏障：拷完必须回 `RENDER_TARGET`，否则后续对目标的绘制非法。
+            gpu_barrier(
+                list,
+                rt,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                D3D12_RESOURCE_STATE_COPY_SOURCE,
+            );
+            gpu_barrier(list, &dst_res, before, D3D12_RESOURCE_STATE_COPY_DEST);
+            unsafe {
+                list.CopyTextureRegion(
+                    &D3D12_TEXTURE_COPY_LOCATION {
+                        pResource: std::mem::ManuallyDrop::new(Some(dst_res.clone())),
+                        Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                            SubresourceIndex: 0,
+                        },
+                    },
+                    0,
+                    0,
+                    0,
+                    &D3D12_TEXTURE_COPY_LOCATION {
+                        pResource: std::mem::ManuallyDrop::new(Some(rt.clone())),
+                        Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                            SubresourceIndex: 0,
+                        },
+                    },
+                    Some(&D3D12_BOX {
+                        left: 0,
+                        top: 0,
+                        right: cw,
+                        bottom: ch,
+                        front: 0,
+                        back: 1,
+                    }),
+                );
+            }
+            gpu_barrier(
+                list,
+                rt,
+                D3D12_RESOURCE_STATE_COPY_SOURCE,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+            );
+            slot.as_mut()?.state = D3D12_RESOURCE_STATE_COPY_DEST;
         }
+
+        // 副本最后一步才允许被采样 —— 在此之前读它拿到的是上一次的内容。
+        let after = slot.as_ref()?.state;
         gpu_barrier(
             list,
-            rt,
-            D3D12_RESOURCE_STATE_COPY_SOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,
-        );
-        // 副本自身：COPY_DEST → PIXEL_SHADER_RESOURCE，之后才允许被采样。
-        gpu_barrier(
-            list,
-            &d.resource,
-            D3D12_RESOURCE_STATE_COPY_DEST,
+            &dst_res,
+            after,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
         );
+        slot.as_mut()?.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         Some(DST_SLOT)
     }
 

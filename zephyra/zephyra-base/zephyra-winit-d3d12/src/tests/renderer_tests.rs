@@ -64,6 +64,49 @@ fn render_target_texture_must_allow_render_target() {
     );
 }
 
+/// `g_dst` 副本必须能当**解析目标**。
+///
+/// 三条都是创建时就定死的：格式不一致 → 解析/采样整体错位；多采样 → 解析目标非法；
+/// 缺 `ALLOW_RENDER_TARGET` → `CreateCommittedResource` 回 `E_INVALIDARG` 且不说
+/// 哪个字段。
+#[test]
+fn dst_copy_must_be_a_single_sample_render_target() {
+    let d = dst_copy_desc((64, 64));
+    assert_eq!(
+        d.SampleDesc.Count, 1,
+        "解析目标（ResolveSubresource 的 destination）必须是单采样"
+    );
+    assert_eq!(
+        d.Flags, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+        "必须带 ALLOW_RENDER_TARGET —— RESOLVE_DEST 与 RENDER_TARGET 受同一条 flag 门禁"
+    );
+    assert_eq!(
+        d.Format,
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
+        "格式必须与源（MSAA 纹理 / 后缓冲 / 离屏 RT）逐位相同，否则解析与采样都错位"
+    );
+}
+
+/// 解析目标的状态必须是 `RESOLVE_DEST`，**不是** `RENDER_TARGET`。
+///
+/// 这条钉的是本仓最贵的一次「看着像输入坏了」的故障：`RENDER_TARGET` 当解析目标只对
+/// **交换链后缓冲**成立（`swapchain.rs` 的 `resolve_msaa` 就是那样用的，所以一直没
+/// 暴露）。换成普通提交式纹理后 `ResolveSubresource` 照样录得进命令列表，错要到
+/// `Close()` 才回 `E_INVALIDARG` —— 于是整帧提交失败、之后每帧 `Reset` 也失败，
+/// 画面永久冻结在最后一帧。外部表现是「点导航页面不换、点控件没反应」，会把人往
+/// 输入/路由方向带（实测就是这样被带偏的）。
+#[test]
+fn resolve_destination_must_be_resolve_dest_not_render_target() {
+    assert_eq!(
+        RESOLVE_DST_STATE, D3D12_RESOURCE_STATE_RESOLVE_DEST,
+        "解析目标必须是 RESOLVE_DEST"
+    );
+    assert_ne!(
+        RESOLVE_DST_STATE, D3D12_RESOURCE_STATE_RENDER_TARGET,
+        "RENDER_TARGET 只在交换链后缓冲上能当解析目标；普通纹理用它会录进非法命令"
+    );
+}
+
 /// PSO 的 `NodeMask` 在单 GPU 下就是 0。
 ///
 /// 这条测试是**反向**钉住文档结论的：官方文档明写

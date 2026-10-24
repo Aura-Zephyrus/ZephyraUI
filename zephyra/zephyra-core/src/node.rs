@@ -372,20 +372,13 @@ impl Node {
     /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
     ///
     /// 排列趟用它复用刚测出的结果，而不是重跑一遍测量。
-    /// 测量趟存下来的**排版结果**（`None` = 没测过 / 本节点无文本 / 缓存已失效）。
     ///
-    /// 绘制趟用它避免每帧重排一次文字 —— 见
-    /// [`crate::paint::text_command`] 里那段实测数字。
-    ///
-    /// 借出引用而不是克隆：绘制趟只读，而 `ShapedText` 里是 `Vec<Line>`，
-    /// 克隆一次是一整棵树的分配。
-    pub(crate) fn cached_shaped(&self) -> Option<&crate::text::ShapedText> {
-        self.measure_cache
-            .as_ref()
-            .and_then(|(_, r)| r.shaped.as_ref())
-    }
-
-    /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
+    /// ⚠ 这里**只**读尺寸。历史上它旁边还有一个读 `shaped` 的姊妹方法
+    /// （`cached_shaped()`），被绘制趟拿去复用排版结果 —— 已删除，原因见
+    /// [`crate::paint::text_command`]：测量缓存的键只有 [`Constraints`]，而
+    /// `ShapedText` 还依赖**文本内容**，`TEXT` 又被刻意判成只重绘属性，于是那条
+    /// 「省一次排版」的捷径会把旧文本的排版喂给新文本（症状：点按钮数值不变、
+    /// 画面不更新，resize 才自愈）。要省的话该按「排版输入指纹」缓存，不是按约束。
     pub(crate) fn cached_size(&self) -> Option<crate::core::Size> {
         self.measure_cache.as_ref().map(|(_, r)| r.size)
     }

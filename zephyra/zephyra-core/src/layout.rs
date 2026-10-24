@@ -94,39 +94,26 @@ impl Constraints {
 }
 
 /// 测量结果。
-/// 测量结果。
 ///
-/// `shaped` 是**排版结果本身**，不是尺寸。带着它是为了让绘制趟不必重排一次文字。
+/// # 为什么不存排版结果（`ShapedText`）
+///
+/// 曾经这里带一个 `shaped: Option<ShapedText>`，让绘制趟从测量缓存里复用排版、
+/// 免得每帧重排。但那条路走不通，而且是 2026-10「点击值不更新」bug 的根：
+///
+/// - 排版结果依赖**文本内容**，而测量缓存的键只有 [`Constraints`]。
+/// - `TEXT` 被刻意判成**只重绘**属性（见 `layout_classification_tests`：内容变了
+///   不等于盒子要重排），改文本既不清测量缓存、也**不触发重排** —— 于是布局趟
+///   根本不跑，缓存里的 `shaped` 停留在旧文本上。
+/// - 绘制趟若信它，就把旧字形算给新文本，再把新文本写进 `glyph_quads` 缓存 ⇒
+///   旧字形被永久钉住（点按钮数值不变、画面不更新，resize 才自愈）。
+///
+/// 现在排版归**绘制趟**所有：`paint::text_command` 在 `glyph_quads` 未命中时按
+/// 当前文本重排一次。判据是排版输入指纹（文本 / 样式 / `max_width`）+ 图集修订号，
+/// 未命中即输入已变、重排是必需的；命中路径（绝大多数帧）零重排。
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasureResult {
     /// 内容想要的尺寸。
     pub size: Size,
-    /// 这次测量产出的排版结果（`None` = 本节点没有文本）。
-    ///
-    /// # 为什么把 `ShapedText` 挂在测量结果上
-    ///
-    /// 官方把排版结果放在元素的布局存储里（`CLayoutStorage` 里
-    /// `m_desiredSize` 旁边就是它），绘制趟直接取。原因是**排版是整帧最贵的一步**：
-    /// `shape()` 要按样式算出每一行的基线、每个字形的位置与步进。
-    ///
-    /// 本仓曾经把排版结果**扔掉**（`text_size()` 只取 `shaped.size` 就返回），
-    /// 于是绘制趟 `paint::text_command` 每帧对每个文本节点重新 `shape()` 一次。
-    /// 实测（`--bench-resize` 的临时探针，324 帧）：`render` 92.9 ms、
-    /// `layout` 18.4 ms —— **render 是 layout 的 5 倍**，而它里面绝大部分
-    /// 就是重复排版。
-    ///
-    /// # 为什么绘制趟仍要重算字形矩形
-    ///
-    /// `shape()` 与位置无关，所以复用 `ShapedText` 本身是安全的；但字形的
-    /// 屏幕矩形**必须**按当前 origin 重算 —— 节点可能被绘制偏移
-    /// （`props::TRANSLATE_X/Y`）移动过，而排版结果里没有屏幕坐标。
-    ///
-    /// # 失效时机
-    ///
-    /// 它挂在 `measure_cache` 里，而缓存的失效时机是"某个布局相关属性被改"
-    /// （见 [`crate::node::clear_dirty`] 的文档）。`text-size` / `text-line-height` /
-    /// `text-max-width` / `TEXT` 都是布局键 ⇒ 改它们会让缓存作废 ⇒ 重新排版。
-    pub shaped: Option<crate::text::ShapedText>,
 }
 
 /// 可测量、可排列的节点。
@@ -965,9 +952,9 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
     // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
     // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
     //
-    // ⚠ 排版结果**要留下**（`shaped` 稍后进 `MeasureResult`）：绘制趟从测量缓存里
-    // 取它，于是每帧只排版一次。丢掉它就是每帧重排全部文字 —— 实测那让
-    // `render` 比 `layout` 还贵 5 倍。
+    // ⚠ 排版只为了取**内容尺寸**（`shaped.size`），结果本身**不进** `MeasureResult`
+    // —— 见 `MeasureResult` 的文档：排版归绘制趟所有，存在测量缓存里会因
+    // `TEXT` 是只重绘属性而过期（点按钮值不更新的根因）。
     let shaped = node.shape(ctx);
     if let Some(shaped) = &shaped {
         content = shaped.size;
@@ -978,7 +965,6 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
             pick_axis(own_w, content.width, Axis::Horizontal, constraints, padding),
             pick_axis(own_h, content.height, Axis::Vertical, constraints, padding),
         ),
-        shaped,
     };
     let size = result.size;
     node.cache_measure(constraints, result);

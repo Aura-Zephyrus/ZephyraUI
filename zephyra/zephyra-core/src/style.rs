@@ -86,9 +86,9 @@ impl Node {
     /// 整个 `ShapedText` 会逼每个调用方写 `.map(|s| s.size)`，那是噪音。
     /// 而绘制趟要的是完整的那个，于是单独给一个名字。
     ///
-    /// 排版结果会经 [`crate::layout::MeasureResult::shaped`] 存进测量缓存，
-    /// 绘制趟 `crate::paint::text_command` 从那里取 —— 于是每帧只有**第一次**
-    /// 排版，之后的绘制趟复用。
+    /// 排版结果由**绘制趟**在 `glyph_quads` 未命中时按当前文本算一次（见
+    /// [`crate::paint`] 的 `text_command`）。这里只给需要完整排版的调用方一个
+    /// 入口；`text_size` 只取 `.size`。
     pub fn shape(&self, ctx: Context<'_>) -> Option<crate::text::ShapedText> {
         let text = self.text()?;
         let engine = ctx.engine?;
