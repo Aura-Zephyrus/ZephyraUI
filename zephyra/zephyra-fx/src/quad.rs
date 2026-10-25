@@ -615,6 +615,22 @@ pub struct RenderReport {
     /// 判据：用了折射的页面 `refraction_passes > 0`；且它与
     /// `offscreen_passes` 之差恰好是模糊趟数。
     pub refraction_passes: usize,
+    /// 因找不到注册钩子（或处于几何展开层——它画不出自绘内容）而**未执行**的
+    /// 外部渲染源命令数（`Command::Custom`）。
+    ///
+    /// GPU 后端在钩子注册表里查到了 `kind` 时**不计**这一条（钩子执行成功，
+    /// 与 `offscreen_passes` 的正面计数同理——后端自己的报告字段记成功）；
+    /// 查不到、或命令落在离屏段里（v1 离屏不支持自绘）时 +1。
+    ///
+    /// 恒大于 0 的两种成因：宿主忘了注册对应 `kind` 的钩子（症状是"这块区域
+    /// 没画"），或给自绘源挂了滤镜（v1 不支持，见 `Command::Custom` 文档）。
+    pub unhandled_custom: usize,
+    /// 本次**真的执行**了外部渲染源钩子的次数（与 `offscreen_passes` 同理的
+    /// 正面计数：`unhandled_custom == 0` 分不出「没人用自绘源」与「全都被跳过」）。
+    ///
+    /// 判据：挂了自绘源的页面 `custom_passes > 0`；且它与
+    /// `unhandled_custom` 之和 = DisplayList 里 `Custom` 命令总数。
+    pub custom_passes: usize,
 }
 
 impl RenderReport {
@@ -647,6 +663,8 @@ impl RenderReport {
         self.image_batches += other.image_batches;
         self.missing_textures += other.missing_textures;
         self.path_triangles += other.path_triangles;
+        self.unhandled_custom += other.unhandled_custom;
+        self.custom_passes += other.custom_passes;
     }
 }
 
@@ -1490,6 +1508,13 @@ pub fn expand_range_translated_into(
             }
             Command::PopClip => {
                 clip = None;
+            }
+            // 外部渲染源：本层是**几何展开**，画不出宿主自绘内容——计数。
+            // 真正的执行点在后端的段回放（`Segment::Custom`）；落到这里的
+            // Custom 都是带滤镜进了离屏段的（v1 不支持），或直接调用 `expand`
+            // 的 CPU 参考路径。见 `RenderReport::unhandled_custom`。
+            Command::Custom { .. } => {
+                out.report.unhandled_custom += 1;
             }
         }
     }

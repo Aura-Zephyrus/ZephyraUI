@@ -2744,3 +2744,148 @@ fn partial_damage_survives_an_offscreen_pass() {
     );
 }
 // ---------------------------------------------------------------------------
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  外部渲染源（拓展接口）：钩子真的把外部代码画进了目标
+// ═══════════════════════════════════════════════════════════════════════════
+
+use windows::core::Interface;
+use zephyra_core::paint::RenderSource;
+use zephyra_winit::renderer::{HookCtx, RenderHook};
+
+/// 测试钩子：用 `ClearView` 把 bounds 矩形涂成纯红。
+///
+/// 这是「外部渲染源」的最小形态——宿主任意代码拿到立即上下文与屏幕矩形，
+/// 爱画什么画什么。选 `ClearView` 是因为它的产物是**逐像素确定**的
+/// （矩形精确、无抗锯齿），断言可以钉到"恰好 bounds 面积个纯红像素"。
+struct FillRed;
+
+impl RenderHook for FillRed {
+    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+        // 载荷通道：宿主塞的类型擦除数据必须原样到达钩子。
+        assert_eq!(source.kind, "test:fill-red");
+        assert_eq!(source.payload::<u32>(), Some(&7u32));
+
+        use windows::Win32::Foundation::RECT;
+        let rect = RECT {
+            left: bounds.x as i32,
+            top: bounds.y as i32,
+            right: (bounds.x + bounds.width) as i32,
+            bottom: (bounds.y + bounds.height) as i32,
+        };
+        // `ClearView` 在 `ID3D11DeviceContext1` 上；运行时上下文 cast 一下。
+        let dc1: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext1 = ctx
+            .context
+            .cast()
+            .expect("D3D11.1 的立即上下文应当能 cast 出 DeviceContext1");
+        let color = [1.0f32, 0.0, 0.0, 1.0];
+        unsafe {
+            dc1.ClearView(ctx.rtv, &color, Some(&[rect]));
+        }
+    }
+}
+
+/// 挂了钩子的自绘源：外部代码真的画进了渲染目标（逐像素钉住 bounds）。
+///
+/// # 为什么这是拓展接口的**验收**测试
+///
+/// core 的降级测试只能证明「命令被发出来了」，fx 的分段测试只能证明「段被
+/// 切出来了」——都不证明「外部代码真的被执行并且真的落在它声明的 bounds 里」。
+/// 本条把整条链钉死：DisplayList → plan_segments → Custom 段 → 注册表查表 →
+/// 钩子执行 → 像素落在 bounds。
+#[test]
+fn custom_render_source_hook_draws_into_bounds() {
+    let Ok(gpu) = Gpu::new() else {
+        eprintln!("跳过：建不出 D3D11 设备");
+        return;
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    renderer.register_hook("test:fill-red", Box::new(FillRed));
+
+    // 左半屏交给钩子（32×64 = 目标的 1/4 面积），右半屏留黑。
+    let list = custom_only_list(Rect::new(0.0, 0.0, 32.0, 64.0));
+    let textures = TextureTable::new();
+
+    let report = renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: CLEAR,
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
+
+    assert_eq!(report.custom_passes, 1, "钩子应当被调用恰好一次");
+    assert_eq!(report.unhandled_custom, 0, "已注册的 kind 不该计跳过");
+
+    let pixels = read_back(&gpu, &tex);
+    // `ClearView` 精确涂满 rect：非黑像素必须**恰好**是 bounds 的面积。
+    let drawn = non_background(&pixels);
+    assert_eq!(
+        drawn,
+        (32 * 64) as usize,
+        "非黑像素必须是 bounds 的精确面积（ClearView 无 AA，多一个少一个都是错位）"
+    );
+    // 且颜色是纯红（BGRA 字节序 → B=0 G=0 R=255）。
+    let red = pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] == 0 && p[1] == 0 && p[2] == 255 && p[3] == 255)
+        .count();
+    assert_eq!(red, (32 * 64) as usize, "涂上的必须是钩子给的纯红");
+}
+
+/// 没注册钩子的自绘源：跳过 + 计数，目标保持清屏色（不崩、不误画）。
+#[test]
+fn unregistered_custom_source_is_skipped_and_counted() {
+    let Ok(gpu) = Gpu::new() else {
+        eprintln!("跳过：建不出 D3D11 设备");
+        return;
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    // 故意**不**注册 "test:fill-red"。
+
+    let list = custom_only_list(Rect::new(0.0, 0.0, 32.0, 64.0));
+    let textures = TextureTable::new();
+    let report = renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: CLEAR,
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
+
+    assert_eq!(report.unhandled_custom, 1, "未注册的 kind 必须计跳过");
+    assert_eq!(report.custom_passes, 0);
+    assert_eq!(
+        non_background(&read_back(&gpu, &tex)),
+        0,
+        "没注册钩子就什么都不该画"
+    );
+}
+
+/// 只有一条 Custom 命令的列表。
+fn custom_only_list(bounds: Rect) -> DisplayList {
+    let mut list = DisplayList::new();
+    list.push(
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 0,
+        },
+        Command::Custom {
+            bounds,
+            source: RenderSource::new("test:fill-red", 7u32),
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::SrcOver,
+        },
+    );
+    list
+}

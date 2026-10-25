@@ -58,16 +58,27 @@ pub enum Segment {
         /// 编造的默认值，而 `sort()` 的稳定性依赖真实键。
         key: SortKey,
     },
+    /// 一条**外部渲染源**命令（`Command::Custom`，按 `DisplayList` 下标定位）。
+    ///
+    /// 它不是离屏——它是「这一位交给宿主钩子」的标记。单独成段（而不是混进
+    /// 前后 `Plain`）的唯一理由是**顺序**：钩子必须在它该出现的位置被调用，
+    /// 提前则盖住它上面的内容，拖后则被盖。与 Plain/Offscreen 交替同理，
+    /// 后端按顺序逐段回放时自然撞上它。
+    Custom {
+        /// 在 `DisplayList` 里的下标。
+        index: usize,
+    },
 }
 
 /// 把一帧切成 [`Segment`] 序列。
 ///
-/// # 结构不变量：段数 = 滤镜命令数 × 2 + 1
+/// # 结构不变量：段数 = 滤镜命令数 × 2 + 自绘源段数 + 1
 ///
 /// 每条带滤镜的命令产出**一对**段（它前面的 `Plain` + 它自己的 `Offscreen`），
-/// 首尾再各补一个 `Plain`。于是序列严格交替：`Plain, Offscreen, Plain,
-/// Offscreen, …, Plain`，总段数 = `2 × 滤镜命令数 + 1`（无滤镜时就是单个
-/// 覆盖全部的 `Plain(0..len)`）。
+/// 每条不带滤镜的 `Custom` 命令产出**一对**段（同理），首尾再各补一个 `Plain`。
+/// 于是序列严格交替：`Plain, Offscreen/Custom, Plain, …, Plain`，总段数 =
+/// `2 × 滤镜命令数 + 2 × 自绘源段数 + 1`（都没有时就是单个覆盖全部的
+/// `Plain(0..len)`）。
 ///
 /// # 为什么空段也要产出
 ///
@@ -84,6 +95,17 @@ pub fn plan_segments(list: &DisplayList) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::new();
     let mut start = 0usize;
     for (i, item) in list.iter().enumerate() {
+        // 外部渲染源：单独成段（见 `Segment::Custom` 的顺序论证）。带滤镜的
+        // Custom **不**走这里——它会落进下面的离屏分支，在几何展开层被计数
+        // （v1 离屏不支持自绘，见 `Command::Custom` 文档）。
+        if let Command::Custom { source, .. } = &item.command {
+            if !source.is_none() && command_filter(&item.command).is_some_and(|f| f.is_identity()) {
+                out.push(Segment::Plain(start..i));
+                out.push(Segment::Custom { index: i });
+                start = i + 1;
+                continue;
+            }
+        }
         let Some(pass) = plan_pass(&item.command) else {
             continue;
         };
@@ -188,7 +210,8 @@ pub fn count_non_default_blends(list: &DisplayList) -> usize {
                 Command::Quad { blend, .. }
                 | Command::Path { blend, .. }
                 | Command::Image { blend, .. }
-                | Command::Text { blend, .. } => *blend,
+                | Command::Text { blend, .. }
+                | Command::Custom { blend, .. } => *blend,
                 Command::PushClip(_) | Command::PopClip => {
                     zephyra_core::filter::BlendMode::default()
                 }

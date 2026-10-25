@@ -78,10 +78,10 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_VIEWPORT,
 };
 
-use zephyra_core::core::Color;
+use zephyra_core::core::{Color, Rect};
 use zephyra_core::filter::{BlendMode, Coeff};
 use zephyra_core::frame::Damage;
-use zephyra_core::paint::{Command, DisplayList};
+use zephyra_core::paint::{Command, DisplayList, RenderSource};
 
 use crate::quad::{self, RenderReport, Vertex};
 use crate::shader::{ShaderError, Shaders};
@@ -358,6 +358,8 @@ pub struct Renderer {
     atlas_srv: ID3D11ShaderResourceView,
     /// 图集边长（像素），也是 `bytes_per_row / 4`。
     atlas_size: u32,
+    /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
+    hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
 }
 
 /// 一次回放的输入。
@@ -597,9 +599,45 @@ fn command_blend_mode(cmd: &Command) -> Option<usize> {
         Command::Quad { blend, .. }
         | Command::Path { blend, .. }
         | Command::Image { blend, .. }
-        | Command::Text { blend, .. } => Some(*blend as usize),
+        | Command::Text { blend, .. }
+        | Command::Custom { blend, .. } => Some(*blend as usize),
         Command::PushClip(_) | Command::PopClip => None,
     }
+}
+
+/// 外部渲染源在 **D3D11 后端**的接入点。
+///
+/// 宿主实现它、经 [`Renderer::register_hook`] 按 `kind` 登记；回放时撞上
+/// `Segment::Custom` 就查表调用。见 [`zephyra_core::paint::Command::Custom`]
+/// 的契约文档——这里是该契约的 D3D11 侧落点。
+///
+/// # 状态纪律
+///
+/// 调用时：目标 / 视口 / scissor 已由 [`Renderer::bind_target`] 设好（与普通段
+/// 相同的状态）。**混合状态自理**——进钩子时它是上一段留下的值，钩子要什么
+/// 混合就自己 `OMSetBlendState`（命令上的 `blend` 字段对钩子只是提示）。
+/// 其他状态同理不用兜底：下一段的 [`Renderer::draw_range`] 会重设目标 / 视口 /
+/// scissor（"每段自给自足"），图元批次也会重绑自己的管线。唯一要体贴的是：
+/// 别把设备弄成错误态。
+pub trait RenderHook: Send + Sync {
+    /// 在 `bounds`（屏幕像素坐标）处绘制自绘内容。
+    ///
+    /// `source.payload::<T>()` 取回宿主在 [`zephyra_core::paint::RenderSource::new`]
+    /// 里放的载荷。
+    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+}
+
+/// 传给 [`RenderHook`] 的 D3D11 上下文。
+pub struct HookCtx<'a> {
+    /// 立即上下文。
+    pub context: &'a ID3D11DeviceContext,
+    /// 设备（需要新建资源时用）。
+    pub device: &'a ID3D11Device,
+    /// 当前渲染目标（离屏 pass 中途就是离屏 RT——但 v1 自绘源不进离屏，见
+    /// `Command::Custom` 文档；这个字段保持完整以防将来放开）。
+    pub rtv: &'a ID3D11RenderTargetView,
+    /// 目标像素尺寸（宽，高）。
+    pub size: (f32, f32),
 }
 
 /// 离屏 pass 用的一对乒乓 RT（E4.4 / E4.6）。
@@ -901,7 +939,24 @@ impl Renderer {
             atlas_texture,
             atlas_srv,
             atlas_size,
+            hooks: Vec::new(),
         })
+    }
+
+    /// 登记一个外部渲染源钩子（`kind` 相同者覆盖）。
+    ///
+    /// 见 [`RenderHook`] 与 [`zephyra_core::paint::Command::Custom`]。
+    pub fn register_hook(
+        &mut self,
+        kind: impl Into<std::borrow::Cow<'static, str>>,
+        hook: Box<dyn RenderHook>,
+    ) {
+        let kind = kind.into();
+        if let Some(slot) = self.hooks.iter_mut().find(|(k, _)| *k == kind) {
+            slot.1 = hook;
+        } else {
+            self.hooks.push((kind, hook));
+        }
     }
 
     /// 图集边长（像素）。
@@ -1045,6 +1100,31 @@ impl Renderer {
                     }
                     let r = self.draw_range(&env, list, &range);
                     report.absorb(r);
+                }
+                zephyra_fx::offscreen::Segment::Custom { index } => {
+                    let item = &list.iter().nth(index).expect("下标来自同一份列表");
+                    let Command::Custom { bounds, source, .. } = &item.command else {
+                        unreachable!("Custom 段只由 Command::Custom 产出");
+                    };
+                    match self.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
+                        Some((_, hook)) => {
+                            hook.draw(
+                                HookCtx {
+                                    context,
+                                    device,
+                                    rtv,
+                                    size: (size.0 as f32, size.1 as f32),
+                                },
+                                *bounds,
+                                source,
+                            );
+                            report.custom_passes += 1;
+                        }
+                        None => {
+                            // 没登记钩子：跳过并计数——"这块区域没画"而不是崩。
+                            report.unhandled_custom += 1;
+                        }
+                    }
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,

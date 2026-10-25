@@ -909,6 +909,18 @@ impl Renderer {
                         self.segments.push(SegmentPlan::Plain { draws });
                     }
                 }
+                zephyra_fx::offscreen::Segment::Custom { index } => {
+                    // Vulkan v1 **不支持**外部渲染源：本后端是「记录段建段计划 →
+                    // 提交段执行」两段式，而钩子需要提交段的活命令缓冲——那要给
+                    // SegmentPlan 加一种「调用宿主回调」的段类型，属于真机验证
+                    // 轨道（本机无 WSL，无法端到端验证）之后再做。见
+                    // `Command::Custom` 的契约文档。
+                    //
+                    // 计数走 `unhandled_custom`：症状是"这块区域没画"，
+                    // 与 D3D11/D3D12 侧"没注册钩子"同款降级。
+                    let _ = index;
+                    report.unhandled_custom += 1;
+                }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,
                     pass,

@@ -166,6 +166,20 @@ pub static BLEND_MODE: PropertyKey = PropertyKey::new(
     PropertyValue::blend_mode(crate::filter::BlendMode::SrcOver),
 );
 
+/// 外部渲染源（视频帧 / GPU 图表 / 宿主任意自绘代码的接入点）。
+///
+/// 真值走 [`PropertyValue::Custom`]——属性系统对它是**不透明**的：样式表写不了
+/// 它、主题解析跳过它，diff 用指针相等判「没变」（载荷跨帧共享同一 `Arc` 时
+/// 稳态零重建）。后端按 [`crate::paint::RenderSource`] 的 `kind` 查钩子注册表。
+///
+/// 不可继承：与 [`FILTER`] 同理——"这块屏幕归谁画"是节点自己的事。
+///
+/// 默认值是空串占位而非 [`PropertyValue::Custom`]：属性键的默认值必须能在
+/// const 里构造，而 `Custom` 要分配。读侧（`Node::render_source`）把非
+/// `Custom` 的值一律读成「无」，所以占位没有语义。
+pub static RENDER_SOURCE: PropertyKey =
+    PropertyKey::new("RenderSource", PropertyValue::StaticStr(""));
+
 // ============================== 内容 ==============================
 
 /// 图像纹理句柄（宿主定义）。

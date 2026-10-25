@@ -530,3 +530,79 @@ fn different_icons_do_not_share_cache_entries() {
          说明缓存键没有区分图标（多半是取成了常量）"
     );
 }
+
+// ============================== 外部渲染源（拓展接口） ==============================
+
+use crate::paint::RenderSource;
+
+/// 挂了 `RENDER_SOURCE` 的节点降级出一条 `Command::Custom`：
+/// bounds = 节点矩形，kind / 载荷原样搬运。
+#[test]
+fn custom_source_is_carried_through_the_downgrade() {
+    let src = RenderSource::new("test:fill", 42u32);
+    let el = Element::new(NodeTag::Container)
+        .with_key("custom")
+        .with(&crate::props::RENDER_SOURCE, PropertyValue::custom(src));
+    let list = render_of(&el, UNIT);
+
+    let customs: Vec<_> = list
+        .iter()
+        .filter(|i| matches!(&i.command, Command::Custom { .. }))
+        .collect();
+    assert_eq!(customs.len(), 1, "恰好一条 Custom 命令");
+    match &customs[0].command {
+        Command::Custom { bounds, source, .. } => {
+            assert_eq!(*bounds, UNIT, "自绘源声明的占地就是节点矩形");
+            assert_eq!(source.kind, "test:fill");
+            assert_eq!(source.payload::<u32>(), Some(&42u32), "载荷类型擦除后取回");
+        }
+        other => panic!("期望 Command::Custom，实际 {other:?}"),
+    }
+}
+
+/// 没挂源的节点零发射——绝大多数节点在这里必须零成本。
+#[test]
+fn no_custom_source_emits_no_custom_command() {
+    let el = Element::new(NodeTag::Container).with_key("plain");
+    let list = render_of(&el, UNIT);
+    assert!(
+        list.iter()
+            .all(|i| !matches!(&i.command, Command::Custom { .. })),
+        "普通节点不该产出 Custom 命令"
+    );
+}
+
+/// 「没变」的判等语义：同一份 `Arc` 载荷跨帧克隆后判等（diff 静止），
+/// 重建的载荷判不等（diff 报变化——所以载荷要跨帧共享，见 `RenderSource::new`）。
+#[test]
+fn custom_source_equality_follows_payload_identity() {
+    let a = RenderSource::new("k", 1u32);
+    let a2 = a.clone();
+    assert_eq!(a, a2, "克隆（共享 Arc）= 没变");
+
+    let b = RenderSource::new("k", 1u32);
+    assert_ne!(a, b, "重建（新 Arc）= 变了，即使值相等");
+
+    // 「无」是共享单例：两个 none 必须判等，否则带默认值的节点永远在 diff。
+    assert_eq!(RenderSource::none(), RenderSource::none());
+}
+
+/// 命令助手的 Custom 语义：内容矩形 = bounds、滤镜照常透出、形状半径 0。
+#[test]
+fn custom_command_helpers() {
+    let cmd = Command::Custom {
+        bounds: Rect::new(5.0, 6.0, 30.0, 40.0),
+        source: RenderSource::new("k", ()),
+        filter: crate::filter::FilterChain::single(crate::filter::Filter::Blur {
+            sigma_x: 4.0,
+            sigma_y: 4.0,
+        }),
+        blend: crate::filter::BlendMode::default(),
+    };
+    assert_eq!(
+        crate::paint::command_content_rect(&cmd),
+        Some(Rect::new(5.0, 6.0, 30.0, 40.0))
+    );
+    assert!(!crate::paint::command_filter(&cmd).unwrap().is_identity());
+    assert_eq!(crate::paint::command_corner_radius(&cmd), 0.0);
+}

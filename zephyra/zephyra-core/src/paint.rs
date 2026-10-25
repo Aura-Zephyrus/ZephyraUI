@@ -27,7 +27,10 @@
 //! 它是核心对外的唯一产出 —— 宿主拿到 [`DisplayList`] 之后就不再关心树的存在。
 //! 几何必须由 [`crate::layout`] 先算好，本函数只读已摆好的矩形。
 
+use std::any::Any;
 use std::borrow::Cow;
+use std::fmt;
+use std::sync::{Arc, OnceLock};
 
 use crate::context::Context;
 use crate::core::{Color, CornerRadius, Point, Rect};
@@ -187,6 +190,104 @@ pub enum Command {
     PushClip(Rect),
     /// 结束裁剪。见 [`Command::PushClip`] 的排序警告。
     PopClip,
+    /// 交给**外部渲染源**自绘（视频帧、GPU 图表、嵌人的另一套渲染器……）。
+    ///
+    /// 这是 DisplayList 的**唯一开放位**：其余命令核心都认识，唯独这一条，
+    /// 核心只知道「这里有一块屏幕矩形归某个外部代码管」。契约与
+    /// [`Command::Image::texture`] 同哲学——**核心只搬运，宿主解释**：
+    ///
+    /// - 排序：它是一条普通命令，参与 `(layer, z, order)` 排序，与相邻命令的
+    ///   合成顺序由分段回放（`plan_segments` 的 `Segment::Custom`）保住——
+    ///   钩子在它该出现的位置被调用，不会提前或拖后。
+    /// - 裁剪/混合状态：钩子被调用时继承**当前后端状态**（已绑定的 RT、
+    ///   视口、scissor、混合状态）。钩子内部可以自由改状态，但**必须**
+    ///   自理恢复——后端不替它兜底（与 `PushClip` 零生产者的现状一致）。
+    /// - 未注册钩子时：后端**跳过并计数**（报告的 `unhandled_custom`），
+    ///   症状是"这块区域没画"而不是崩——与 `TextureRef` 查不到纹理同款降级。
+    /// - 滤镜：带非恒等滤镜的 `Custom` 会照常进离屏段，但离屏回放的几何
+    ///   展开画不出自绘内容（计数）；**钩子自己负责外观，v1 不提供离屏**。
+    Custom {
+        bounds: Rect,
+        /// 外部源的身份与载荷。后端按 `kind` 查注册表，载荷由宿主解释。
+        source: RenderSource,
+        /// 滤镜链（进离屏段用；见上——离屏内的自绘 v1 不执行）。
+        filter: crate::filter::FilterChain,
+        /// 混合模式。钩子被调用前由后端设好；钩子自理恢复。
+        blend: crate::filter::BlendMode,
+    },
+}
+
+/// 外部渲染源：一个**类型名**加一份**宿主载荷**。
+///
+/// # 为什么是 `kind: Cow<'static, str>` 而不是 `TypeId`
+///
+/// 后端的钩子注册表按它查表；跨 crate 边界（宿主进程内任意代码）用字符串
+/// 登记，与 [`TextureRef`] 的纹理名、[`crate::props::ICON_NAME`] 的图标名
+/// 同一惯例——**字符串是本框架的跨边界身份**。
+///
+/// # 为什么载荷是 `Arc<dyn Any>`
+///
+/// 核心不认识视频帧、图表数据或任何宿主类型；它只保证把**同一个对象**
+/// 搬到钩子被调用的地方。`Arc` 让 [`PartialEq`] 能用指针相等判「没变」
+/// （diff 不为此抖动），`Any` 让宿主拿回自己的类型。
+#[derive(Clone)]
+pub struct RenderSource {
+    /// 源类型名（后端注册表的查表键，如 `"demo:fill"`、`"video"`）。
+    pub kind: Cow<'static, str>,
+    payload: Arc<dyn Any + Send + Sync>,
+}
+
+impl RenderSource {
+    /// 语义上的「无」：`kind` 为空串，属性键的默认值用它。
+    ///
+    /// 载荷取**共享单例**——两个「无」必须判等（见 [`PartialEq`] 的指针相等），
+    /// 否则每个带着默认值的节点在 diff 眼里永远在变。
+    pub fn none() -> Self {
+        static NONE: OnceLock<Arc<dyn Any + Send + Sync>> = OnceLock::new();
+        Self {
+            kind: Cow::Borrowed(""),
+            payload: NONE.get_or_init(|| Arc::new(())).clone(),
+        }
+    }
+
+    /// 构造一个外部渲染源。
+    ///
+    /// `payload` 每帧重建会打破 diff 判等（指针不等 = 「变了」）——跨帧不变的
+    /// 载荷应存在宿主状态里、每帧克隆同一个 `Arc`（与字形缓存同纪律）。
+    pub fn new(kind: impl Into<Cow<'static, str>>, payload: impl Any + Send + Sync) -> Self {
+        Self {
+            kind: kind.into(),
+            payload: Arc::new(payload),
+        }
+    }
+
+    /// 是否为「无」。
+    pub fn is_none(&self) -> bool {
+        self.kind.is_empty()
+    }
+
+    /// 借出载荷的具体类型。
+    pub fn payload<T: 'static>(&self) -> Option<&T> {
+        self.payload.downcast_ref::<T>()
+    }
+}
+
+impl fmt::Debug for RenderSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 载荷是类型擦除的，打印它的类型名即可——值本体对诊断没意义
+        // （能看到的只有地址），kind + 类型名足以回答「这是谁」。
+        f.debug_struct("RenderSource")
+            .field("kind", &self.kind)
+            .field("payload", &self.payload.type_id())
+            .finish()
+    }
+}
+
+impl PartialEq for RenderSource {
+    fn eq(&self, other: &Self) -> bool {
+        // 指针相等 = 同一个对象 = 没变。kind 相等 + 载荷指针不等 = 变了。
+        self.kind == other.kind && Arc::ptr_eq(&self.payload, &other.payload)
+    }
 }
 
 /// 宿主定义的纹理句柄。
@@ -359,7 +460,8 @@ impl DisplayList {
             Command::Quad { blend, .. }
             | Command::Path { blend, .. }
             | Command::Image { blend, .. }
-            | Command::Text { blend, .. } => *blend != crate::filter::BlendMode::default(),
+            | Command::Text { blend, .. }
+            | Command::Custom { blend, .. } => *blend != crate::filter::BlendMode::default(),
             Command::PushClip(_) | Command::PopClip => false,
         })
     }
@@ -393,7 +495,8 @@ pub fn command_filter(cmd: &Command) -> Option<&crate::filter::FilterChain> {
         Command::Quad { filter, .. }
         | Command::Path { filter, .. }
         | Command::Image { filter, .. }
-        | Command::Text { filter, .. } => Some(filter),
+        | Command::Text { filter, .. }
+        | Command::Custom { filter, .. } => Some(filter),
         Command::PushClip(_) | Command::PopClip => None,
     }
 }
@@ -420,6 +523,10 @@ pub fn command_content_rect(cmd: &Command) -> Option<Rect> {
         // （图标的空白边角、外接圆与图形的差集），按布局矩形算会让每张 RT
         // 白白大一圈；按紧包围盒算，包围盒相同的两条 Path 还能复用同一张 RT。
         Command::Path { vertices, .. } => Some(bounds_of_vertices(vertices)),
+        // 自绘源自己声明它的占地——核心不知道里面画了什么，只能信它。
+        // 虚报的代价由虚报者承担：报大了浪费离屏 RT / 命中测试区域，
+        // 报小了被相邻内容盖住。
+        Command::Custom { bounds, .. } => Some(*bounds),
         Command::PushClip(_) | Command::PopClip => None,
     }
 }
@@ -446,6 +553,8 @@ pub fn command_corner_radius(cmd: &Command) -> f32 {
         // 图像可以裁成圆角，所以它的半径也是真的。
         Command::Image { radius, .. } => radius.radius,
         Command::Path { .. } | Command::Text { .. } => 0.0,
+        // 自绘源外观归宿主，核心没有形状信息可给——方角是诚实退化。
+        Command::Custom { .. } => 0.0,
         Command::PushClip(_) | Command::PopClip => 0.0,
     }
 }
@@ -742,6 +851,28 @@ fn render_rec(
                 order: next_order(order),
             },
             cmd,
+        );
+    }
+
+    // 外部渲染源（拓展接口）。
+    //
+    // 排在节点自身外观（背景 / 图像 / 图标 / 文本）之后、子节点之前：它与文本
+    // 同属"节点自己的内容平面"，而子节点叠在它上面。没挂源的节点（绝大多数）
+    // 在这里零成本——一次空串判断。
+    let source = node.render_source(ctx);
+    if !source.is_none() {
+        out.push(
+            SortKey {
+                layer,
+                z: 0,
+                order: next_order(order),
+            },
+            Command::Custom {
+                bounds: rect,
+                source,
+                filter: filter.clone(),
+                blend,
+            },
         );
     }
 

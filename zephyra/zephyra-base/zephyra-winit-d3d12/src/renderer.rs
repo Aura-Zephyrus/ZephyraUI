@@ -184,6 +184,8 @@ pub struct Renderer {
     next_texture_slot: u32,
     /// `g_dst`（目标副本）的懒建纹理，见 [`Renderer::refresh_dst_copy`]。
     dst_copy: std::cell::RefCell<Option<DstCopy>>,
+    /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
+    hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
 }
 
 /// 上传堆上一块常驻映射的暂存缓冲。
@@ -750,9 +752,44 @@ fn command_blend_mode(cmd: &zephyra_core::paint::Command) -> Option<usize> {
         Command::Quad { blend, .. }
         | Command::Path { blend, .. }
         | Command::Image { blend, .. }
-        | Command::Text { blend, .. } => Some(*blend as usize),
+        | Command::Text { blend, .. }
+        | Command::Custom { blend, .. } => Some(*blend as usize),
         Command::PushClip(_) | Command::PopClip => None,
     }
+}
+
+/// 外部渲染源在 **D3D12 后端**的接入点。
+///
+/// 与 D3D11 侧同名 trait 并列存在而不是抽到公共 crate：两个后端传给钩子的
+/// 上下文毫无共性（立即上下文 vs 记录中的命令列表），强行统一只会造出一层
+/// 只有类型擦除成本的间接。见 [`zephyra_core::paint::Command::Custom`] 的
+/// 契约文档——这里是该契约的 D3D12 侧落点。
+///
+/// # 状态纪律
+///
+/// 与 D3D11 侧同款：调用时目标 / 视口 / scissor 已设好；**混合状态自理**
+/// （D3D12 的混合烤在 PSO 里，钩子要什么就自己 `SetPipelineState` / 换
+/// 混合描述）。普通段自会重绑自己的 PSO，钩子不用恢复。
+pub trait RenderHook: Send + Sync {
+    /// 在 `bounds`（屏幕像素坐标）处绘制自绘内容。
+    fn draw(
+        &mut self,
+        ctx: HookCtx<'_>,
+        bounds: zephyra_core::core::Rect,
+        source: &zephyra_core::paint::RenderSource,
+    );
+}
+
+/// 传给 [`RenderHook`] 的 D3D12 上下文。
+pub struct HookCtx<'a> {
+    /// 设备。
+    pub device: &'a ID3D12Device,
+    /// 记录中的命令列表。
+    pub list: &'a ID3D12GraphicsCommandList,
+    /// 当前目标的 RTV 描述符句柄。
+    pub rtv: D3D12_CPU_DESCRIPTOR_HANDLE,
+    /// 目标像素尺寸（宽，高）。
+    pub size: (f32, f32),
 }
 
 /// 由脏区算出帧内 scissor。
@@ -942,7 +979,24 @@ impl Renderer {
                 .map_err(|e| ShaderError::Create("建离屏 RTV 描述符堆", e))?,
             elements: shaders.elements,
             samples,
+            hooks: Vec::new(),
         })
+    }
+
+    /// 登记一个外部渲染源钩子（`kind` 相同者覆盖）。
+    ///
+    /// 见 [`RenderHook`] 与 [`zephyra_core::paint::Command::Custom`]。
+    pub fn register_hook(
+        &mut self,
+        kind: impl Into<std::borrow::Cow<'static, str>>,
+        hook: Box<dyn RenderHook>,
+    ) {
+        let kind = kind.into();
+        if let Some(slot) = self.hooks.iter_mut().find(|(k, _)| *k == kind) {
+            slot.1 = hook;
+        } else {
+            self.hooks.push((kind, hook));
+        }
     }
 
     /// 根签名：两个描述符表（`t0` 主纹理 + `t1` 目标副本）+ 一个静态采样器。
@@ -1860,6 +1914,32 @@ impl Renderer {
                         );
                     }
                     report.absorb(pr);
+                }
+                zephyra_fx::offscreen::Segment::Custom { index } => {
+                    let item = display_list.iter().nth(index).expect("下标来自同一份列表");
+                    let zephyra_core::paint::Command::Custom { bounds, source, .. } = &item.command
+                    else {
+                        unreachable!("Custom 段只由 Command::Custom 产出");
+                    };
+                    match self.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
+                        Some((_, hook)) => {
+                            hook.draw(
+                                HookCtx {
+                                    device,
+                                    list,
+                                    rtv: env.rtv,
+                                    size: (env.size.0 as f32, env.size.1 as f32),
+                                },
+                                *bounds,
+                                source,
+                            );
+                            report.custom_passes += 1;
+                        }
+                        None => {
+                            // 没登记钩子：跳过并计数——"这块区域没画"而不是崩。
+                            report.unhandled_custom += 1;
+                        }
+                    }
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,

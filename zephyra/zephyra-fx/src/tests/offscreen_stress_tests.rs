@@ -136,8 +136,8 @@ fn random_blend(rng: &mut Rng) -> BlendMode {
 }
 
 fn random_command(rng: &mut Rng) -> Command {
-    match rng.below(8) {
-        0 | 1 | 2 | 3 => Command::Quad {
+    match rng.below(9) {
+        0..=3 => Command::Quad {
             rect: random_rect(rng),
             radius: CornerRadius {
                 radius: rng.f32_in(0.0, 24.0),
@@ -170,7 +170,15 @@ fn random_command(rng: &mut Rng) -> Command {
             blend: random_blend(rng),
         },
         6 => Command::PushClip(random_rect(rng)),
-        _ => Command::PopClip,
+        7 => Command::PopClip,
+        // 外部渲染源：随机滤镜（恒等 → 单独成 Custom 段；非恒等 → 进离屏段）。
+        // kind 非空 = 语义上的「有源」（空 kind 是渲染降级的「无」）。
+        _ => Command::Custom {
+            bounds: random_rect(rng),
+            source: zephyra_core::paint::RenderSource::new("stress:custom", rng.below(u32::MAX)),
+            filter: random_chain(rng),
+            blend: random_blend(rng),
+        },
     }
 }
 
@@ -222,8 +230,8 @@ fn list_of(cmds: Vec<Command>) -> DisplayList {
 
 // ── 不变量 1：plan_segments 的结构 ──
 
-/// 段序列必须**恰好**是「Plain, Offscreen, Plain, …, Plain」：
-/// 段数 = 滤镜命令数 + 1，且所有区间严严实实铺满 [0, len)。
+/// 段序列必须**恰好**是「Plain, Offscreen/Custom, Plain, …, Plain」：
+/// 段数 = 滤镜命令数 × 2 + 自绘源段数 × 2 + 1，且所有区间严严实实铺满 [0, len)。
 ///
 /// # 变异目标
 ///
@@ -243,10 +251,25 @@ fn stress_plan_segments_tile_the_list_exactly() {
             .filter(|(_, item)| plan_pass(&item.command).is_some())
             .map(|(i, _)| i)
             .collect();
+        // 恒等滤镜的自绘源单独成 `Custom` 段（见 `Segment::Custom`）。
+        let customs: Vec<usize> = list
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                matches!(
+                    &item.command,
+                    Command::Custom { source, .. }
+                        if !source.is_none()
+                            && zephyra_core::paint::command_filter(&item.command)
+                                .is_some_and(|f| f.is_identity())
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
         assert_eq!(
             segs.len(),
-            2 * filtered.len() + 1,
-            "seed {seed}: 段数必须等于滤镜命令数 × 2 + 1（Plain/Offscreen 严格交替，首尾 Plain）"
+            2 * filtered.len() + 2 * customs.len() + 1,
+            "seed {seed}: 段数必须等于滤镜命令数 × 2 + 自绘源段数 × 2 + 1（严格交替，首尾 Plain）"
         );
 
         let mut cursor = 0usize;
@@ -280,6 +303,22 @@ fn stress_plan_segments_tile_the_list_exactly() {
                         list.iter().nth(*index).unwrap().key,
                         "seed {seed}: 排序键必须取原命令的"
                     );
+                }
+                (1, Segment::Custom { index }) => {
+                    assert_eq!(*index, cursor, "seed {seed}: 自绘源命令必须紧跟 Plain 段");
+                    cursor = index + 1;
+                    // 进了 Custom 段的命令必须是「有源 + 恒等滤镜」的自绘——
+                    // 带滤镜的 Custom 该进离屏段（v1 离屏不支持自绘，展开层计数）。
+                    match &list.iter().nth(*index).unwrap().command {
+                        Command::Custom { source, filter, .. } => {
+                            assert!(!source.is_none(), "seed {seed}: 空源不该进段");
+                            assert!(
+                                filter.is_identity(),
+                                "seed {seed}: 带非恒等滤镜的 Custom 该进离屏段"
+                            );
+                        }
+                        other => panic!("seed {seed}: Custom 段里是 {other:?}"),
+                    }
                 }
                 _ => panic!("seed {seed}: 段序列必须严格交替，第 {k} 段是 {seg:?}"),
             }
@@ -573,7 +612,8 @@ fn stress_blend_counter_matches_a_manual_per_command_count() {
                     Command::Quad { blend, .. }
                     | Command::Path { blend, .. }
                     | Command::Image { blend, .. }
-                    | Command::Text { blend, .. } => *blend,
+                    | Command::Text { blend, .. }
+                    | Command::Custom { blend, .. } => *blend,
                     Command::PushClip(_) | Command::PopClip => BlendMode::default(),
                 };
                 b != BlendMode::default()

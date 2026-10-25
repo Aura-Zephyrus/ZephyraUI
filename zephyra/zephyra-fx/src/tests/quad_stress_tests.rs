@@ -150,7 +150,8 @@ fn stress_expand_counts_every_filtered_command_exactly_once() {
                 Command::Quad { blend, .. }
                 | Command::Path { blend, .. }
                 | Command::Image { blend, .. }
-                | Command::Text { blend, .. } => *blend,
+                | Command::Text { blend, .. }
+                | Command::Custom { blend, .. } => *blend,
                 Command::PushClip(_) | Command::PopClip => BlendMode::default(),
             };
             if blend_is_unimplemented(b) {
@@ -184,7 +185,7 @@ fn stress_expand_counts_every_filtered_command_exactly_once() {
 #[test]
 fn stress_segmented_replay_conserves_every_counted_field() {
     for seed in 0..400u64 {
-        let mut rng = Rng::new(seed ^ 0xFeedFace);
+        let mut rng = Rng::new(seed ^ 0xFEEDFACE);
         let list = random_list(&mut rng);
         let whole = expand(&list, SIZE, REG).report;
 
@@ -192,7 +193,7 @@ fn stress_segmented_replay_conserves_every_counted_field() {
         for seg in plan_segments(&list) {
             let range = match seg {
                 Segment::Plain(r) => r,
-                Segment::Offscreen { index, .. } => index..index + 1,
+                Segment::Offscreen { index, .. } | Segment::Custom { index } => index..index + 1,
             };
             let mut scratch = Scratch::new();
             let rep = expand_range_translated_into(
@@ -249,6 +250,8 @@ fn stress_absorb_merges_each_field_by_its_documented_rule() {
             path_triangles: rng.below(30) as usize,
             offscreen_passes: rng.below(6) as usize,
             refraction_passes: rng.below(4) as usize,
+            unhandled_custom: rng.below(4) as usize,
+            custom_passes: rng.below(4) as usize,
             ..RenderReport::default()
         };
         let b = RenderReport {
@@ -263,10 +266,12 @@ fn stress_absorb_merges_each_field_by_its_documented_rule() {
             path_triangles: rng.below(30) as usize,
             offscreen_passes: rng.below(6) as usize,
             refraction_passes: rng.below(4) as usize,
+            unhandled_custom: rng.below(4) as usize,
+            custom_passes: rng.below(4) as usize,
             ..RenderReport::default()
         };
-        let mut m = a.clone();
-        m.absorb(b.clone());
+        let mut m = a;
+        m.absorb(b);
         assert_eq!(m.quads, a.quads + b.quads);
         assert_eq!(m.skipped, a.skipped + b.skipped);
         assert_eq!(
@@ -282,6 +287,8 @@ fn stress_absorb_merges_each_field_by_its_documented_rule() {
             m.refraction_passes,
             a.refraction_passes + b.refraction_passes
         );
+        assert_eq!(m.unhandled_custom, a.unhandled_custom + b.unhandled_custom);
+        assert_eq!(m.custom_passes, a.custom_passes + b.custom_passes);
         assert_eq!(m.image_batches, a.image_batches + b.image_batches);
         assert_eq!(m.missing_textures, a.missing_textures + b.missing_textures);
         assert_eq!(m.path_triangles, a.path_triangles + b.path_triangles);

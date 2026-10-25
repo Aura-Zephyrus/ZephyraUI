@@ -313,6 +313,16 @@ impl Node {
         }
     }
 
+    /// 外部渲染源（没挂时返回 `kind` 为空的「无」）。
+    ///
+    /// 载荷对样式系统不透明（[`PropertyValue::Custom`]）：主题解析跳过它，
+    /// 这里只做本地→样式→默认的常规查找后整体取回。
+    pub fn render_source(&self, ctx: Context<'_>) -> crate::paint::RenderSource {
+        self.value(&crate::props::RENDER_SOURCE, ctx)
+            .and_then(|v| v.get::<crate::paint::RenderSource>())
+            .unwrap_or_else(crate::paint::RenderSource::none)
+    }
+
     /// 图像边长（`-1` = 撑满节点矩形）。
     pub fn image_size(&self, ctx: Context<'_>) -> f32 {
         self.number(&crate::props::IMAGE_SIZE, ctx)
