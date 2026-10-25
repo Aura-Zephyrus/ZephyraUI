@@ -13,6 +13,7 @@
 //! | `build` | 构建 | |
 //! | `info` | 报版本与工具链状态 | 出问题时第一句要问的就是「你装的什么版本」 |
 //! | `props` | 列受支持的属性 | 与 `zstylec props` 同源，不制造第二条路径 |
+//! | `mcp` | MCP server：AI 直连运行中的界面 | 「AI 会用工具」是当代的必备形态；桥协议在 `zephyra-fx::bridge` |
 //!
 //! 没有 `migrate` / `sign` / `updater` —— 那些对应 Tauri 的分发体系，ZephyraUI
 //! 现在没有，加进来就是空壳。
@@ -134,6 +135,13 @@ pub const COMMANDS: &[Command] = &[
         flags: &[],
         run: props::run,
     },
+    Command {
+        name: "mcp",
+        about: "MCP server: let AI agents inspect and drive a running ZephyraUI app",
+        args: "[--port <n>] [--host <addr>]",
+        flags: &[],
+        run: mcp::run,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Command> {
@@ -169,6 +177,7 @@ mod build;
 mod check;
 mod dev;
 mod info;
+mod mcp;
 mod new;
 mod props;
 mod run;

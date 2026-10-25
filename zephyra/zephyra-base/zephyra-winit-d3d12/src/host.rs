@@ -133,6 +133,10 @@ pub struct HostWindow<V: View> {
     traced_viewport: Option<(f32, f32)>,
     /// 图像纹理表：`Command::Image` 的句柄 → SRV 描述符位置。
     textures: TextureTable,
+    /// 调试桥（`ZEPHYRA_DEBUG_PORT` 开启时存在）。见 `zephyra_fx::bridge`。
+    bridge: Option<zephyra_fx::bridge::DebugBridge>,
+    /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
+    last_stats: String,
     /// 窗口。**最后析构**，见模块文档。
     window: Arc<Window>,
 }
@@ -351,6 +355,8 @@ impl<V: View> HostWindow<V> {
             last_frame_at: None,
             traced_viewport: None,
             textures: TextureTable::new(),
+            bridge: zephyra_fx::bridge::DebugBridge::from_env(),
+            last_stats: String::new(),
             window,
         }
     }
@@ -670,6 +676,20 @@ impl<V: View> HostWindow<V> {
 
         // 3. 清事件标志。脏标记由 `FrameCache` 内部清（它知道什么时候该清）。
         self.dirty = false;
+
+        // 桥的 `stats` 答案在这里刷新（与 D3D11 侧同源同帧）。
+        self.last_stats = format!(
+            "quads={} skipped={} dirty={} needs_layout={} redrawn={} hovered={}",
+            report.quads,
+            report.skipped,
+            stats.dirtied,
+            stats.needs_layout,
+            redrawn,
+            self.router
+                .hovered()
+                .map(|k| k.to_string())
+                .unwrap_or_else(|| "-".into()),
+        );
 
         Frame {
             diff: stats,
@@ -1427,6 +1447,64 @@ fn hwnd_of<W: raw_window_handle::HasWindowHandle>(window: &W) -> Option<isize> {
     }
 }
 
+/// 调试桥的执行面（D3D12）。见 `zephyra_fx::bridge` 的模块文档。
+///
+/// # 与 D3D11 侧的两处差异
+///
+/// - **注入同源**：`inject_*` 直接调 [`HostWindow::on_cursor_moved`] /
+///   [`HostWindow::on_pointer_down`] / [`HostWindow::on_pointer_up`]——合成
+///   与物理事件零分叉（D3D11 侧同一论证）；
+/// - **截图诚实降级**：本后端的呈现走 DComp/交换链重建链路，后缓冲读回
+///   （MSAA resolve + copy to readback heap）尚未接线——返回 `None`，桥回
+///   「此后端不支持像素读回」。树/属性/注入三个高频能力不受影响；截图
+///   属 `ZEPHYRA_DEBUG_PORT` 真机验证轨道的后续项。
+impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
+    fn viewport(&self) -> (f32, f32) {
+        let (w, h) = self.client_size();
+        (w as f32, h as f32)
+    }
+
+    fn tree_dump(&self) -> String {
+        match self.cache.node() {
+            Some(node) => zephyra_fx::bridge::tree_dump_of(node),
+            None => "(还没有布局树——首帧尚未运行)\n".into(),
+        }
+    }
+
+    fn props_dump(&self, path: &[usize]) -> Option<String> {
+        let mut node = self.cache.node()?;
+        for &i in path {
+            node = node.children().get(i)?;
+        }
+        Some(zephyra_fx::bridge::props_dump_of(node))
+    }
+
+    fn stats(&self) -> String {
+        if self.last_stats.is_empty() {
+            "(还没有帧)".into()
+        } else {
+            self.last_stats.clone()
+        }
+    }
+
+    fn inject_hover(&mut self, x: f32, y: f32) {
+        self.on_cursor_moved(x, y);
+    }
+
+    fn inject_click(&mut self, x: f32, y: f32) {
+        // move → down → up：与物理点击完全同序。
+        self.on_cursor_moved(x, y);
+        self.on_pointer_down();
+        self.on_pointer_up();
+        self.dirty = true;
+    }
+
+    fn screenshot(&mut self) -> Option<Vec<u8>> {
+        eprintln!("[zephyra-d3d12] 调试桥截图尚未接线（后缓冲读回），返回 ERR");
+        None
+    }
+}
+
 impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V> {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // 窗口在 `new_lenient` 里就建好了；这里补第一帧。
@@ -1475,6 +1553,23 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // 桥的 poll 放在帧判定之前：注入的 hover/click 在**本帧**就参与命中
+        // 测试与布局（与 D3D11 侧同一时序契约）。
+        //
+        // ⚠ 控制流要跟桥联动：本后端是**事件驱动**（静止时 `about_to_wait`
+        // 不被调，与 D3D11 的常驻重绘循环不同），而 TCP 数据不会唤醒 Wait 模式
+        // —— 所以**有客户端时切 Poll**（命令低延迟），无客户端回 Wait
+        // （静止零开销的本后端卖点不动）。
+        if let Some(mut b) = self.bridge.take() {
+            b.poll(self);
+            let active = b.has_client();
+            self.bridge = Some(b);
+            event_loop.set_control_flow(if active {
+                winit::event_loop::ControlFlow::Poll
+            } else {
+                winit::event_loop::ControlFlow::Wait
+            });
+        }
         // 只在「有待处理的事件」时跑一帧。静止时一帧都不跑 —— 这既符合保留式 UI 的
         // 卖点，也让 demo 在静止时几乎没有 GPU 开销。
         //

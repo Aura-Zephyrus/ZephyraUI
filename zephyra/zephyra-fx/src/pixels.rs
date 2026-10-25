@@ -127,6 +127,19 @@ impl PixelRead {
 ///    即可。只交换 BGR 不翻转会得到上下颠倒的图 —— 那种错误很容易在"看起来有
 ///    东西"的时候被忽略过去。
 pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Result<()> {
+    let out = bmp_bytes(px, encode_srgb);
+    std::fs::write(path, out)
+}
+
+/// 把 [`PixelRead`] 编码成 **24 位 BMP 字节**（不落盘）。
+///
+/// 存在的理由：调试桥（`bridge` 模块）的截图命令要把像素经 TCP 发给 AI 客户端
+/// —— 落临时文件再读回来既绕又会在并发下互相踩。编码逻辑与 [`write_bmp`]
+/// **逐字节同一份**（后者只是 `fs::write` 这一行的壳），改编码规则只改这里。
+///
+/// 编码细节（行对齐 / 上下翻转 / 通道序 / 反预乘 / sRGB 编码）见 [`write_bmp`]
+/// 的文档 —— 全部原样适用。
+pub fn bmp_bytes(px: &PixelRead, encode_srgb: bool) -> Vec<u8> {
     let (w, h) = (px.width, px.height);
     // 源行距与目标行距是**两个不同的量**，混用会静默丢像素：
     //
@@ -197,7 +210,7 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
         line.resize(dst_stride, 0);
         out.extend_from_slice(&line);
     }
-    std::fs::write(path, out)
+    out
 }
 
 #[cfg(test)]

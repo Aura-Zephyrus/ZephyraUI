@@ -95,7 +95,10 @@ fn dispatch(bin: &str, argv: Vec<String>, io: &mut dyn Write) -> ExitCode {
             }
         }
         for (k, _) in &parsed.options {
-            let known = matches!(k.as_str(), "format" | "path" | "manifest-path" | "styles");
+            let known = matches!(
+                k.as_str(),
+                "format" | "path" | "manifest-path" | "styles" | "port" | "host"
+            );
             if !known {
                 io.err_line(&format!(
                     "error: unknown option `--{k}` for `{bin} {}`",

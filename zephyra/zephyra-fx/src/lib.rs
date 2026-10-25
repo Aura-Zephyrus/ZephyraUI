@@ -48,6 +48,7 @@
 
 #![cfg_attr(windows, allow(dead_code))]
 
+pub mod bridge;
 pub mod cpu_only;
 pub mod cpu_raster;
 pub mod geom_clip;

@@ -29,4 +29,11 @@ path = "src/lib.rs"
 # 就不可能发生 —— 而不只是「靠一条路径依赖约定」。
 zstylec = { path = "../zstylec" }
 
+# 只有 `mcp` 子命令要用。这是对「零运行时依赖」的一次**显式破例**，理由：
+# MCP（Model Context Protocol）是 JSON-RPC 2.0 —— JSON 的转义 / Unicode / 数字
+# 格式自己手写解析器是经典的坑源，而「AI 直连运行中的界面」是本 CLI 的正经
+# 功能而不是调试脚本。依赖只落在本 crate（库层调试桥仍是纯 std 行协议），
+# 破例面被压到最小。
+serde_json = "1"
+
 [dev-dependencies]

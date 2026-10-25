@@ -82,6 +82,15 @@ messenger/callback 形态，串行锁是否需要按实测定。
 
 ## 后续（已排期未动工）
 
+- **D3D12 截图接线**：MCP `screenshot` 在 D3D12 侧诚实降级（后缓冲读回
+  未接线——MSAA resolve + copy to readback heap）。照 D3D11 的
+  `frame_inner(capture)` 形状补。
+- **MCP 键盘/滚动注入**：`hover`/`click` 已通；`press_key` / `scroll` 需在
+  桥协议加命令 + host 侧合成 `KeyboardInput`/滚轮事件。
+- **MCP 端到端验收（真机）**：`ZEPHYRA_DEBUG_PORT=7878` 起 demo，用 AI 客户端
+  走完整闭环（get_tree → click → get_tree 比对变化）。D3D11/D3D12 各一轮。
+- **Vulkan：渲染源钩子接线（真机轨道）**
+
 - **离屏自绘支持（v2）**：带非恒等滤镜的 Custom 进离屏段时，几何展开层
   画不出宿主内容（现在诚实计数 `unhandled_custom`）。v2 让离屏 pass
   也能调钩子画进 RT。依赖：三个后端钩子先全部落地。

@@ -146,6 +146,13 @@ pub struct HostWindow<V: View> {
     atlas_revision_uploaded: u64,
     /// 图像纹理表：`Command::Image` 的句柄 → 采样视图。
     textures: TextureTable,
+    /// 调试桥（`ZEPHYRA_DEBUG_PORT` 开启时存在）。
+    ///
+    /// `Option` 而不是总是建：桥是**调试设施**，默认必须零开销——不监听
+    /// 任何端口，不占一个字节缓冲。见 `zephyra_fx::bridge` 的模块文档。
+    bridge: Option<zephyra_fx::bridge::DebugBridge>,
+    /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
+    last_stats: String,
 }
 
 impl<V: View> HostWindow<V> {
@@ -223,6 +230,8 @@ impl<V: View> HostWindow<V> {
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             textures: TextureTable::new(),
+            bridge: zephyra_fx::bridge::DebugBridge::from_env(),
+            last_stats: String::new(),
         }
     }
 
@@ -326,6 +335,15 @@ impl<V: View> HostWindow<V> {
     ///
     /// ⚠ **图集上传不受这个门控保护**，它另有判据 —— 见下面那条警告。
     pub fn frame(&mut self) -> Frame {
+        self.frame_inner(None)
+    }
+
+    /// [`Self::frame`] 的带截图版：调试桥的 `shot` 命令走这里。
+    ///
+    /// ⚠ 截图时**强制渲染**（`redrawn || capture.is_some()`）：AI 发 `shot` 时
+    /// 界面往往静止（`FrameOutcome::Unchanged`），不强制的话没有 present 前的
+    /// 读回时机，拿到的就只能是上一帧的残留或全黑。
+    fn frame_inner(&mut self, capture: Option<&mut Vec<u8>>) -> Frame {
         let theme = self.theme;
         let size = self.size();
         // 作用域要短：`ctx` 借着 `self.engine`，而下面要可变借用 `self` 去回放。
@@ -416,14 +434,26 @@ impl<V: View> HostWindow<V> {
         // ⚠ `Unchanged` 时**连 present 都不能做**：本项目两个后端都是 flip model，
         // `Present` 之后后缓冲内容未定义。不画就 present 会把未定义的内容推上屏。
         // 什么都不做才是对的 —— 合成器继续显示上一帧。
-        let report = if redrawn {
-            self.acquire_and_render(damage)
+        let report = if redrawn || capture.is_some() {
+            self.acquire_and_render_inner(true, Damage::Full, capture)
         } else {
             RenderReport::default()
         };
 
         // 3. 清事件标志。脏标记由 `FrameCache` 内部清（它知道什么时候该清）。
         self.dirty = false;
+
+        // 桥的 `stats` 答案在这里刷新——`Frame` 的消费者（trace 打印）与本字段
+        // 同源同帧，不会出现「stats 落后一帧」。
+        self.last_stats = format!(
+            "quads={} skipped={} dirty={} needs_layout={} redrawn={} hovered={}",
+            report.quads,
+            report.skipped,
+            stats.dirtied,
+            stats.needs_layout,
+            redrawn,
+            self.hovered().unwrap_or_else(|| "-".into()),
+        );
 
         Frame {
             diff: stats,
@@ -435,24 +465,27 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 取本帧渲染目标并回放 `DisplayList`。
+    /// 取本帧渲染目标并回放 `DisplayList`。
     ///
-    /// `damage` 只用于**帧内** scissor —— 它不能用来跳过回放，原因见
-    /// `Renderer::render` 里关于 flip model 的说明。
-    fn acquire_and_render(&mut self, _damage: Damage) -> RenderReport {
-        // # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
-        //
-        // flip model 的后缓冲在 `Present` 之后**内容未定义** —— 它是会被丢弃的
-        // 临时目标，不是「上一帧那张图」。本后端的渲染目标**就是**那个后缓冲
-        // （没有 MSAA 中间纹理），所以按脏区绘制等于把未定义像素留在屏幕上：
-        // 症状是「点一下之后界面花成一整片底色，只有那一小块是对的」。
-        //
-        // 因此这里强制整帧，**忽略**调用方给的 `damage`。代价写在明处：交互帧
-        // 整帧重绘；换来的是画面永远对。（D3D12 后端有 MSAA 中间纹理，
-        // 那条路上按脏区绘制才成立，见它的 `render_pass`。）
-        self.acquire_and_render_inner(true, Damage::Full)
-    }
-
-    fn acquire_and_render_inner(&mut self, allow_dump: bool, damage: Damage) -> RenderReport {
+    /// # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
+    ///
+    /// flip model 的后缓冲在 `Present` 之后**内容未定义** —— 它是会被丢弃的
+    /// 临时目标，不是「上一帧那张图」。本后端的渲染目标**就是**那个后缓冲
+    /// （没有 MSAA 中间纹理），所以按脏区绘制等于把未定义像素留在屏幕上：
+    /// 症状是「点一下之后界面花成一整片底色，只有那一小块是对的」。
+    ///
+    /// 因此这里强制整帧，**忽略**调用方给的 `_damage`。代价写在明处：交互帧
+    /// 整帧重绘；换来的是画面永远对。（D3D12 后端有 MSAA 中间纹理，
+    /// 那条路上按脏区绘制才成立，见它的 `render_pass`。）
+    ///
+    /// `capture`：调试桥的截图——Some 时渲完后、present 前把后缓冲读回
+    /// BMP 存进去（时机依据见函数体内 `maybe_dump_frame` 那段实测表）。
+    fn acquire_and_render_inner(
+        &mut self,
+        allow_dump: bool,
+        _damage: Damage,
+        capture: Option<&mut Vec<u8>>,
+    ) -> RenderReport {
         // 拆开借用：`Renderer::render` 要 `&mut self.renderer`，而取 RTV 要
         // `&self.surface`。整体借用 `self` 会在第一个就撞上借用检查器。
         let rtv = match self.surface.current_rtv() {
@@ -468,7 +501,7 @@ impl<V: View> HostWindow<V> {
             device: &self.gpu.device,
             rtv: &rtv,
             list: self.cache.list(),
-            damage,
+            damage: Damage::Full,
             size: self.surface.size(),
             clear,
             textures: &self.textures,
@@ -489,6 +522,16 @@ impl<V: View> HostWindow<V> {
         // 唯一可靠的判据是看像素**。当时日志里一切正常（`quads=143`、零 HRESULT）。
         if allow_dump {
             self.maybe_dump_frame();
+        }
+
+        // 调试桥截图：与 `maybe_dump_frame` 同一时机（present 前）——理由同源：
+        // flip model 下 present 之后读回的全零/未定义。`read_pixels` 内部自己
+        // 解析 MSAA（见 `maybe_dump_frame` 那段注释），与 resolve 顺序不冲突。
+        if let Some(out) = capture {
+            match self.surface.read_pixels() {
+                Ok(px) => *out = zephyra_fx::pixels::bmp_bytes(&px, true),
+                Err(e) => eprintln!("[zephyra] 调试桥截图读回失败: {e}"),
+            }
         }
 
         // ⚠ MSAA 解析必须在 present **之前**。
@@ -569,6 +612,43 @@ impl<V: View> HostWindow<V> {
             self.dirty = true;
         }
         any
+    }
+
+    /// 处理一次抬起：返回是否产生了路由事件。
+    ///
+    /// 从 `window_event` 的 Released 分支提取成方法：调试桥的点击注入
+    /// （`inject_click`）要走**同一条**路径——合成事件与物理事件分叉的话，
+    /// 「AI 点了但没反应」这类问题就永远查不清是哪条路的锅。
+    pub fn on_pointer_up(&mut self) -> bool {
+        let id = self.pointer.unwrap_or(0);
+        let Some(node) = self.cache.node() else {
+            return false;
+        };
+        let (x, y) = self.pointer_pos;
+        let theme = self.theme;
+        let mut out = RoutedEvents::new();
+        self.router.on_pointer(
+            node,
+            PointerEvent {
+                id,
+                x,
+                y,
+                phase: PointerPhase::Up,
+                source: PointerSource::Mouse,
+            },
+            Context::new(theme),
+            &mut out,
+        );
+        !out.is_empty()
+    }
+
+    /// 按路径取节点（子下标链）——桥的 `props` 命令用。
+    fn bridge_node(&self, path: &[usize]) -> Option<&zephyra_core::node::Node> {
+        let mut node = self.cache.node()?;
+        for &i in path {
+            node = node.children().get(i)?;
+        }
+        Some(node)
     }
 
     /// 诊断：把某一帧的后缓冲写成 BMP（`ZEPHYRA_FRAME_DUMP=<路径>` 时启用）。
@@ -697,6 +777,67 @@ impl<V: View> HostWindow<V> {
     }
 }
 
+/// 调试桥的执行面。见 `zephyra_fx::bridge` 的模块文档。
+///
+/// # 注入走的是物理输入同一条路
+///
+/// `inject_hover` / `inject_click` 直接调 [`HostWindow::on_cursor_moved`] /
+/// [`HostWindow::on_pointer_down`] / [`HostWindow::on_pointer_up`]——合成事件
+/// 与物理事件没有任何分叉。这不是洁癖：命中测试、事件路由、脏标记的传播只有
+/// 一份实现，「AI 点了没反应」才不会多出一整类「物理点得动、合成点不动」的
+/// 查询黑洞。
+impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
+    fn viewport(&self) -> (f32, f32) {
+        let (w, h) = self.size();
+        (w as f32, h as f32)
+    }
+
+    fn tree_dump(&self) -> String {
+        match self.cache.node() {
+            Some(node) => zephyra_fx::bridge::tree_dump_of(node),
+            None => "(还没有布局树——首帧尚未运行)\n".into(),
+        }
+    }
+
+    fn props_dump(&self, path: &[usize]) -> Option<String> {
+        self.bridge_node(path)
+            .map(zephyra_fx::bridge::props_dump_of)
+    }
+
+    fn stats(&self) -> String {
+        if self.last_stats.is_empty() {
+            "(还没有帧)".into()
+        } else {
+            self.last_stats.clone()
+        }
+    }
+
+    fn inject_hover(&mut self, x: f32, y: f32) {
+        self.on_cursor_moved(x, y);
+    }
+
+    fn inject_click(&mut self, x: f32, y: f32) {
+        // move → down → up：与物理点击完全同序。抬起结果并入 dirty 判定。
+        self.on_cursor_moved(x, y);
+        self.on_pointer_down();
+        if self.on_pointer_up() {
+            self.dirty = true;
+        }
+    }
+
+    fn screenshot(&mut self) -> Option<Vec<u8>> {
+        // `frame_inner(Some)` 强制渲一帧并在 present 前读回（见它的文档）——
+        // 不依赖「界面正好在动」。读回失败（空缓冲）返回 None，桥回 ERR。
+        let mut buf = Vec::new();
+        let _ = self.frame_inner(Some(&mut buf));
+        if buf.is_empty() {
+            None
+        } else {
+            Some(buf)
+        }
+    }
+}
+
 impl<V: View> ApplicationHandler for HostWindow<V> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.dirty = true;
@@ -712,6 +853,16 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 self.dirty = true;
             }
             WindowEvent::RedrawRequested => {
+                // 桥的 poll 放在帧首：注入的 hover/click 在**本帧**就参与命中
+                // 测试与布局，AI 读回的树永远是操控后的状态。
+                //
+                // `take` 出来再调：`poll` 要 `&mut BridgeHost`（= self）而桥自己
+                // 也是 self 的字段——借检查器解不开这个环。桥没有 Drop 语义
+                // （监听 socket 移动即可），take-放回是安全的。
+                if let Some(mut b) = self.bridge.take() {
+                    b.poll(self);
+                    self.bridge = Some(b);
+                }
                 if self.dirty {
                     let f = self.frame();
                     if std::env::var("ZEPHYRA_TRACE").as_deref() == Ok("1") {
@@ -750,26 +901,8 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 ..
             } => {
                 // 抬起必须成对处理：否则按下捕获会残留，下一次点击会被判为抬起。
-                let id = self.pointer.unwrap_or(0);
-                if let Some(node) = self.cache.node() {
-                    let (x, y) = self.pointer_pos;
-                    let theme = self.theme;
-                    let mut out = RoutedEvents::new();
-                    self.router.on_pointer(
-                        node,
-                        PointerEvent {
-                            id,
-                            x,
-                            y,
-                            phase: PointerPhase::Up,
-                            source: PointerSource::Mouse,
-                        },
-                        Context::new(theme),
-                        &mut out,
-                    );
-                    if !out.is_empty() {
-                        self.dirty = true;
-                    }
+                if self.on_pointer_up() {
+                    self.dirty = true;
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {

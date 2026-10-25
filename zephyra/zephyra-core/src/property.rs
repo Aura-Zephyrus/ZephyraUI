@@ -685,6 +685,17 @@ impl PropertyStore {
         self.local.iter().map(|e| (e.key, &e.value))
     }
 
+    /// 样式层设置的全部条目，供**调试读取**（`zephyra-fx` 的 bridge 模块 dump
+    /// 节点属性用）。
+    ///
+    /// 与 [`Self::iter_local`] 同款签名：`diff` 只走写入面（`set_styled_if_changed`
+    /// / `retain_styled`），不需要迭代样式层；读取面只有「外部工具看节点当前
+    /// 长什么样」这一个消费者 —— 而只给 local 会漏掉样式表声明的那部分，
+    /// AI 看到的节点就缺了最常改的那些值。
+    pub fn iter_styled(&self) -> impl Iterator<Item = (&'static PropertyKey, &PropertyValue)> {
+        self.styled.iter().map(|e| (e.key, &e.value))
+    }
+
     /// 按键写入本地值，返回**值是否真的变了**。
     ///
     /// diff 用返回值决定要不要标脏——「值没变就别标脏」是 UI 静止时零重建的

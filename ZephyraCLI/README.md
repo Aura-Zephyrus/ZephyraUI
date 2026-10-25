@@ -27,6 +27,56 @@ cargo zephyra dev
 | `run` / `build` | 转交 cargo |
 | `info` | 版本与工具链状态（含路径） |
 | `props [过滤词]` | 列受支持的属性 |
+| `mcp` | MCP server：AI 直连运行中的界面（见下） |
+
+### `mcp` — AI 集成
+
+```
+zephyra mcp [--port 7878] [--host 127.0.0.1]
+```
+
+把 ZephyraUI 应用交给 AI 操控的桥。链路三层：
+
+```text
+AI 客户端 ──stdio·JSON-RPC── zephyra mcp ──TCP·行协议── 运行中的应用
+```
+
+**用法**：
+
+1. 应用以 `ZEPHYRA_DEBUG_PORT=7878`（默认端口）启动——库层调试桥随环境变量
+   开启，不设则**零监听**（默认关闭，不存在隐式端口）；
+2. AI 客户端（Claude / WorkBuddy / 任何 MCP host）配一条 stdio MCP server：
+
+```json
+{
+  "mcpServers": {
+    "zephyra": { "command": "zephyra", "args": ["mcp"] }
+  }
+}
+```
+
+**工具表**：
+
+| 工具 | 干什么 |
+|---|---|
+| `get_tree` | 布局树 dump。每行 `path tag key x,y w*h [styles]`；路径列（子下标链）是 `get_props` 的钥匙；坐标是**绝对**像素，与 `hover`/`click` 同一坐标系——从树里抄个坐标就能点 |
+| `get_props {path}` | 单节点属性表（tag/key/矩形/样式分类/全部属性） |
+| `get_stats` | 最近一帧统计（quads / dirty / hovered） |
+| `get_viewport` | 窗口视口尺寸 |
+| `hover {x,y}` | 注入指针移动——与物理鼠标走**同一条**命中测试路径 |
+| `click {x,y}` | 注入完整点击（move → down → up），本帧生效 |
+| `screenshot {path?}` | 渲一帧读回 BMP 存盘（D3D11 应用支持；后端无读回时返回错误） |
+
+典型闭环：`get_tree`（看到布局）→ `click`（点某个坐标）→ `get_tree` /
+`screenshot`（确认变化）。所有工具都是「读-改-读」里的一步，无隐式状态。
+
+**协议注意**：
+
+- `mcp` 进程的 stdout **只**输出 JSON-RPC 消息，诊断全走 stderr——MCP stdio
+  传输的硬约束，违反即客户端解析失败；
+- MCP 握手（`initialize` / `tools/list`）**不需要**应用在线；连接在第一次
+  `tools/call` 时才建立（重试 3 次 × 500ms），应用后启动是常态；
+- 桥单客户端：第二个连接要等第一个断开（AI 会话即独占使用）。
 
 ### `dev`
 

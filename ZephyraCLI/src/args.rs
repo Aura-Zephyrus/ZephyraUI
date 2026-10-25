@@ -40,7 +40,7 @@ pub struct Args {
 ///
 /// 所以取值型标志必须**显式列出**。没列进去的 `--foo bar` 里，`bar` 会被当位置
 /// 参数 —— 这是刻意的：`--` 之后要原样透传给 cargo 的东西正是靠这条规则保持形状。
-pub const VALUE_FLAGS: &[&str] = &["format", "path", "manifest-path", "styles"];
+pub const VALUE_FLAGS: &[&str] = &["format", "path", "manifest-path", "styles", "port", "host"];
 
 /// 解析结果：要么是参数，要么是一条**用法错误文案**。
 #[derive(Debug, Clone, PartialEq, Eq)]
