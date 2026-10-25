@@ -29,9 +29,10 @@ use std::mem;
 use std::rc::Rc;
 
 use ash::vk;
+use zephyra_core::core::Rect;
 use zephyra_core::filter::BlendMode;
 use zephyra_core::frame::Damage;
-use zephyra_core::paint::DisplayList;
+use zephyra_core::paint::{command_content_rect, command_corner_radius, DisplayList};
 use zephyra_fx::quad::{self, RenderReport, Scratch, Vertex};
 
 use crate::surface::{Gpu, SurfaceError};
@@ -270,8 +271,23 @@ enum SegmentPlan {
         content: Vec<DrawCall>,
         /// 每趟模糊：(顶点偏移, 索引偏移)。
         blurs: Vec<(u32, u32)>,
-        /// 合成趟：(顶点偏移, 索引偏移)。
+        /// 普通合成趟：(顶点偏移, 索引偏移)。
         composite: Option<(u32, u32)>,
+        /// 折射合成趟的顶点/索引偏移；`None` = 这条命令不折射。
+        ///
+        /// 与 `composite` **分开存**而不是复用同一份几何：两者的顶点字段约定
+        /// 不同（折射按**元素矩形**铺，合成按**离屏范围**铺，见
+        /// `zephyra_fx::offscreen::refraction_composite_quad` 的文档）。拿不到
+        /// 目标副本时退化路径要能挑回 `composite` 那份，所以两份都先建好。
+        refraction: Option<(u32, u32)>,
+        /// 元素在**屏幕**上的内容矩形 —— 折射四边形的几何来源。
+        ///
+        /// 取命令自己的内容矩形而不是 `pass.bounds`：折射四边形的 `position` 与
+        /// `local` 必须覆盖**同一块区域**，否则越出元素的那一圈会被 SDF 判成
+        /// 「内部」，整幅画面都变成玻璃（D3D12 侧同款 bug 的修法）。
+        element: Rect,
+        /// 元素的圆角半径（折射 SDF 用）。
+        corner_radius: f32,
     },
 }
 
@@ -393,6 +409,8 @@ pub struct Renderer {
     blur_v: vk::Pipeline,
     /// 合成趟管线：画回 MSAA 附件。
     composite: vk::Pipeline,
+    /// 折射合成趟管线（`fs_refraction`）：画回 MSAA 附件，采样目标副本。
+    refraction: vk::Pipeline,
     /// 描述符池。
     desc_pool: vk::DescriptorPool,
     /// 采样器。
@@ -581,6 +599,16 @@ impl Renderer {
             "fs_composite",
             src_over_blend(),
         )?;
+        // 折射合成趟：与 composite 同采样数、同通道、同混合 —— `fs_refraction`
+        // 输出的是**预乘**的扰动背景，与 `fs_composite` 直传分支同一纪律。
+        let refraction = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_refraction",
+            src_over_blend(),
+        )?;
 
         // ── 14 档 PS 变体管线 ──
         // 直通混合（`src_blend`）：片元输出的已经是「与目标混完之后」的最终色，
@@ -646,6 +674,7 @@ impl Renderer {
             blur_h,
             blur_v,
             composite,
+            refraction,
             desc_pool,
             sampler,
             scratch: Scratch::new(),
@@ -903,11 +932,21 @@ impl Renderer {
                         &mut report,
                         Some(pass.translate),
                     );
+                    // 折射四边形的几何取自**元素自己**的内容矩形，不是
+                    // `pass.bounds` —— 两者不匹配的症状是「整幅画面都变成
+                    // 玻璃」（见 SegmentPlan::Offscreen::element 的文档）。
+                    // 与 D3D12 的 `record_offscreen` 同一条判据。
+                    // 先算出来：`pass` 下一刻就移进段计划里。
+                    let element = command_content_rect(&item.command).unwrap_or(pass.bounds);
+                    let corner_radius = command_corner_radius(&item.command);
                     self.segments.push(SegmentPlan::Offscreen {
                         pass,
                         content,
                         blurs: Vec::new(),
                         composite: None,
+                        refraction: None,
+                        element,
+                        corner_radius,
                     });
                     if redraw {
                         // 合成之后再照常画一遍原命令（投影类效果）：不折返、不平移，
@@ -950,18 +989,29 @@ impl Renderer {
     /// 而 `local / half_size` 必须与 RT 的真实像素尺寸一致，否则模糊半径会按
     /// 屏幕尺寸缩放，σ 直接缩水一个数量级。
     fn build_offscreen_geometry(&mut self, size: (u32, u32), scratch: &mut Scratch) {
+        let screen_f = (size.0 as f32, size.1 as f32);
         for i in 0..self.segments.len() {
-            // 先只读地取到要用的数据（克隆 blur 列表与 bounds/tint），之后才可变地
-            // 写回偏移 —— 一次解构里同时拿 `&pass` 与 `&mut blurs` 编译不过。
-            let (blur_steps, bounds, tint, rt_f) = match &self.segments[i] {
-                SegmentPlan::Offscreen { pass, .. } => (
-                    pass.blurs.clone(),
-                    pass.bounds,
-                    pass.tint,
-                    (pass.rt_size.0 as f32, pass.rt_size.1 as f32),
-                ),
-                SegmentPlan::Plain { .. } => continue,
-            };
+            // 先只读地取到要用的数据（克隆 blur 列表与 refraction，其余 Copy），
+            // 之后才可变地写回偏移 —— 一次解构里同时拿 `&pass` 与 `&mut blurs`
+            // 编译不过。
+            let (blur_steps, bounds, tint, rt_f, refraction, element, corner_radius) =
+                match &self.segments[i] {
+                    SegmentPlan::Offscreen {
+                        pass,
+                        element,
+                        corner_radius,
+                        ..
+                    } => (
+                        pass.blurs.clone(),
+                        pass.bounds,
+                        pass.tint,
+                        (pass.rt_size.0 as f32, pass.rt_size.1 as f32),
+                        pass.refraction,
+                        *element,
+                        *corner_radius,
+                    ),
+                    SegmentPlan::Plain { .. } => continue,
+                };
             for step in &blur_steps {
                 let vtx_off = scratch.vertices.len() as u32;
                 let idx_off = scratch.indices.len() as u32;
@@ -976,7 +1026,6 @@ impl Renderer {
             }
             let vtx_off = scratch.vertices.len() as u32;
             let idx_off = scratch.indices.len() as u32;
-            let screen_f = (size.0 as f32, size.1 as f32);
             let composite = zephyra_fx::offscreen::composite_quad(bounds, screen_f, rt_f, tint);
             scratch.vertices.extend_from_slice(&composite);
             scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
@@ -984,6 +1033,28 @@ impl Renderer {
                 unreachable!("刚才是 Offscreen 分支")
             };
             *c = Some((vtx_off, idx_off));
+            // 折射合成四边形：字段约定与合成四边形**不同**（按元素矩形铺、
+            // 算元素自己的 SDF），所以单独建一份。录制时拿不到目标副本就退化
+            // 回上面那份普通合成（D3D12 同一条语义），所以两份都先建好。
+            if let Some(r) = refraction {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad = zephyra_fx::offscreen::refraction_composite_quad(
+                    element,
+                    screen_f,
+                    corner_radius,
+                    r,
+                );
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen {
+                    refraction: slot, ..
+                } = &mut self.segments[i]
+                else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
         }
     }
 
@@ -991,6 +1062,10 @@ impl Renderer {
     ///
     /// 调用方只需 `begin_command_buffer` → 本方法 → `end_command_buffer`；
     /// 所有 `begin_render_pass` 与布局屏障都在这里。
+    ///
+    /// 返回 `(unimplemented, refractions)`：前者是退回默认混合的段数，后者是
+    /// 本帧**真正画出**的折射趟数（`RenderReport::refraction_passes` 的记录
+    /// 来源 —— 计划了折射但拿不到目标副本时不计，与 D3D12 同一条语义）。
     ///
     /// # 单采样为什么不拆段
     ///
@@ -1005,7 +1080,7 @@ impl Renderer {
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         default_blend: BlendMode,
-    ) -> u32 {
+    ) -> (u32, u32) {
         let mut unimplemented = 0u32;
         // 描述符池每帧重置一次（**不是每段一次**）。
         //
@@ -1047,7 +1122,7 @@ impl Renderer {
             unsafe {
                 self.device.cmd_end_render_pass(cmd);
             }
-            return unimplemented;
+            return (unimplemented, 0);
         }
         // ── 帧首：把 MSAA 转到 COLOR_ATTACHMENT_OPTIMAL ──
         //
@@ -1076,6 +1151,9 @@ impl Renderer {
         // 主通道是否已开过：首趟清，之后一律续画（`loadOp` 恒 LOAD，清空是
         // `begin_main_pass(.., true)` 里的 `cmd_clear_attachments`）。
         let mut opened = false;
+        // 本帧真正画出的折射趟数（`RenderReport::refraction_passes` 的记录
+        // 来源）—— 与「计划了折射」不是一回事：拿不到目标副本时会退化。
+        let mut refractions = 0u32;
         let segments = std::mem::take(&mut self.segments);
         for seg in &segments {
             match seg {
@@ -1100,6 +1178,8 @@ impl Renderer {
                     content,
                     blurs,
                     composite,
+                    refraction,
+                    ..
                 } => {
                     // 每段按**自己的** rt_size 准备 RT（尺寸变了会重建）。
                     let Some((fb_a, fb_b)) = self.offscreen_framebuffers(gpu, pass.rt_size) else {
@@ -1126,14 +1206,16 @@ impl Renderer {
                         content,
                         blurs,
                         *composite,
+                        *refraction,
                         default_blend,
                         &mut unimplemented,
+                        &mut refractions,
                     );
                 }
             }
         }
         self.segments = segments;
-        unimplemented
+        (unimplemented, refractions)
     }
 
     /// 开主通道（MSAA → surface）并设视口/裁剪。
@@ -1252,8 +1334,10 @@ impl Renderer {
         content: &[DrawCall],
         blurs: &[(u32, u32)],
         composite: Option<(u32, u32)>,
+        refraction: Option<(u32, u32)>,
         default_blend: BlendMode,
         unimplemented: &mut u32,
+        refractions: &mut u32,
     ) {
         // ⚠ 必须把 view **拷成局部值**：直接持有 `&self.rt_a` 会让后面
         // `&mut self` 的 `update_descriptor` 借不出来（句柄都是 Copy 的复制品）。
@@ -1361,16 +1445,73 @@ impl Renderer {
         }
 
         // ── 3) 合成：采样末趟输出，画进 MSAA（Load）──
-        let Some((vtx_off, idx_off)) = composite else {
-            return;
+        //
+        // 折射在这一步**之前**先取一份目标副本（元素背后已经画在屏幕上的画面）。
+        // 拷贝时机必须是元素自己的内容被合上去之前 —— 晚一步采到的是元素自己，
+        // 症状是「玻璃边缘把元素自己的轮廓糊开」；早一步（内容还没进 RT 时）则
+        // 少拷 RT 里的内容。与 D3D12 `refresh_dst_copy` 同一条时机判据。
+        //
+        // resolve 是 transfer 类操作，**不能在渲染通道内**录 —— 此刻内容趟与
+        // 模糊趟都已 end，正好在通道外。
+        let dst_snapshot = if refraction.is_some() {
+            self.ensure_dst_rt(gpu, self.size);
+            self.dst_rt.as_ref().map(|rt| (rt.image, rt.view, rt.size))
+        } else {
+            None
+        };
+        if let Some((img, _view, sz)) = dst_snapshot {
+            self.snapshot_dst(
+                cmd,
+                &Rt {
+                    image: img,
+                    view: vk::ImageView::null(),
+                    memory: vk::DeviceMemory::null(),
+                    size: sz,
+                },
+            );
+        }
+        // 折射与普通合成**互斥**：一次只画一趟。两者在同一块屏幕区域上「贴回」，
+        // 同时画会互相覆盖 —— 症状是折射区域变成模糊结果。
+        let drew_refraction = match (refraction, dst_snapshot) {
+            (Some(_), Some(_)) => true,
+            _ => {
+                // 退化路径：计划了折射但拿不到目标副本（dst_rt 建不出来）⇒
+                // 照常画普通合成，计进 unimplemented。屏幕上有玻璃但没有弯曲，
+                // 与 D3D12 同一条语义 —— 不能让整帧失败。
+                if refraction.is_some() {
+                    *unimplemented += 1;
+                }
+                false
+            }
+        };
+        let (pipeline, vtx_off, idx_off) = if drew_refraction {
+            let (v, i) = refraction.expect("上面刚匹配过 Some");
+            (self.refraction, v, i)
+        } else {
+            let Some((v, i)) = composite else {
+                return;
+            };
+            (self.composite, v, i)
         };
         self.begin_main_pass(cmd, framebuffer, false);
         if let Ok(desc) = self.update_descriptor(last_view) {
-            let sets = [desc];
+            // set 1 始终绑：`fs_refraction` 采样 `g_dst`（目标副本），拿不到时
+            // 绑图集占位也比赌「驱动只校验用到的」便宜。
+            let dst_view = dst_snapshot.map_or(self.atlas_view, |(_, v, _)| v);
+            let dst_set = match self.update_dst_descriptor(dst_view) {
+                Ok(s) => s,
+                Err(_) => {
+                    unsafe {
+                        self.device.cmd_end_render_pass(cmd);
+                    }
+                    return;
+                }
+            };
+            let sets = [desc, dst_set];
             let vertex_offsets = [vtx_off as u64 * mem::size_of::<Vertex>() as u64];
             unsafe {
                 self.device
-                    .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.composite);
+                    .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 self.device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -1384,6 +1525,9 @@ impl Renderer {
                 self.device
                     .cmd_bind_index_buffer(cmd, self.index_buffer, 0, vk::IndexType::UINT16);
                 self.device.cmd_draw_indexed(cmd, 6, 1, idx_off, 0, 0);
+            }
+            if drew_refraction {
+                *refractions += 1;
             }
         }
         unsafe {
@@ -2714,3 +2858,7 @@ fn upload_image(
 
 // offset_of! 宏（stable Rust 1.77+ 有 std::mem::offset_of!）。
 use std::mem::offset_of;
+
+#[cfg(test)]
+#[path = "tests/wgsl_refraction_gate.rs"]
+mod tests;

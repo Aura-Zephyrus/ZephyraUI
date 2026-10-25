@@ -346,7 +346,7 @@ impl<V: View> HostWindow<V> {
                 .ok();
             // ⚠ 绘制命令必须**在渲染通道内**录制 —— 这是本次重构的核心：
             // frame() 只做顶点展开与上传（prepare），真正的绘制在这里录。
-            let unimplemented = self.renderer.record_frame(
+            let (unimplemented, refractions) = self.renderer.record_frame(
                 &self.gpu,
                 self.cmd,
                 fb,
@@ -354,6 +354,9 @@ impl<V: View> HostWindow<V> {
             );
             if trace_enabled() && unimplemented > 0 {
                 eprintln!("[trace] 退回默认混合 {unimplemented} 段");
+            }
+            if trace_enabled() && refractions > 0 {
+                eprintln!("[trace] 折射趟 {refractions}");
             }
             self.gpu.device.end_command_buffer(self.cmd).ok();
         }

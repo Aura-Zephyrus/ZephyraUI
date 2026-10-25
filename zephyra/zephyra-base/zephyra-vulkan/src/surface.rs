@@ -26,6 +26,7 @@
 //! 2. surface 指针来自 winit 自己的连接 —— surface 必须挂在**创建窗口的那个连接**上。
 
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use ash::vk;
 use winit::window::Window;
@@ -53,6 +54,151 @@ impl fmt::Display for SurfaceError {
 }
 
 impl std::error::Error for SurfaceError {}
+
+// ─────────────────────────── 验证层（ZEPHYRA_VK_DEBUG=1） ───────────────────────────
+
+/// 验证层报上来的一条消息。
+///
+/// # 为什么没有「消息 ID」
+///
+/// D3D12 那边返回 ID 是为了让调用方**按消息**豁免（有的机器上某条消息是已知
+/// 无害的）。Vulkan 侧没有等价的稳定数字 ID（`message_id_number` 是各实现自己
+/// 编的号，跨层版本会变），所以豁免只能按**文本**做 —— 门禁因此只断言
+/// 「ERROR 级为空」，不预设任何豁免。
+#[derive(Debug, Clone)]
+pub struct DebugMessage {
+    pub severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    pub message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    /// 消息 ID 号（各实现自定，仅用于人读）。
+    pub id_number: i32,
+    pub text: String,
+}
+
+/// 验证层的消息收集器。`ZEPHYRA_VK_DEBUG=1` 时挂在 [`Gpu`] 上。
+///
+/// # 为什么是「收集」而不是「打印」
+///
+/// 与 D3D11 / D3D12 的调试层同一条教训：**消息是排队的**，回调错过了就再也没有
+/// 第二次。Vulkan 的 `VK_EXT_debug_utils` 信使把消息推给我们的回调，而回调里
+/// 只能做「收进来」这一件事 —— 打印交给 `drain`，断言交给门禁。
+///
+/// # 为什么 sink 是 `Arc<Mutex<..>>`
+///
+/// 验证层的回调可能来自**任何线程**（驱动自己起的工作线程），且同一进程里
+/// 多个设备实例会共享同一个 layer。`Send + Sync` 的收集器是唯一安全形状。
+pub struct DebugState {
+    sink: Arc<Mutex<Vec<DebugMessage>>>,
+    // 下面两个字段「没人读」是**故意的**：本 crate 的 Gpu 没有 Drop（进程级
+    // 对象，统一靠进程退出回收，见 `Gpu::entry` 的同款处理）。它们存在的意义
+    // 是持有句柄 —— 信使必须比 instance 活得短，而这里「谁都不手动销毁」，
+    // 于是持有即为保活；真要显式销毁时（例如测试里建销多个设备）也从这两个
+    // 字段拿句柄。
+    #[allow(dead_code, reason = "只为持有信使句柄（销毁时要经它）")]
+    utils: ash::extensions::ext::DebugUtils,
+    #[allow(dead_code, reason = "只为持有信使句柄")]
+    messenger: vk::DebugUtilsMessengerEXT,
+}
+
+impl DebugState {
+    /// 取走并清空已收集的消息（与 D3D12 的 `DebugInfo::drain` 同语义）。
+    pub fn drain(&self) -> Vec<DebugMessage> {
+        // ⚠ 不用 `unwrap()`：回调在 FFI 边界上，panic 穿过去是 abort。
+        // 万一持锁的线程正在 panic，也把数据拿出来，别把调用方一起拖下水。
+        self.sink
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain(..)
+            .collect()
+    }
+
+    /// ERROR 级消息的文本（门禁断言用；WARNING / INFO 留给 `drain` 看全量）。
+    ///
+    /// 判据用 `contains` 而不是裸比数字：回调给的就是单独一位 severity，
+    /// 而 ash 的 Flags 没公开 `.0`（且「ERROR 及更糟」的方向在 Vulkan 侧
+    /// 没有 D3D 那个越发越轻的陷阱 —— 这里 VERBOSE < INFO < WARNING < ERROR，
+    /// 回调只会带一位，`contains(ERROR)` 即精确命中）。
+    pub fn errors(&self) -> Vec<String> {
+        self.drain()
+            .into_iter()
+            .filter(|m| {
+                m.severity
+                    .contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
+            })
+            .map(|m| m.text)
+            .collect()
+    }
+
+    /// 把已收集的消息打到 stderr（含 INFO / WARNING 全量）。
+    pub fn dump(&self) {
+        for m in self.drain() {
+            eprintln!(
+                "[vk] {:?} {:?} #{} {}",
+                m.severity, m.message_type, m.id_number, m.text
+            );
+        }
+    }
+}
+
+impl fmt::Debug for DebugState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let n = self
+            .sink
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
+        f.debug_struct("DebugState").field("pending", &n).finish()
+    }
+}
+
+/// `VK_EXT_debug_utils` 的信使回调。
+///
+/// ⚠ **绝不能 panic**：它在 FFI 边界上被驱动调用，panic 穿出去是进程 abort。
+/// 所以持锁用 `unwrap_or_else(into_inner)`，字符串转换用 `from_utf8_lossy`。
+/// 签名是 `unsafe extern "system"`（ash 的 `PFN_vkDebugUtilsMessengerCallbackEXT`
+/// 就是这么定的）—— 本函数体自身不碰任何裸指针之外的东西，unsafe 只用于
+/// 满足类型。
+///
+/// 返回 `FALSE`（不抛 `VK_ERROR_VALIDATION_FAILED_EXT`）：本后端的策略是
+/// 「收集 + 门禁断言」，不是「第一条错误就炸」—— 后者会把一次 run 的信息量
+/// 砍成一条，而排队消息的后半常常才是根因（D3D11 那边同一条教训）。
+unsafe extern "system" fn debug_messenger_callback(
+    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    user_data: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    if callback_data.is_null() {
+        return vk::FALSE;
+    }
+    let data = unsafe { &*callback_data };
+    let text = if data.p_message.is_null() {
+        String::new()
+    } else {
+        // `p_message` 以 NUL 结尾（规范如此），但长度没给 —— 只能自己数。
+        let mut n = 0usize;
+        while unsafe { *data.p_message.add(n) } != 0 && n < 1 << 16 {
+            n += 1;
+        }
+        String::from_utf8_lossy(unsafe {
+            std::slice::from_raw_parts(data.p_message.cast::<u8>(), n)
+        })
+        .into_owned()
+    };
+    let msg = DebugMessage {
+        severity,
+        message_type,
+        id_number: data.message_id_number,
+        text,
+    };
+    if !user_data.is_null() {
+        // user_data 指向 `DebugState` 建时 `Box::into_raw` 出来的 Arc 克隆。
+        let sink = unsafe { &*user_data.cast::<Mutex<Vec<DebugMessage>>>() };
+        sink.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(msg);
+    }
+    vk::FALSE
+}
 
 /// 设备 + 队列 + surface + swapchain。全进程唯一一份。
 pub struct Gpu {
@@ -88,6 +234,11 @@ pub struct Gpu {
     pub(crate) device_dead: bool,
     /// 一次性命令池（读回等）。与 Gpu 同寿命。
     pub(crate) command_pool: vk::CommandPool,
+    /// 验证层收集器（`ZEPHYRA_VK_DEBUG=1` 时挂上）。
+    ///
+    /// ⚠ 与两个 Windows 后端同一语义：没开调试层时**不是错误**，只是问不到
+    /// 原因 —— 门禁在那种机器上必须能优雅跳过（`debug()` 回 `None`）。
+    pub(crate) debug: Option<DebugState>,
 }
 
 impl fmt::Debug for Gpu {
@@ -102,31 +253,94 @@ impl fmt::Debug for Gpu {
 
 impl Gpu {
     /// 建设备、队列与 surface。
+    ///
+    /// `ZEPHYRA_VK_DEBUG=1` 时开 Khronos 验证层（`VK_LAYER_KHRONOS_validation`）
+    /// 并挂 `VK_EXT_debug_utils` 信使 —— 与两个 Windows 后端同一约定
+    /// （`ZEPHYRA_D3D_DEBUG` / `ZEPHYRA_D3D12_DEBUG`）。层或扩展**装不上时静默
+    /// 继续**（`debug` 留 `None`）：没装 LunarG SDK 的机器不该因此起不来，
+    /// 只是那条机器上验证门禁会跳过。
     pub fn new(window: &Window) -> Result<Self, SurfaceError> {
         // ── instance ──
         let entry = unsafe { ash::Entry::load() }
             .map_err(|e| SurfaceError::new("dlopen libvulkan", e.to_string()))?;
         let app_name = std::ffi::CString::new("zephyra-vulkan").unwrap();
-        let ext_names = [
+        // 验证层开关。必须在**建 instance 之前**定：层与扩展都是创建时参数，
+        // 事后无法追加（与 D3D11/12 的调试层同一个约束）。
+        let debug_on = std::env::var("ZEPHYRA_VK_DEBUG").as_deref() == Ok("1");
+        let mut ext_names: Vec<std::ffi::CString> = vec![
             std::ffi::CString::new("VK_KHR_surface").unwrap(),
             std::ffi::CString::new("VK_KHR_wayland_surface").unwrap(),
         ];
-        let instance = unsafe {
-            entry.create_instance(
-                &vk::InstanceCreateInfo::builder()
-                    .application_info(
-                        &vk::ApplicationInfo::builder()
-                            .application_name(app_name.as_c_str())
-                            .application_version(vk::make_api_version(0, 1, 0, 0))
-                            .api_version(vk::API_VERSION_1_1)
-                            .build(),
-                    )
-                    .enabled_extension_names(&[ext_names[0].as_ptr(), ext_names[1].as_ptr()])
-                    .build(),
-                None,
-            )
+        let layer_name = std::ffi::CString::new("VK_LAYER_KHRONOS_validation").unwrap();
+        if debug_on {
+            ext_names.push(std::ffi::CString::new("VK_EXT_debug_utils").unwrap());
         }
-        .map_err(|e| SurfaceError::new("vkCreateInstance", e.to_string()))?;
+        let ext_ptrs: Vec<*const std::ffi::c_char> = ext_names.iter().map(|e| e.as_ptr()).collect();
+        // ⚠ `ApplicationInfo` 与层指针数组必须是**命名绑定**：builder 借的是它们的
+        // 地址，链在临时值上时活不到 `create_instance`（E0716）。
+        let app_info = vk::ApplicationInfo::builder()
+            .application_name(app_name.as_c_str())
+            .application_version(vk::make_api_version(0, 1, 0, 0))
+            .api_version(vk::API_VERSION_1_1)
+            .build();
+        let layer_ptrs = [layer_name.as_ptr()];
+        let mut info = vk::InstanceCreateInfo::builder()
+            .application_info(&app_info)
+            .enabled_extension_names(&ext_ptrs);
+        if debug_on {
+            info = info.enabled_layer_names(&layer_ptrs);
+        }
+        let instance = unsafe { entry.create_instance(&info, None) }
+            .map_err(|e| SurfaceError::new("vkCreateInstance", e.to_string()))?;
+
+        // ── 验证信使 ──
+        //
+        // 建在 instance 之后、device 之前：设备创建期的消息同样要收。
+        //
+        // ⚠ 生命周期：信使必须先于 instance 销毁，而本 crate 的 Gpu **没有
+        // Drop**（进程级对象，统一靠进程退出回收）—— 与既有约定一致，代价是
+        // 验证层对象活到进程结束。`sink` 的 Arc 通过 `Box::into_raw` 交给回调，
+        // `DebugState` 持有另一份保活；两者都故意泄漏，不参与任何提前释放。
+        let debug = if debug_on {
+            let utils = ash::extensions::ext::DebugUtils::new(&entry, &instance);
+            let sink: Arc<Mutex<Vec<DebugMessage>>> = Arc::new(Mutex::new(Vec::new()));
+            // 回调拿到的裸指针：`Arc` 克隆进 Box 再 into_raw，`DebugState` 持有
+            // 原 Arc 保活（见上方生命周期注释）。显式标注指针类型 —— `cast()`
+            // 的目标推断不出来。
+            let user_data: *mut std::ffi::c_void =
+                Box::into_raw(Box::new(Arc::clone(&sink))).cast();
+            let create = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(
+                    vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
+                )
+                .message_type(
+                    vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                )
+                .pfn_user_callback(Some(debug_messenger_callback))
+                .user_data(user_data)
+                .build();
+            match unsafe { utils.create_debug_utils_messenger(&create, None) } {
+                Ok(messenger) => Some(DebugState {
+                    sink,
+                    utils,
+                    messenger,
+                }),
+                Err(e) => {
+                    // 建不出信使（老驱动没有 debug_utils）就退回「无调试」。
+                    // user_data 对应的 Box 此刻已成孤儿 —— 回收它，别泄漏。
+                    drop(unsafe {
+                        Box::from_raw(user_data.cast::<Arc<Mutex<Vec<DebugMessage>>>>())
+                    });
+                    eprintln!("[vk] 建不出 debug messenger（{e}）—— 验证层静默关闭");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // ── Wayland surface ──
         let khr_surface = ash::extensions::khr::Surface::new(&entry, &instance);
@@ -303,7 +517,16 @@ impl Gpu {
             msaa_samples,
             device_dead: false,
             command_pool,
+            debug,
         })
+    }
+
+    /// 验证层收集器（没开 `ZEPHYRA_VK_DEBUG=1` 或装不上层时为 `None`）。
+    ///
+    /// 与 D3D12 的 `Gpu::debug()` 同一形状：门禁靠它判断「这台机器能不能
+    /// 问驱动原因」，拿不到就跳过而不是恒真。
+    pub fn debug(&self) -> Option<&DebugState> {
+        self.debug.as_ref()
     }
 
     /// 重新创建 swapchain（窗口 resize 后调用）。
