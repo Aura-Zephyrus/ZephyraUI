@@ -42,8 +42,9 @@ use zephyra_core::paint::{command_content_rect, command_filter, Command, Display
 pub enum Segment {
     /// 一段**不含**滤镜命令的普通图元（`DisplayList` 下标区间，半开）。
     ///
-    /// 空区间也会产出（见 [`plan_segments`]），因为那样"段数 = 滤镜命令数 + 1"
-    /// 是一条可以直接断言的不变量。
+    /// 空区间也会产出（见 [`plan_segments`]），因为那样「段数 = 滤镜命令数
+    /// × 2 + 1」是一条可以直接断言的不变量（Plain/Offscreen 严格交替，
+    /// 首尾都是 Plain）。
     Plain(std::ops::Range<usize>),
     /// 一条要走离屏 pass 的命令（按 `DisplayList` 下标定位）。
     Offscreen {
@@ -61,11 +62,24 @@ pub enum Segment {
 
 /// 把一帧切成 [`Segment`] 序列。
 ///
+/// # 结构不变量：段数 = 滤镜命令数 × 2 + 1
+///
+/// 每条带滤镜的命令产出**一对**段（它前面的 `Plain` + 它自己的 `Offscreen`），
+/// 首尾再各补一个 `Plain`。于是序列严格交替：`Plain, Offscreen, Plain,
+/// Offscreen, …, Plain`，总段数 = `2 × 滤镜命令数 + 1`（无滤镜时就是单个
+/// 覆盖全部的 `Plain(0..len)`）。
+///
 /// # 为什么空段也要产出
 ///
-/// 不产出空段的话，"整帧只有一条滤镜命令"会得到 `vec![Offscreen]`，段数与滤镜
-/// 命令数的关系变成"有时 +1 有时不 +"—— 而那条关系正是测试里最方便断言的不变量。
-/// 产出空段换来的是 `segments.len() == 带滤镜命令数 + 1` 恒成立。
+/// 不产出空段的话，"整帧只有一条滤镜命令"会得到 `vec![Offscreen]`，段序列
+/// 从「首尾是 Plain」变成「有时是、有时不是」—— 而「严格交替、首尾 Plain」
+/// 正是各后端回放循环直接依赖的结构（见 `zephyra-winit` / `-d3d12` /
+/// `zephyra-vulkan` 三个 renderer 的同一段循环）。产出空段换来的是这条关系
+/// 恒成立，且区间拼接恰好铺满 `[0, len)`。
+///
+/// ⚠ 旧注释这里写的是「段数 = 滤镜命令数 + 1」—— 那个数是错的（每条滤镜
+/// 命令贡献两段而非一段），2026-10-25 由 `stress_plan_segments_*` 压力
+/// 测试抓出并更正。
 pub fn plan_segments(list: &DisplayList) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::new();
     let mut start = 0usize;
@@ -126,12 +140,20 @@ pub fn plan_offscreens(list: &DisplayList) -> Vec<OffscreenPlan> {
         }
         let bounds = filter.bounds_for(content);
         let origin = filter.origin_in(content);
-        // 与已有的一张完全相同就复用 —— 典型场景是同一张卡片的背景与文本
-        // 共用一个投影。
-        if let Some(existing) = out.iter_mut().find(|p| p.bounds == bounds) {
-            if existing.filter == *filter {
-                continue;
-            }
+        // 与已有的一张**矩形与滤镜都**相同就复用 —— 典型场景是同一张卡片的
+        // 背景与文本共用一个投影。
+        //
+        // ⚠ 判据必须是「矩形相等**且**滤镜相等」的**全表**扫描，不是「找到
+        // 第一张矩形相等的就停下」：后者在 (同矩形, 不同滤镜) 交替出现时会
+        // 漏合并 —— A(B,F1)、B(B,F2) 之后再来一条 (B,F2) 时，第一轮找到的
+        // 是 A（滤镜不同于是放行），于是 (B,F2) 被 push 两遍。症状是同一块
+        // 区域拿到两张一模一样的 RT（纯浪费），且「相同矩形应合并」的契约
+        // 静默失效。2026-10-25 由 `stress_plan_offscreens_*` 压力测试抓出。
+        if out
+            .iter()
+            .any(|p| p.bounds == bounds && p.filter == *filter)
+        {
+            continue;
         }
         out.push(OffscreenPlan {
             command_index: i,
@@ -634,6 +656,8 @@ impl OffscreenPass {
         (self.rt_size.0 as f32, self.rt_size.1 as f32)
     }
 }
+#[path = "tests/offscreen_stress_tests.rs"]
+mod stress_tests;
 #[cfg(test)]
 #[path = "tests/offscreen_tests.rs"]
 mod tests;

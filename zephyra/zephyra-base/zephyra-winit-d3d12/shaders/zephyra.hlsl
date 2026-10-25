@@ -331,9 +331,42 @@ float3 BColorBurn(float3 b, float3 s) {
     return m * z + (1.0 - z);   // 同上：else 分支是 1。
 }
 float3 BHardLight(float3 b, float3 s) { return BOverlay(s, b); }
+/// SoftLight（Pegtop / W3C Compositing 标准式）。
+///
+/// ```text
+/// s <= 0.5:  b - (1 - 2s)·b·(1 - b)
+/// s >  0.5:  b + (2s - 1)·(D(b) - b)
+/// D(b) = ((16b - 12)b + 4)b   (b <= 0.25)   ← 与 sqrt(b) 在 b=0.25 处都等于 0.75，连续
+///        sqrt(b)              (b >  0.25)
+/// ```
+///
+/// # 2026-10-25：这里原来写的是一个**错公式**，已按 parity 分歧定因后重修
+///
+/// 原实现：
+/// ```hlsl
+/// float3 d = ((16.0*b - 12.0)*b + 4.0)*b * step(b, 0.25);
+/// return sqrt(max(b, 0.0)) * step(0.5, b) * s + d * (1.0 - s);
+/// ```
+/// 两处错，叠出一个极难查的画面 bug：
+///
+/// 1. **死区**：`0.25 < b < 0.5` 时两个 `step` 同时为 0 ⇒ **B 恒等于 0**
+///    （混合结果纯黑）。中灰底（0.3~0.45）上的 SoftLight 内容整块变黑，
+///    而没有任何报错。
+/// 2. **公式本身不对**：即便逃过死区，`sqrt(b)·s`（b≥0.5 支）也不是任何
+///    标准定义；Pegtop 的该支是 `b + (2s-1)(D(b)-b)`，低支是
+///    `b - (1-2s)b(1-b)`。
+///
+/// 死区平时看不见，是因为两个后端的 **UNORM8 量化差 1 个 LSB**：同一帧
+/// 0.5 灰底色，D3D11 存成 128/255 = 0.502（逃过死区），D3D12 存成
+/// 127/255 = 0.498（掉进死区）—— 于是只有 D3D12 整块变黑，parity 差 87 级。
+/// 定因过程记在 `docs/dev-log/`（backend_parity SoftLight 分歧条目）。
 float3 BSoftLight(float3 b, float3 s) {
-    float3 d = ((16.0 * b - 12.0) * b + 4.0) * b * step(b, 0.25);
-    return sqrt(max(b, 0.0)) * step(0.5, b) * s + d * (1.0 - s);
+    float3 poly = ((16.0 * b - 12.0) * b + 4.0) * b;
+    // b > 0.25 用 sqrt(b)，否则多项式；两者在 0.25 处连续（都等于 0.75）。
+    float3 D = lerp(sqrt(max(b, 0.0)), poly, step(b, 0.25));
+    float3 lo = b - (1.0 - 2.0 * s) * b * (1.0 - b);       // s <= 0.5
+    float3 hi = b + (2.0 * s - 1.0) * (D - b);             // s >  0.5
+    return lerp(hi, lo, step(s, 0.5));
 }
 float3 BDifference(float3 b, float3 s) { return abs(b - s); }
 float3 BExclusion(float3 b, float3 s) { return b + s - 2.0 * b * s; }

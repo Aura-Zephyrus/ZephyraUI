@@ -695,6 +695,18 @@ pub struct DrawRun {
     pub texture: Option<Rc<str>>,
     /// 该段的混合模式。
     pub blend: zephyra_core::filter::BlendMode,
+    /// 该段覆盖的**命令数**（`push_run` 每命令调一次；相邻同模式命令合并成一段时
+    /// 段数不变、命令数累加）。
+    ///
+    /// # 为什么需要它
+    ///
+    /// [`RenderReport::unimplemented_blends`] 是按**命令**计数的（fx 侧每遇到一个
+    /// 系数不可表达的混合模式就 +1），而后端是按**段**决定走不走 PS 变体的。
+    /// 没有这个字段，后端想「执行了就减掉」只能按段减 —— 相邻同模式命令合并成
+    /// 一段时会少减，计数器继续说谎。D3D11 / D3D12 两个后端都实现着 14 个 PS
+    /// 变体模式却都不减，这个计数于是常年虚高（2026-10-24 由
+    /// `command_validation` harness 的断言揭出）。
+    pub commands: u32,
 }
 
 impl DrawRun {
@@ -732,6 +744,7 @@ fn push_run(
             && last.texture.as_deref() == texture.as_deref()
         {
             last.vertex_count += count;
+            last.commands += 1;
             return;
         }
     }
@@ -740,6 +753,7 @@ fn push_run(
         vertex_count: count,
         texture,
         blend,
+        commands: 1,
     });
 }
 
@@ -835,6 +849,7 @@ fn merge_runs(tally: &RunTally, solid_len: u32, images_len: u32, out: &mut Vec<D
                 vertex_count: r.vertex_count,
                 texture: r.texture.clone(),
                 blend: r.blend,
+                commands: r.commands,
             });
         }
     };
@@ -1647,6 +1662,9 @@ pub fn shrink(r: Rect, inset: f32) -> Rect {
     )
 }
 
+#[cfg(test)]
+#[path = "tests/quad_stress_tests.rs"]
+mod stress_tests;
 #[cfg(test)]
 #[path = "tests/quad_tests.rs"]
 mod tests;
