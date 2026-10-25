@@ -1717,3 +1717,154 @@ fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
     l.sort();
     l
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 外部渲染源（`Command::Custom`）钩子的 D3D12 端到端验收。
+//
+// 与 D3D11 侧同名测试（`zephyra-winit/tests/d3d11_draw.rs`）逐条对应——两个后端
+// 的钩子上下文没有共性（立即上下文 vs 记录中的命令列表），所以判据也各自落地，
+// 不共用代码，但**共享同一组语义**：钩子真的被调、载荷真的到达、像素真的落在
+// bounds、没注册就跳过并计数。
+
+use windows::Win32::Foundation::RECT;
+use zephyra_core::core::Rect;
+use zephyra_core::paint::RenderSource;
+use zephyra_winit_d3d12::renderer::{HookCtx, RenderHook};
+
+/// 测试钩子：用 `ClearRenderTargetView` 的 `pRects` 把 bounds 矩形涂成纯红。
+///
+/// D3D12 没有 D3D11 的 `ClearView`，但 `ClearRenderTargetView` 带 `pRects`
+/// 就是同款原语：矩形精确、不走混合、不受 scissor/视口影响 —— 产物**逐像素
+/// 确定**，断言可以钉到「恰好 bounds 面积个纯红像素」。
+struct FillRed;
+
+impl RenderHook for FillRed {
+    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+        // 载荷通道：宿主塞的类型擦除数据必须原样到达钩子。
+        assert_eq!(source.kind, "test:fill-red");
+        assert_eq!(source.payload::<u32>(), Some(&7u32));
+
+        let rect = RECT {
+            left: bounds.x as i32,
+            top: bounds.y as i32,
+            right: (bounds.x + bounds.width) as i32,
+            bottom: (bounds.y + bounds.height) as i32,
+        };
+        // 钩子拿到的是**记录中**的命令列表 —— 画什么都记进同一帧，随 `submit`
+        // 一起交给 GPU。这正是 D3D12 侧「宿主任意代码接入渲染管线」的形态。
+        unsafe {
+            ctx.list
+                .ClearRenderTargetView(ctx.rtv, &[1.0f32, 0.0, 0.0, 1.0], Some(&[rect]));
+        }
+    }
+}
+
+/// [`render_and_readback`] 的钩子版：多收一个可选的钩子，其余逐行同款。
+fn render_and_readback_with_hook(
+    list: &DisplayList,
+    clear: Color,
+    hook: Option<(&'static str, Box<dyn RenderHook>)>,
+) -> (Vec<u8>, zephyra_winit_d3d12::RenderReport) {
+    let mut gpu = Gpu::new().expect("应当建得出 D3D12 设备");
+    gpu.begin_frame().expect("应当能开帧");
+    let target = Offscreen::new(&gpu.device, (SIZE, SIZE)).expect("应当建得出离屏目标");
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, 1).expect("应当建得出渲染器");
+    if let Some((kind, h)) = hook {
+        renderer.register_hook(kind, h);
+    }
+    let textures = TextureTable::new();
+
+    let report = renderer
+        .record(zephyra_winit_d3d12::RenderCtx {
+            device: &gpu.device,
+            list: gpu.list(),
+            rtv: target.rtv,
+            display_list: list,
+            size: (SIZE, SIZE),
+            clear,
+            textures: &textures,
+            rt: Some(&target.texture),
+            damage: zephyra_core::frame::Damage::Full,
+        })
+        .unwrap_or_else(|e| {
+            gpu.drain_debug();
+            panic!("记录绘制命令失败: {e}");
+        });
+
+    let staging = target
+        .record_readback(&gpu.device, gpu.list())
+        .expect("记录回读拷贝失败");
+    gpu.submit().expect("提交失败");
+    gpu.wait_gpu().expect("等 GPU 失败");
+    // 成功路径也必须抽干调试层队列 —— 见 [`render_and_readback`] 里的说明。
+    gpu.drain_debug();
+    (Offscreen::map(&staging, (SIZE, SIZE)), report)
+}
+
+/// 挂了钩子的自绘源：外部代码真的画进了渲染目标（逐像素钉住 bounds）。
+///
+/// # 为什么这是拓展接口的 D3D12 侧**验收**测试
+///
+/// 与 D3D11 侧同一论证：core 只证明「命令发出来了」，fx 只证明「段切出来了」，
+/// 都不证明「钩子真的被执行且落在声明的 bounds 里」。D3D12 侧还多一层必须
+/// 钉死的语义：钩子拿到的是**记录中**的命令列表，它的命令必须混进同一帧、
+/// 随 `submit` 一起生效 —— 命令顺序错（比如被后续清屏盖掉）在这里现形。
+#[test]
+fn custom_render_source_hook_draws_into_bounds_on_d3d12() {
+    // 左上角 32×64 交给钩子，其余保持清屏黑。
+    let list = custom_only_list(Rect::new(0.0, 0.0, 32.0, 64.0));
+    let (pixels, report) = render_and_readback_with_hook(
+        &list,
+        Color::rgba(0.0, 0.0, 0.0, 1.0),
+        Some(("test:fill-red", Box::new(FillRed))),
+    );
+
+    assert_eq!(report.custom_passes, 1, "钩子应当被调用恰好一次");
+    assert_eq!(report.unhandled_custom, 0, "已注册的 kind 不该计跳过");
+
+    // `ClearRenderTargetView` 精确涂满 rect：非黑像素必须**恰好**是 bounds 面积。
+    let drawn = non_background(&pixels);
+    assert_eq!(
+        drawn,
+        (32 * 64) as usize,
+        "非黑像素必须是 bounds 的精确面积（clear 带 rects 无 AA，多一个少一个都是错位）"
+    );
+    // 且颜色是纯红。离屏格式是 `R8G8B8A8_UNORM`，字节序就是 R,G,B,A。
+    let red = pixels
+        .chunks_exact(4)
+        .filter(|p| *p == [255, 0, 0, 255])
+        .count();
+    assert_eq!(red, (32 * 64) as usize, "涂上的必须是钩子给的纯红");
+}
+
+/// 没注册钩子的自绘源：跳过 + 计数，目标保持清屏色（不崩、不误画）。
+#[test]
+fn unregistered_custom_source_is_skipped_and_counted_on_d3d12() {
+    // 故意**不**注册 "test:fill-red"。
+    let list = custom_only_list(Rect::new(0.0, 0.0, 32.0, 64.0));
+    let (pixels, report) =
+        render_and_readback_with_hook(&list, Color::rgba(0.0, 0.0, 0.0, 1.0), None);
+
+    assert_eq!(report.unhandled_custom, 1, "未注册的 kind 必须计跳过");
+    assert_eq!(report.custom_passes, 0);
+    assert_eq!(non_background(&pixels), 0, "没注册钩子就什么都不该画");
+}
+
+/// 只有一条 Custom 命令的列表（与 D3D11 侧同名助手同款）。
+fn custom_only_list(bounds: Rect) -> DisplayList {
+    let mut list = DisplayList::new();
+    list.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 0,
+        },
+        Command::Custom {
+            bounds,
+            source: RenderSource::new("test:fill-red", 7u32),
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::SrcOver,
+        },
+    );
+    list
+}
