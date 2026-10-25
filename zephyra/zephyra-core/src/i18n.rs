@@ -123,19 +123,6 @@ impl Tag {
         out
     }
 
-    /// 只保留语言段（`zh-Hans-CN` → `zh`）。
-    ///
-    /// 回退链的一环：完整标签找不到时退到语言段。这与浏览器
-    /// "Some browsers add language-only fallback tags in `Accept-Language`"
-    /// 是同一件事 —— 它们显式列出 `en-US,en;q=0.9`，这里由回退算出来。
-    pub fn language_only(&self) -> Self {
-        Self {
-            language: self.language.clone(),
-            script: None,
-            region: None,
-        }
-    }
-
     /// 与 `other` 的回退距离：0 = 完全相等，越大越远。
     ///
     /// # 顺序即优先级（照 `Intl` 的匹配语义）

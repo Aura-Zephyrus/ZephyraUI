@@ -329,16 +329,6 @@ impl Node {
         self.flag(&crate::props::INTERACTIVE, ctx)
     }
 
-    /// 是否处于选中态。
-    pub fn is_selected(&self, ctx: Context<'_>) -> bool {
-        self.flag(&crate::props::SELECTED, ctx)
-    }
-
-    /// 是否禁用。
-    pub fn is_disabled(&self, ctx: Context<'_>) -> bool {
-        self.flag(&crate::props::DISABLED, ctx)
-    }
-
     /// 读一个颜色属性，解析其中的资源键。
     pub(crate) fn color(
         &self,

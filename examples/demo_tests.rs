@@ -58,7 +58,7 @@ fn button(
         .with(&props::CORNER_RADIUS, PropertyValue::float(6.0))
         .with(
             &props::BACKGROUND,
-            PropertyValue::Resource(props::control_fill_role(false, false, is_hover).into()),
+            PropertyValue::Resource(roles::control_fill_role(false, false, is_hover).into()),
         )
         .with(
             &props::BORDER_COLOR,

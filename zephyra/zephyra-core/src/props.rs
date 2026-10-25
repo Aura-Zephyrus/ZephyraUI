@@ -264,53 +264,6 @@ pub static SELECTED: PropertyKey = PropertyKey::new("Selected", PropertyValue::b
 /// 是否禁用（禁用态的文字与填充取 `content_disabled` / 更低的填充层）。
 pub static DISABLED: PropertyKey = PropertyKey::new("Disabled", PropertyValue::bool(false));
 
-/// 把 `SELECTED` / `DISABLED` 翻译成该用的填充色资源键。
-///
-/// 这就是控件"可重样式"的最小实现：控件不自己写死选中色，而是问"当前状态下我
-/// 该用哪个语义角色"。于是换主题只改 `Theme`，控件代码一行不动。
-pub fn control_fill_role(selected: bool, disabled: bool, hovered: bool) -> &'static str {
-    if disabled {
-        return crate::theme::roles::SURFACE_ALT;
-    }
-    if selected {
-        return crate::theme::roles::CONTROL_FILL_PRESSED;
-    }
-    if hovered {
-        return crate::theme::roles::CONTROL_FILL_HOVER;
-    }
-    crate::theme::roles::CONTROL_FILL
-}
-
-/// 便捷构造：带圆角与背景的填充节点描述。
-pub fn fill_props(
-    background: PropertyValue,
-    radius: f32,
-) -> Vec<(&'static PropertyKey, PropertyValue)> {
-    vec![
-        (&BACKGROUND, background),
-        (&CORNER_RADIUS, PropertyValue::float(radius)),
-    ]
-}
-
-/// 便捷构造：描边。
-pub fn border_props(
-    color: PropertyValue,
-    width: f32,
-) -> Vec<(&'static PropertyKey, PropertyValue)> {
-    vec![
-        (&BORDER_COLOR, color),
-        (&BORDER_WIDTH, PropertyValue::float(width)),
-    ]
-}
-
-/// 便捷构造：固定尺寸。
-pub fn size_props(width: f32, height: f32) -> Vec<(&'static PropertyKey, PropertyValue)> {
-    vec![
-        (&WIDTH, PropertyValue::float(width)),
-        (&HEIGHT, PropertyValue::float(height)),
-    ]
-}
-
 /// 未使用的占位，避免 `CornerRadius` 导入被判定为 dead code。
 ///
 /// `CornerRadius` 目前只作为文档语义出现（绘制命令用的是裸 `f32` 半径），

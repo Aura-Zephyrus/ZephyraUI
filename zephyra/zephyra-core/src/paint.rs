@@ -450,21 +450,6 @@ pub fn command_corner_radius(cmd: &Command) -> f32 {
     }
 }
 
-/// 一条命令的内容矩形是否非空（可以渲出像素）。
-///
-/// # 为什么要单独判
-///
-/// 空矩形（例如 `Text` 命令一个字形都没有、或 `Path` 顶点为空）经
-/// [`crate::filter::FilterChain::bounds_for`] 外扩后仍可能是非空的 —— 模糊
-/// 一个空区域，得到的是一张**全透明**的 RT。把全透明的东西往目标上合成
-/// 一次没有任何效果，只是白白花掉两趟全 RT 的模糊。所以宿主应当在这里就跳过。
-pub fn content_rect_is_drawable(cmd: &Command) -> bool {
-    match command_content_rect(cmd) {
-        Some(r) => r.width > 0.0 && r.height > 0.0 && r.width.is_finite() && r.height.is_finite(),
-        None => false,
-    }
-}
-
 /// 一批字形四边形的并集，平移 `offset`。
 ///
 /// 空列表返回零尺寸矩形（不是 `None`）——调用方拿到后自然画不出东西，

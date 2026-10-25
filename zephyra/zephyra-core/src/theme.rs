@@ -410,6 +410,26 @@ pub mod roles {
     pub const SUCCESS_BG: &str = "success_bg";
     pub const CAUTION_BG: &str = "caution_bg";
     pub const CRITICAL_BG: &str = "critical_bg";
+
+    /// 把 `props::SELECTED` / `props::DISABLED` 翻译成该用的填充色资源键。
+    ///
+    /// 这是控件"可重样式"的最小实现：控件不自己写死选中色，而是问"当前状态下
+    /// 我该用哪个语义角色"。于是换主题只改 `Theme`，控件代码一行不动。
+    ///
+    /// （住在 `roles` 而不是 `props`：它产出的是**资源键名**，跟角色常量是同一
+    /// 张表的事；`props` 只声明属性键本身。）
+    pub fn control_fill_role(selected: bool, disabled: bool, hovered: bool) -> &'static str {
+        if disabled {
+            return SURFACE_ALT;
+        }
+        if selected {
+            return CONTROL_FILL_PRESSED;
+        }
+        if hovered {
+            return CONTROL_FILL_HOVER;
+        }
+        CONTROL_FILL
+    }
 }
 
 /// 运行时主题状态：当前主题 + 切换。

@@ -56,9 +56,31 @@
 //! | [`hit`] | 命中测试 | — |
 //! | [`input`] | 手势识别与事件路由 | Pointer / Gesture |
 //! | [`icon`] | 路径、SVG 解析与图标注册表 | — |
+//! | [`responsive`] | 响应式与触控判据：断点 / 触控目标 / 列数（每个数字都有出处） | — |
+//! | [`i18n`] | 语言标签解析、偏好协商、消息表（BCP 47） | ApplicationLanguages |
+//! | [`styler`] | 样式注入点 trait：diff 之后、布局之前改节点（实现住在 `zephyra-style`） | — |
 //!
-//! 控件库（Button / ToggleSwitch / Slider…）与模板系统属于**上层**，建立在
-//! [`property`] 与 [`theme`] 之上，尚未实现。
+//! ## 依赖方向与「node 枢纽」
+//!
+//! 模块依赖大体单向（`element`/`node` 成形 → `style` 解读 → `layout` 摆位 →
+//! `paint` 降级），但有三处**刻意保留的双向引用**，都围绕同一件事：`node`
+//! 是跨帧缓存的枢纽，驱动模块把算出来的结果写回它的缓存字段——
+//!
+//! - `node → layout`：测量缓存的类型（`Constraints` / `MeasureResult`）住在
+//!   `layout`，`node` 的缓存字段引用它；写入方是 `layout` 的测量趟。
+//! - `node ↔ paint`：文本成形缓存（`TextureRef` / `GlyphQuadCache`）同理，
+//!   写入方是 `paint::render`；`paint` 降级时遍历 `node` 树。
+//! - `props → paint`：`LAYER` 键的默认值是 `paint::Layer`——键的集中地引用了
+//!   一个绘制类型。拆出去的收益（把 `Layer` 挪进 `core`）不抵动静，接受。
+//!
+//! 这些不是违规，是「缓存写回」的形状。若日后把驱动拆成独立 crate，按
+//! 「协议类型下层、驱动上层」切即可。
+//!
+//! ## 上层
+//!
+//! 控件层（Button / ToggleSwitch / Slider…）与模板系统不在这里：控件是
+//! `.zypui` 组件模板（外观在 `.zstyle`，见上层 crate `zypui` / `zypuic`），
+//! 建立在 [`property`] 与 [`theme`] 之上。
 
 pub mod context;
 pub mod core;

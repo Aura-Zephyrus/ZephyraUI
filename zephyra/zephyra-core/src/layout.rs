@@ -311,22 +311,6 @@ impl Stack {
         total + self.spacing * (sizes.len() as f32 - 1.0)
     }
 
-    /// 内容总尺寸：主轴取累加，交叉轴取最大值。
-    pub fn content_size(&self, sizes: &[Size]) -> Size {
-        let main = self.main_size(sizes);
-        let cross = sizes
-            .iter()
-            .map(|s| match self.direction {
-                Direction::Horizontal => s.height,
-                Direction::Vertical => s.width,
-            })
-            .fold(0.0f32, f32::max);
-        match self.direction {
-            Direction::Horizontal => Size::new(main, cross),
-            Direction::Vertical => Size::new(cross, main),
-        }
-    }
-
     /// 主轴起点与间距（`main_offsets` 的规则本体）。
     ///
     /// # 为什么要抽出来
@@ -368,40 +352,6 @@ impl Stack {
         match self.direction {
             Direction::Horizontal => size.width,
             Direction::Vertical => size.height,
-        }
-    }
-
-    /// 内容总尺寸，**不收集中间 `Vec`**（流式版）。
-    ///
-    /// # 为什么不直接用 [`Self::content_size`]
-    ///
-    /// `content_size` 要一个 `&[Size]`，而调用方得先把所有子项的尺寸收集进一个
-    /// `Vec` —— 那是**每节点每趟一次堆分配**。resize 实测每帧 1709 次分配
-    /// （`--bench-resize --alloc-probe`，约合每节点 2.8 次），而这一趟不需要
-    /// "看第二眼"：主轴求和、交叉轴取最大都能在一次遍历里折出来。
-    ///
-    /// `content_size` 保留（`&[Size]` 更适合已经拿着切片的调用方，也被测试用着），
-    /// 布局趟走这个流式版。
-    pub fn content_size_of<I: Iterator<Item = Size>>(&self, sizes: I) -> Size {
-        let mut main = 0.0f32;
-        let mut cross = 0.0f32;
-        let mut n = 0usize;
-        for s in sizes {
-            main += self.main_of(s);
-            cross = cross.max(match self.direction {
-                Direction::Horizontal => s.height,
-                Direction::Vertical => s.width,
-            });
-            n += 1;
-        }
-        // 与 `main_size` 同一条规则：空容器返回 0 而不是 spacing。
-        if n == 0 {
-            return Size::new(0.0, 0.0);
-        }
-        main += self.spacing * (n as f32 - 1.0);
-        match self.direction {
-            Direction::Horizontal => Size::new(main, cross),
-            Direction::Vertical => Size::new(cross, main),
         }
     }
 
