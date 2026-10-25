@@ -64,6 +64,11 @@ Element(.with(RENDER_SOURCE, PropertyValue::custom(src)))
   **恰好等于 bounds 面积**（32×64 个纯红，ClearView 无 AA 可以钉到像素）；
   未注册 → 全黑 + `unhandled_custom == 1`。这条把整条链钉死：
   DisplayList → 分段 → 查表 → 钩子执行 → 像素落位。
+- **D3D12 端到端（同日补齐，`8be7344`）**：与 D3D11 逐条对应。D3D12 没有
+  `ClearView`，钩子改走 `ClearRenderTargetView` 的 `pRects`——同款逐像素
+  确定原语（不走混合、不受 scissor/视口影响）。判定语义多一层：钩子拿到的
+  是**记录中**的命令列表，它的命令必须混进同一帧随 `submit` 生效——顺序错
+  （被后续清屏盖掉）会在像素判据里现形。18 过 / 3 ignore（折射真机套件）。
 - 全 workspace 测试 0 失败；clippy 干净（顺手清了碰过的测试文件里
   4 条既有 lint）。
 
