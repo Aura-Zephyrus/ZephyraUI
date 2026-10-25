@@ -19,6 +19,7 @@ use zephyra_core::id::ElementKey;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, View};
 
+pub mod data;
 pub mod glass;
 pub mod pages;
 pub mod shell;
@@ -74,8 +75,8 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
 ///
 /// 参考层不再是**路由**（9 条路由平铺进导航栏装不下 —— 二级导航
 /// `nav_sub_item` 不折叠，9 个子项常驻会把 756 高的导航栏撑爆），而是
-/// `reference` **页内**的 segmented 切换。十族内容复用现有页面模块的
-/// `content()`，每族独立一屏，一屏装得下。
+/// `reference` **页内**的 segmented 切换。十族内容复用 `ui/shell.zypui` 里各页面组件的
+/// 组件，每族独立一屏，一屏装得下。
 pub const REF_FAMILIES: &[&str] = &[
     "basics",
     "toggles",
@@ -1445,7 +1446,7 @@ impl Gallery {
                     );
                 }
             }
-            // 选择页的分段。段 id 与 `pages::toggles::SEGS` 一一对应，改那边必须改这里 ——
+            // 选择页的分段。段 id 与 `app::data::SEGS` 一一对应（模板经 @toggles_segs 引用），
             // 门禁 `segment_keys_are_all_wired` 就是钉这一条，改漏了它立刻红。
             "seg:grid" => self.seg = "seg:grid",
             "seg:list" => self.seg = "seg:list",
@@ -1472,7 +1473,7 @@ impl Gallery {
             // 这正是 `every_interactive_key_is_wired_or_whitelisted` 要消灭的
             // 失效类别：key 在树上、分派不认识。
             "combo-material" => self.combo = (self.combo + 1) % COMBO_OPTIONS.len(),
-            // 值域与 `pages::basics::spin_text` 的查表同步：表的末项就是
+            // 值域与 `app::data::spin_text` 的查表同步：表的末项就是
             // 上限，越界回落会让「点 ＋」显示不变。（默认值也在这段值域内。）
             "spin:up" => self.spin = (self.spin + 1).min(20),
             "spin:down" => self.spin = (self.spin - 1).max(0),
@@ -1494,7 +1495,7 @@ impl Gallery {
                     Some(idx)
                 };
             }
-            // 菜单条目：core 的菜单是**内联卡**而不是浮层（见 `pages::menus`），
+            // 菜单条目：core 的菜单是**内联卡**而不是浮层（见 `ui/shell.zypui` 的 PageMenus），
             // 所以「点一项」的最小诚实语义就是收起菜单。菜单里没有真动作，
             // 点完不收起才是看起来"点了没反应"。
             _ if key.starts_with("m:") => self.menu_open = None,
@@ -1568,10 +1569,7 @@ impl Gallery {
                 }
             }
             _ if key.starts_with("list:") => {
-                if let Some(i) = crate::app::pages::collections::LIST_ITEMS
-                    .iter()
-                    .position(|(id, _)| *id == key)
-                {
+                if let Some(i) = data::LIST_ITEMS.iter().position(|(id, _)| *id == key) {
                     self.list_sel = i;
                 }
             }
@@ -1592,7 +1590,7 @@ impl Gallery {
                 // 下标位置：`d`0 `p`1 `c`2 `:`3 `R`4 `C`5。
                 let r = key[4..5].parse::<usize>().unwrap_or(0);
                 let c = key[5..6].parse::<usize>().unwrap_or(0);
-                if let Some(Some(day)) = crate::app::pages::dialogs::CALENDAR.get(r * 7 + c) {
+                if let Some(Some(day)) = data::CALENDAR.get(r * 7 + c) {
                     self.date_sel = *day;
                 }
             }
@@ -1711,6 +1709,213 @@ impl View for Gallery {
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
-        shell::window(self)
+        crate::ui::window(self)
+    }
+}
+
+// ───────────────────────── zypui 宿主 ─────────────────────────
+//
+// 每帧一棵树：`Window` 页从 `ui/shell.zypui` 实例化，模板经 @绑定 读这里
+// 的状态、经 tr('…') 读文案、经 hover/press 内置词读输入态。绑定名与
+// shell.zypui 里的 @引用一一对应 —— 模板引用了不存在的名字时求值为假
+// （画面直接可见），真拦住漂移的是 parity 测试。
+
+impl zypui::Host for Gallery {
+    fn binding(&self, name: &str) -> Option<zypui::Val> {
+        use crate::app::data::*;
+        use zypui::Val::{B, F, L, S};
+        let g = self;
+        Some(match name {
+            // ---- 外壳 ----
+            "route" => S(g.route),
+            "mica" => B(g.mica),
+            "compact" => B(g.is_compact()),
+            "enter_class" => S(g.enter_class().unwrap_or("")),
+            "route_title" => S(g.tr(route_key(g.route))),
+            "last_action" => S(g.last_action),
+            "caps" => L(CAPTION_BUTTONS
+                .iter()
+                .map(|(key, icon, close)| {
+                    rec(vec![
+                        ("key", S(key)),
+                        ("icon", S(icon)),
+                        ("close", B(*close)),
+                    ])
+                })
+                .collect()),
+            "routes" => L(ROUTES
+                .iter()
+                .map(|(id, _, icon)| {
+                    rec(vec![
+                        ("id", S(id)),
+                        ("label", S(g.tr(route_key(id)))),
+                        ("icon", S(icon)),
+                    ])
+                })
+                .collect()),
+            "settings_item" => {
+                let (id, _, icon) = SETTINGS_ROUTE;
+                rec(vec![
+                    ("id", S(id)),
+                    ("label", S(g.tr(route_key(id)))),
+                    ("icon", S(icon)),
+                ])
+            }
+            // ---- 指南层 ----
+            "cnt_text" => S(count_text(g.guide_count)),
+            "demo_check" => B(g.demo_check),
+            "demo_segs" => demo_segs(),
+            "demo_seg" => S(g.demo_seg),
+            "demo_combo_text" => S(demo_combo_text(g.demo_combo)),
+            "bp_text" => S(bp_text(g)),
+            "wants_dark" => B(g.wants_dark),
+            "switch_on" => B(g.switch_on),
+            "notify_on" => B(g.notify_on),
+            "expanded" => B(g.expanded),
+            "adv_expanded" => B(g.adv_expanded),
+            "ref_exp" => B(g.ref_exp),
+            "infobar_open" => B(g.infobar_open),
+            "lang" => F(g.lang as f32),
+            "langs" => langs(),
+            "lang_segs" => lang_segs(),
+            "locale_name" => S(g.locale()),
+            "locale" => S(g.locale()),
+            "theme_text" => S(if g.wants_dark { "Dark" } else { "Light" }),
+            // ---- 参考层 ----
+            "ref_segs" => ref_segs(),
+            "ref_sel" => S(REF_FAMILIES
+                .get(g.ref_family)
+                .copied()
+                .map(seg_key)
+                .unwrap_or("ref:basics")),
+            "ref_family" => F(g.ref_family as f32),
+            // ---- basics ----
+            "pill_on" => B(g.pill_on),
+            "combo_text" => S(combo_text(g.combo)),
+            "spin_text" => S(spin_text(g.spin)),
+            "volume" => F(g.volume),
+            "slider_text" => S(slider_text(g.volume)),
+            "color_idx" => F(g.color_idx as f32),
+            "area_lines" => area_lines(g),
+            // ---- toggles ----
+            "check_a" => B(g.checked[0]),
+            "check_b" => B(g.checked[1]),
+            "check_c" => B(g.checked[2]),
+            "radio" => F(g.radio as f32),
+            "radio_items" => L(RADIO_ITEMS.iter().map(|(id, l)| item(id, l)).collect()),
+            "toggles_segs" => L(SEGS.iter().map(|(id, l)| item(id, l)).collect()),
+            "seg" => S(g.seg),
+            // ---- collections ----
+            "list_items" => L(LIST_ITEMS.iter().map(|(id, l)| item(id, l)).collect()),
+            "list_sel_id" => S(LIST_ITEMS
+                .get(g.list_sel)
+                .map(|(id, _)| *id)
+                .unwrap_or("list:b")),
+            "table_heads" => L(vec![
+                S(g.tr("ui.backdrop")),
+                S(g.tr("ui.cost")),
+                S(g.tr("ui.available")),
+            ]),
+            "table_rows" => L(TABLE_ROWS
+                .iter()
+                .map(|row| rec(vec![("cells", L(row.iter().map(|c| S(c)).collect()))]))
+                .collect()),
+            "td_text" => S(table_cell_text(g.table_cell)),
+            // ---- menus ----
+            "bar_labels" => L(BAR_ITEMS.iter().map(|x| S(x)).collect()),
+            "menu_open" => F(g.menu_open.map_or(-1.0, |i| i as f32)),
+            "menu_entries" => L(g
+                .menu_open
+                .and_then(|i| MENU_ENTRIES.get(i).copied())
+                .unwrap_or(MENU_ENTRIES[0])
+                .iter()
+                .map(|(label, key)| rec(vec![("label", S(label)), ("key", S(key))]))
+                .collect()),
+            "dd_open" => B(g.dd_open),
+            "tools" => L(TOOLS
+                .iter()
+                .map(|(id, icon)| rec(vec![("id", S(id)), ("icon", S(icon))]))
+                .collect()),
+            // ---- dialogs ----
+            "week_heads" => L(WEEK_HEADS.iter().map(|x| S(x)).collect()),
+            "dp_cells" => L(CALENDAR
+                .iter()
+                .map(|c| rec(vec![("day", F(c.unwrap_or(0) as f32))]))
+                .collect()),
+            "dp_rows" => F(3.0),
+            "date_sel" => F(g.date_sel as f32),
+            "tp_hours" => L(HOURS
+                .iter()
+                .map(|(key, label)| rec(vec![("key", S(key)), ("label", S(label))]))
+                .collect()),
+            "tp_minutes" => L(MINUTES
+                .iter()
+                .map(|(key, label)| rec(vec![("key", S(key)), ("label", S(label))]))
+                .collect()),
+            "time_hour" => S(g.time_hour),
+            "time_minute" => S(g.time_minute),
+            // ---- status ----
+            "toasts" => L(TOASTS
+                .iter()
+                .enumerate()
+                .map(|(i, (title, text))| {
+                    rec(vec![
+                        ("title", S(title)),
+                        ("text", S(text)),
+                        ("severity", S(TOAST_SEVERITIES[i])),
+                    ])
+                })
+                .collect()),
+            // ---- paging ----
+            "swipe_pages" => L(SWIPE
+                .iter()
+                .map(|(title, desc)| rec(vec![("title", S(title)), ("desc", S(desc))]))
+                .collect()),
+            "swipe_idx" => F(g.swipe_page as f32),
+            "swipe_count" => F(SWIPE.len() as f32),
+            // ---- navigation ----
+            "subsel" => S(g.subsel),
+            "selbar_sel" => S(g.selbar_sel),
+            "sel_items" => L(SELECTOR.iter().map(|(id, l)| item(id, l)).collect()),
+            "navdemo" => L(NAV_DEMO
+                .iter()
+                .map(|(id, label, icon)| {
+                    rec(vec![("id", S(id)), ("label", S(label)), ("icon", S(icon))])
+                })
+                .collect()),
+            // ---- glass ----
+            "glass_params" => {
+                let (t, bz, d, i) = g.glass.texts();
+                let values = [t, bz, d, i];
+                L(crate::app::glass::Param::ALL
+                    .iter()
+                    .enumerate()
+                    .map(|(n, p)| {
+                        rec(vec![
+                            ("label", S(p.label())),
+                            ("dec", S(glass_step_key(*p, false))),
+                            ("inc", S(glass_step_key(*p, true))),
+                            ("value", S(values[n])),
+                        ])
+                    })
+                    .collect())
+            }
+            "glass_filter_0" => zypui::Val::Raw(glass_filter_value(g, 0)),
+            "glass_filter_1" => zypui::Val::Raw(glass_filter_value(g, 1)),
+            "glass_filter_2" => zypui::Val::Raw(glass_filter_value(g, 2)),
+            _ => return None,
+        })
+    }
+
+    fn tr(&self, key: &'static str) -> &'static str {
+        Gallery::tr(self, key)
+    }
+
+    fn hovers(&self, key: &str) -> bool {
+        Gallery::hovers(self, key)
+    }
+
+    fn holds(&self, key: &str) -> bool {
+        Gallery::holds(self, key)
     }
 }

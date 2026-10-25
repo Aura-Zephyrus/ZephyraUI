@@ -31,14 +31,20 @@
 //! ```
 
 use zephyra_core::context::Context;
-use zephyra_core::core::UvRect;
 use zephyra_core::element::Element;
-use zephyra_core::id::{ElementKey, NodeTag};
+use zephyra_core::id::ElementKey;
 use zephyra_core::property::{PropertyKey, PropertyValue};
-use zephyra_core::props;
 
 /// 分配计数探针（诊断用，不是产品代码 —— 见该文件头的警告）。
 mod alloc_probe;
+
+/// 绑定的数据面（`@绑定` 引用的数据表）与声明式结构入口。
+///
+/// 树的结构的真相在 `ui/demo.zypui`：建哪些节点、发哪些分类名、key 是什么
+/// 全在模板里；本文件只剩状态（`Demo`）、输入转发（`on_input`）与自定义
+/// 属性键（`NOTE`）。外观一个都没有 —— 全部在 demo.zstyle / controls.zstyle。
+mod data;
+mod ui;
 
 // 判据是「平台 **且** feature」，不是只看 feature。
 //
@@ -77,20 +83,9 @@ use zephyra_winit_d3d12::HostWindow;
 use zephyra_fx::{InputState, View, Z_INDEX};
 
 /// 工具栏按钮的语义名。同时是元素 key —— 所以必须是 `&'static str`。
+/// （模板经 `@buttons` 取这份表；`data::buttons()` 是唯一消费者。）
 const BUTTONS: [&str; 8] = [
     "menu", "pen", "eraser", "undo", "image", "camera", "gear", "settings",
-];
-
-/// 内容区里的文本行数。
-const LINES: usize = 4;
-
-/// 每一行的内容。真实的 UTF-8 文本 —— 顺带验证非 ASCII 路径（`TextEngine`
-/// 按 `char` 而非字节处理，中文与标点不该算错字数）。
-const LINE_TEXTS: [&str; LINES] = [
-    "ZephyraUI 核心",
-    "DisplayList 是唯一契约",
-    "换主题不需要遍历控件树",
-    "Steady state = zero rebuild",
 ];
 
 /// 演示用的自定义属性键。
@@ -117,182 +112,58 @@ impl View for Demo {
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
-        Element::new(NodeTag::Container)
-            .with_key("root")
-            // 根必须有背景：真实管线里"没有背景"意味着**什么都不画**，全透明的树
-            // 会产出空的 DisplayList。背景本身在 demo.zstyle 的 `Container.root`。
-            .style("root")
-            .with_children([
-                toolbar(self),
-                icons(),
-                content(),
-                src_crops(),
-                effects(),
-                status_bar(self),
-            ])
+        // 树的结构来自 ui/demo.zypui（见模块 ui 的文档）。这里只补挂两个
+        // 宿主自定义属性键 —— 模板写不了应用键，键的真相在宿主手里。
+        crate::ui::demo(self)
             .with(&NOTE, PropertyValue::static_str("demo"))
             .with(&Z_INDEX, PropertyValue::int(0))
     }
 }
 
-/// 工具栏：一排可交互按钮。
-fn toolbar(demo: &Demo) -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("toolbar")
-        .style("toolbar")
-        .with_children(BUTTONS.map(|name| button(name, demo)))
+/// `zypui` 宿主：模板经 `@绑定` / `hover()` / `press()` 问到的就是这里。
+impl zypui::Host for Demo {
+    fn binding(&self, name: &str) -> Option<zypui::Val> {
+        match name {
+            "buttons" => Some(data::buttons()),
+            "icons" => Some(data::icons()),
+            "lines" => Some(data::lines()),
+            "crops" => Some(data::crops()),
+            "effects" => Some(data::effects()),
+            "hover_caption" => Some(zypui::Val::S(hover_caption(self))),
+            "has_hover" => Some(zypui::Val::B(self.hovered.is_some())),
+            _ => None,
+        }
+    }
+
+    fn tr(&self, key: &'static str) -> &'static str {
+        key
+    }
+
+    /// hover 目标的名字；无目标时给一句提示。
+    fn hovers(&self, key: &str) -> bool {
+        self.hovered.as_ref().and_then(|k| k.as_name()) == Some(key)
+    }
+
+    fn holds(&self, key: &str) -> bool {
+        self.pressed.as_ref().and_then(|k| k.as_name()) == Some(key)
+    }
 }
 
-/// 一个工具栏按钮。
-///
-/// 颜色全部取**语义角色**，没有一处硬编码 —— 于是换主题不碰控件代码。
-/// `props::control_fill_role` 是本框架「可重样式」的最小实现：控件不写死状态色，
-/// 只问「当前状态下我该用哪个角色」。
-fn button(name: &'static str, demo: &Demo) -> Element {
-    let key = ElementKey::from(name);
-    let hovered = demo.hovered.as_ref() == Some(&key);
-    let pressed = demo.pressed.as_ref() == Some(&key);
-
-    Element::new(NodeTag::Control)
-        .with_key(name)
-        .with(&props::INTERACTIVE, PropertyValue::bool(true))
-        // NOTE: 状态机制的全部形状。源码只说「我现在是什么状态」，
-        // 样式表只说「这个状态长什么样」，两边不见面。
-        //
-        // 没有分类名 = 没有状态，于是只被 `Control { }` 命中；
-        // 有 "pressed" = 被 `Control.pressed { }` 命中，而那条的特异性
-        // 更高，自动盖过默认值 —— 不引进任何新概念。
-        //
-        // ⚠️ 早先这里写死着 `BORDER_COLOR` / `BORDER_WIDTH` 两个值
-        // （`if pressed { 2.0 } else { 1.0 }`）。那是源码里最后一处样式泄漏：
-        // 换主题改不了它，改样式表也改不了它。
-        .styles(pressed.then_some("pressed"))
-        // NOTE: width / height / corner-radius / background / direction /
-        // main-align / cross-align / spacing all moved to controls.zstyle.
-        .with_children([
-            // 图标位：真矢量图标，走 core 的「图标名 → 展平 → 三角化 → Path」。
-            //
-            // 之前这里是「用图标名字当标签画出真实文字」—— 那是在 `Command::Path`
-            // **零生产者**时的权宜之计：核心只能产出 Quad/Image/Text 三种图元，
-            // 图标只能退化成文字。现在 `props::ICON_NAME` 接通了几何层，
-            // 这一位换回真正的图形。
-            //
-            // 注意 hover / press 态**同时**改颜色与文字颜色 —— 图标颜色走
-            // `ICON_COLOR`，它不继承（见该属性的文档），所以必须显式给。
-            Element::new(NodeTag::Container)
-                .with_key("glyph")
-                .with(
-                    &props::ICON_NAME,
-                    PropertyValue::static_str(icon_name(name)),
-                )
-                .style("glyph")
-                // 悬停与按下是**分类名**，不是值。颜色本身在 demo.zstyle 的
-                // `Container.glyph` / `.hovered` / `.pressed` 三条规定。
-                .styles(
-                    pressed
-                        .then_some("pressed")
-                        .or_else(|| hovered.then_some("hovered")),
-                ),
-            Element::new(NodeTag::Text)
-                .with_key("label")
-                .with(&props::TEXT, PropertyValue::static_str(name))
-                .style("label")
-                .styles(
-                    pressed
-                        .then_some("pressed")
-                        .or_else(|| hovered.then_some("hovered")),
-                )
-                // 名字长的用小一档字号 —— 判断「名字长不长」是源码的事（它知道名字），
-                // 用哪一档是样式表的事（demo.zstyle 的 `Text.label.compact`）。
-                .styles((name.len() > 6).then_some("compact")),
-        ])
-}
-
-/// 按钮的图标名（内置图标集里的键）。
-///
-/// 工具栏那一排是「功能名」，而内置图标集里是「图标名」—— 两者语义不同，
-/// 所以这里显式映射而不是直接用 `name`。映射不到时返回**原名**：
-/// 图标集查不到会回落到空图标（不产出命令），症状是"少一个图标"而不是崩掉。
-fn icon_name(button: &'static str) -> &'static str {
-    button
+/// 状态栏右侧的提示文字。
+fn hover_caption(demo: &Demo) -> &'static str {
+    match demo.hovered.as_ref().and_then(|k| k.as_name()) {
+        Some(name) => BUTTONS.iter().find(|b| **b == name).copied().unwrap_or("?"),
+        None => "hover a button",
+    }
 }
 
 #[cfg(test)]
 #[path = "testmods/demo_tests.rs"]
 mod tests;
 
-/// 图像内容区：一组真实纹理的图标。
-///
-/// 纹理在启动阶段（`Bootstrap` 的 `resumed`）里注册一次，之后每帧只引用句柄。核心全程只看到
-/// [`zephyra_core::paint::TextureRef`] 这个字符串 —— 它不认识 GPU 纹理。
-fn icons() -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("icons")
-        .style("icon-row")
-        .with_children(
-            ICON_NAMES
-                .iter()
-                .map(|n| {
-                    Element::new(NodeTag::Image)
-                        .with_key(*n)
-                        // 只填句柄 —— 核心不知道它对应哪张 GPU 纹理。
-                        .with(&props::IMAGE_TEXTURE, PropertyValue::static_str(n))
-                        .style("icon")
-                })
-                .collect::<Vec<_>>(),
-        )
-}
-
 /// 演示用的纹理名。注册时用同一个名字，于是核心侧的属性值与宿主的注册名对上。
+/// （模板经 `@icons` 取这份表；纹理本身在 `Bootstrap::resumed` 注册。）
 const ICON_NAMES: [&str; 4] = ["demo:checker", "demo:gradient", "demo:ring", "demo:stripes"];
-
-/// 纹理内再画一个"取子区域"的样例：把同一个棋盘图集按不同 uv 裁剪并排显示。
-///
-/// 这一条专门验证 `src` 裁剪真的取到了纹理的对应区域 —— 棋盘的 8px 方块边界清晰，
-/// 裁剪偏移 1/8 就肉眼可辨，而整张/翻转这两种错误则完全看不出来。
-fn src_crops() -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("src-crops")
-        .style("crop-row")
-        .with_children(
-            SRC_CROPS
-                .iter()
-                .enumerate()
-                .map(|(i, uv)| {
-                    Element::new(NodeTag::Image)
-                        // key 必须是 `&'static str`：`ElementKey::Name` 持
-                        // `Arc<str>`，而运行期 `format!` 出来的 String 不满足。
-                        // 下标在这里就够了 —— 顺序即身份。
-                        .with_key(SRC_CROP_KEYS[i])
-                        // 只填 uv：核心不认识它对应哪张纹理，也不知道纹理多大。
-                        .with(
-                            &props::IMAGE_SRC,
-                            PropertyValue::uv_rect(UvRect::new(uv.0, uv.1, uv.2, uv.3)),
-                        )
-                        .with(
-                            &props::IMAGE_TEXTURE,
-                            PropertyValue::static_str("demo:checker"),
-                        )
-                        .style("crop")
-                })
-                .collect::<Vec<_>>(),
-        )
-}
-
-/// 演示用的裁剪区域（`x, y, w, h`，归一化）。
-///
-/// 依次是：整张、右半、左下四分之一、以及一个**越界**区域。
-/// 最后一项是故意的 —— 核心应把它退化成整张，画面看起来与第一项相同，而不是
-/// 采样到边界外的像素。
-const SRC_CROPS: [(f32, f32, f32, f32); 4] = [
-    (0.0, 0.0, 1.0, 1.0),
-    (0.5, 0.0, 0.5, 1.0),
-    (0.5, 0.5, 0.5, 0.5),
-    (0.9, 0.0, 0.5, 1.0),
-];
-
-/// 与 [`SRC_CROPS`] 一一对应的 key。长度不同则是编译错误，不会静默错位。
-const SRC_CROP_KEYS: [&str; 4] = ["crop:full", "crop:right", "crop:br", "crop:overflow"];
 
 /// 生成一张演示纹理：按名字给出不同的图案，用来确认采样与 tint 正确。
 ///
@@ -357,224 +228,6 @@ fn icon_pixels(name: &str) -> (Vec<u8>, u32, u32) {
         }
     }
     (px, S, S)
-}
-
-/// 内容区：一个强调色面板，内含"文字条"。
-///
-/// 面板本身取 `accent_fill` 资源键 —— 按 `T` 切主题时它会跟着变，而这一行代码
-/// 不需要改动。这就是「切主题不遍历控件树」。
-fn content() -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("content")
-        .style("content")
-        .with_children([Element::new(NodeTag::Container)
-            .with_key("hero")
-            .style("hero")
-            .with_children(
-                (0..LINES)
-                    .map(|i| {
-                        // 真实文本：核心按 Text 属性排版，宿主提供引擎。
-                        //
-                        // 之前这里是"用色块示意文字位置"—— 那是 `Command::Text`
-                        // 零生产者时的权宜之计。现在文本层通了，字号、行高、宽度
-                        // 全是真算出来的。
-                        Element::new(NodeTag::Text)
-                            .with_key(line_key(i))
-                            .with(&props::TEXT, PropertyValue::static_str(line_text(i)))
-                            .style("hero-line")
-                    })
-                    .collect::<Vec<_>>(),
-            )])
-}
-
-/// 一个效果样本：深色底板 + 半透明色块，色块带自己的滤镜 / 混合模式。
-///
-/// # 三层而不是两层
-///
-/// ```text
-/// 外层（竖排：底板 + 说明文字）
-/// └ 底板  深色、不透明、带滤镜/混合模式吗？不带 —— 它只是「目标」
-///   └ 样本  半透明色块，滤镜与混合模式挂在这里
-/// ```
-///
-/// 底板与样本**必须**是两个节点。把同一个节点先涂成深色再涂成半透明色，
-/// 后一次会**覆盖**前一次（属性是覆盖语义，不是叠加），于是「底板」消失、
-/// 样本直接混在面板底色上 —— 混合模式照样能跑，但两个模式之间的对比度掉一大截，
-/// 肉眼就不容易分辨了。
-///
-/// # 为什么样本要**半透明**
-///
-/// 混合模式是「源」与「目标」的函数，而不透明色块叠在底板上时，除 `Src` 之外的
-/// 每个模式算出来的结果都等于色块本身 —— 29 个模式看起来一模一样。
-/// 50% alpha 才让 `Multiply`（底板透过来）与 `Screen`（两者都往白推）分得开。
-fn effect_swatch(
-    key: &'static str,
-    caption: &'static str,
-    // 源色的**分类名**（`accent` / `warm`），不是颜色值。
-    //
-    // 传名字而不是传 `Color`：源码说「这个样张用哪种源色」，
-    // 具体是什么颜色在 `demo.zstyle` 的 `Container.swatch.accent` /
-    // `.warm`。传值就又变成「源码里有外观」了。
-    fill: &'static str,
-    filter: zephyra_core::filter::FilterChain,
-    blend: zephyra_core::filter::BlendMode,
-) -> Element {
-    Element::new(NodeTag::Container)
-        .with_key(key)
-        .style("fx")
-        .with_children([
-            // 混合模式的**目标**：底色 + 圆角，滤镜与混合模式加在子节点上。
-            Element::new(NodeTag::Container)
-                .with_key("backdrop")
-                .style("backdrop")
-                .with_children([Element::new(NodeTag::Container)
-                    .with_key("swatch")
-                    .styles(["swatch", fill])
-                    .with(&props::FILTER, PropertyValue::filter(filter))
-                    .with(&props::BLEND_MODE, PropertyValue::blend_mode(blend))]),
-            Element::new(NodeTag::Text)
-                .with_key("caption")
-                .with(&props::TEXT, PropertyValue::static_str(caption))
-                .style("caption"),
-        ])
-}
-
-/// E4 的效果展台：模糊 / 投影 / 多级链，外加两个非默认混合模式。
-///
-/// # 这一块在演示什么
-///
-/// E4 的三件事各自都能被肉眼分辨，但**必须有对照**才不会误判：
-///
-/// - 模糊 —— 看边缘有没有过渡带。没做模糊时硬边只有 0 与满值两种灰度；
-/// - 投影 —— 看**偏移方向**上有没有第二个更暗的形状，且原图仍压在它上面；
-/// - 多级链 —— 单趟模糊与三趟模糊的过渡带**宽度不同**，只看「糊了」区分不了。
-///
-/// 最后两个样本不带滤镜、只带混合模式，是为了让「混合模式生效」这件事与
-/// 「离屏 pass 生效」互不干扰 —— 否则一个模式下错，会被另一个的偏移掩盖。
-fn effects() -> Element {
-    use zephyra_core::core::{Color, Point};
-    use zephyra_core::filter::{BlendMode, Filter, FilterChain};
-
-    // 三趟同参数的高斯 ≈ 一趟 σ=2.83，所以过渡带明显更宽 —— 这就是判据。
-    let triple = FilterChain::new([
-        Filter::Blur {
-            sigma_x: 2.0,
-            sigma_y: 2.0,
-        },
-        Filter::Blur {
-            sigma_x: 2.0,
-            sigma_y: 2.0,
-        },
-        Filter::Blur {
-            sigma_x: 2.0,
-            sigma_y: 2.0,
-        },
-    ]);
-
-    Element::new(NodeTag::Container)
-        .with_key("effects")
-        .style("effects")
-        .with_children([Element::new(NodeTag::Container)
-            .with_key("effects-row")
-            .style("effects-row")
-            .with_children([
-                effect_swatch(
-                    "fx-none",
-                    "对照",
-                    "accent",
-                    FilterChain::none(),
-                    BlendMode::SrcOver,
-                ),
-                effect_swatch(
-                    "fx-blur",
-                    "模糊 σ3",
-                    "accent",
-                    FilterChain::single(Filter::Blur {
-                        sigma_x: 3.0,
-                        sigma_y: 3.0,
-                    }),
-                    BlendMode::SrcOver,
-                ),
-                effect_swatch(
-                    "fx-shadow",
-                    "投影 σ3",
-                    "accent",
-                    FilterChain::single(Filter::DropShadow {
-                        color: Color::rgba(0.0, 0.0, 0.0, 0.85),
-                        offset: Point::new(6.0, 6.0),
-                        sigma: 3.0,
-                    }),
-                    BlendMode::SrcOver,
-                ),
-                effect_swatch(
-                    "fx-triple",
-                    "三级模糊",
-                    "accent",
-                    triple,
-                    BlendMode::SrcOver,
-                ),
-                effect_swatch(
-                    "fx-multiply",
-                    "Multiply",
-                    "warm",
-                    FilterChain::none(),
-                    BlendMode::Multiply,
-                ),
-                effect_swatch(
-                    "fx-screen",
-                    "Screen",
-                    "warm",
-                    FilterChain::none(),
-                    BlendMode::Screen,
-                ),
-            ])])
-}
-
-/// 状态栏。右侧那块的宽度反映 hover 目标 —— 没有文字层的替代指示。
-fn status_bar(demo: &Demo) -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("status")
-        .style("status")
-        .with_children([
-            // 焦点环样式的圆点：切主题时它跟着 `FOCUS_RING` 变（demo.zstyle）。
-            Element::new(NodeTag::Container)
-                .with_key("focus")
-                .style("dot"),
-            // hover 目标：真实文字。
-            //
-            // 之前这里是"用色块宽度编码目标序号"—— 那是 `Command::Text` 零生产者
-            // 时的替代方案。文本层通了之后就不需要这类绕路了。
-            Element::new(NodeTag::Text)
-                .with_key("hovered")
-                .with(&props::TEXT, PropertyValue::static_str(hover_caption(demo)))
-                .style("status-line")
-                // 有没有 hover 目标决定用哪一档字色 —— 判断是源码的事，
-                // 两档各是什么颜色是 demo.zstyle 的 `.idle` / `.hovered`。
-                .styles(demo.hovered.is_some().then_some("hovered")),
-        ])
-}
-
-/// hover 目标的名字；无目标时给一句提示。
-fn hover_caption(demo: &Demo) -> &'static str {
-    match demo.hovered.as_ref().and_then(|k| k.as_name()) {
-        Some(name) => BUTTONS.iter().find(|b| **b == name).copied().unwrap_or("?"),
-        None => "hover a button",
-    }
-}
-
-/// 第 `i` 行的 key。必须 `&'static str` —— `ElementKey` 只接受编译期常量或 `u64`。
-fn line_key(i: usize) -> &'static str {
-    match i {
-        0 => "line0",
-        1 => "line1",
-        2 => "line2",
-        _ => "line3",
-    }
-}
-
-/// 第 `i` 行的文本。
-fn line_text(i: usize) -> &'static str {
-    LINE_TEXTS.get(i).copied().unwrap_or("")
 }
 
 /// 随 demo 分发的字体（MiSans Regular，含 CJK 与拉丁）。

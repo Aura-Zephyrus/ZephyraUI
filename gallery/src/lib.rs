@@ -21,15 +21,12 @@
 //!   输入 ─▶ [`app::Gallery::on_input`]  推进时钟 / 还原 click / 记断点
 //!            │
 //!            ▼
-//!   [`app::Gallery::view`] ─▶ [`app::shell::window`]   标题栏 + 导航 + 内容卡
-//!                               │
-//!                               ▼
-//!                        [`app::pages::page`]        按路由分发
-//!                               │
-//!                               ▼
-//!                      zephyra_ui::controls::*       控件层（另一个 crate）
-//!                               │
-//!                               ▼
+//!   [`app::Gallery::view`] ─▶ [`ui::window`]   「Window」页实例化（ui/shell.zypui）
+//!            │
+//!            ▼
+//!     组件模板展开（外壳 + 页面 + 控件组件，全部在 .zypui）
+//!            │
+//!            ▼
 //!                    zephyra_core::FrameCache        diff → layout → paint
 //! ```
 //!
@@ -37,11 +34,11 @@
 //!
 //! | 模块 | 职责 |
 //! |---|---|
-//! | [`app`] | 应用状态 + [`zephyra_fx::View`] 实现 + 路由表 |
-//! | [`app::shell`] | 窗口外壳：标题栏、导航栏、内容卡 |
-//! | [`app::pages`] | 按路由分发到具体页面 |
-//! | [`app::pages::guide`] | 指南层：按开发者任务分章（六章） |
-//! | [`app::pages::reference`] | 控件参考：一页内 segmented 切九族 |
+//! | [`app`] | 应用状态 + [`zephyra_fx::View`] 实现 + 路由表 + zypui 宿主 |
+//! | [`app::data`] | 宿主绑定的数据面（菜单、日历、语言段……全部 `&'static` 表） |
+//! | [`app::shell`] | 外壳尺寸常量（与样式表门禁逐字比对） |
+//! | [`app::pages`] | 页面清单（id / 英文标题 / 图标） |
+//! | [`ui`] | `ui/shell.zypui` 的运行时入口（编译期产物 + `include_bytes!`） |
 //! | [`styles`] | 合并控件层样式表与本应用自己的 |
 
 /// 每帧分配探针的**实现**。
@@ -59,6 +56,7 @@ pub mod alloc_probe;
 
 pub mod app;
 pub mod styles;
+pub mod ui;
 
 /// 缓动的转出口 —— 缓动住在 `zephyra_style::anim`（框架层），而应用里的
 /// 入场动画天天用它。

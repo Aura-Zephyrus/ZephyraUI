@@ -1,0 +1,158 @@
+<!-- parity 验收页：每个控件一个 page，实例参数与 zypui_parity.rs 里
+     的 Rust 控件函数调用逐一对应。
+
+     约定：
+     - hovered 的实例 key 以 ":h" 结尾、pressed 以 ":p" 结尾（宿主按此回答
+       hover/press）；两者都假的就不带后缀。
+     - 动态参数走绑定（@on / @v01 / @seg_items …），Rust 侧用同一数值。
+     - 本文件只进测试（zypuic dev 路径 parse），不进产品二进制。 -->
+
+<page name="button">
+  <Button key="b1:h" label="确定" icon="pen" variant="accent"/>
+  <Button key="b2" label="取消" variant="standard"/>
+</page>
+
+<page name="tool_button">
+  <ToolButton key="t1:p" icon="pen"/>
+</page>
+
+<page name="pill_button">
+  <PillButton key="p1:h" label="标签" icon="pen" checked="{@on}"/>
+  <PillButton key="p2" label="标签" checked="{@off}"/>
+</page>
+
+<page name="badges">
+  <InfoBadge key="ib1" text="新" severity="info" solid="{@on}"/>
+  <InfoBadge key="ib2" text="旧" severity="error" solid="{@off}"/>
+  <DotBadge key="db1" severity="caution"/>
+</page>
+
+<page name="card">
+  <Card key="c1" extra="link-card">
+    <text key="inner" text="内容"/>
+  </Card>
+  <Card key="c2" extra="">
+    <text key="inner2" text="x"/>
+  </Card>
+</page>
+
+<page name="setting_card">
+  <SettingCard key="sc1" title="标题" desc="描述">
+    <ToggleSwitch key="sw1" checked="{@on}"/>
+  </SettingCard>
+</page>
+
+<page name="clip_card">
+  <ClipCard key="cc1" icon="pen" title="题" desc="述"/>
+</page>
+
+<page name="expander">
+  <Expander key="exp1" title="展开" expanded="{@on}">
+    <text key="c1" text="内容"/>
+  </Expander>
+  <Expander key="exp2" title="收起" expanded="{@off}">
+    <text key="c2" text="内容"/>
+  </Expander>
+</page>
+
+<page name="text">
+  <TextLabel key="tl1" text="大标题" level="text-title"/>
+  <Caption key="cp1" text="说明"/>
+</page>
+
+<page name="toggles">
+  <CheckBox key="ck1:h" label="复选" checked="{@on}"/>
+  <RadioButton key="rb1" label="单选" checked="{@off}"/>
+  <ToggleSwitch key="sw1:p" checked="{@on}"/>
+</page>
+
+<page name="progress">
+  <Slider key="sl1:h" value01="{@v01}" label="42"/>
+  <Slider key="sl2" value01="{@v01}"/>
+  <ProgressBar key="pb1" value01="{@v02}" state="error"/>
+</page>
+
+<page name="segmented">
+  <Segmented key="seg1" items="{@seg_items}" sel="{@seg_sel}"/>
+</page>
+
+<page name="nav">
+  <NavItem key="n1:h" label="首页" icon="home" selected="{@on}" compact="{@off}"/>
+  <NavItem key="n2" label="设置" icon="gear" selected="{@off}" compact="{@on}"/>
+  <NavSubItem key="ns1:p" label="子项" icon="pen" selected="{@off}"/>
+  <NavSubItem key="ns2" label="子项2" selected="{@on}"/>
+</page>
+
+<page name="menu">
+  <MenuBar key="mb1" labels="{@menu_labels}" open="{@menu_open}"/>
+  <Menu key="m1" entries="{@menu_entries}"/>
+  <MenuItem key="mi1:h" label="复制" checked="{@off}" arrow="{@off}"/>
+</page>
+
+<page name="selector">
+  <SelectorBar key="sb1" items="{@sel_items}" sel="{@sel_sel}"/>
+</page>
+
+<page name="error_page">
+  <ErrorPage key="ep1" title="出错了" message="网络不可用" retry="重试" retry_key="retry:h"/>
+</page>
+
+<page name="status">
+  <ProgressRing key="pr1" value="72" state="running" show_value="{@on}"/>
+  <ProgressRing key="pr2" value="" state="paused" show_value="{@off}"/>
+  <InfoBar key="if1" title="注意" text="有更新" severity="caution" closable="{@on}"/>
+  <InfoBar key="if2" title="错误" text="失败" severity="error" closable="{@off}"/>
+  <Toast key="to1" title="已保存" text="草稿" severity="success"/>
+  <ToolTip key="tt1" text="提示内容"/>
+  <BusyIndicator key="bi1" frame="{@frame}"/>
+  <PageIndicator key="pi1" count="{@pips}" current="{@cur}"/>
+</page>
+
+<page name="forms">
+  <RoundButton key="rb1:h" label="圆" icon="pen" checked="{@on}"/>
+  <Hyperlink key="hl1" text="链接" url="https://example.com"/>
+  <DropDownButton key="dd1:p" label="下拉" icon="pen" open="{@on}"/>
+  <ComboBox key="cb1:h" value="第二项"/>
+  <SpinBox key="sp1" value="5"/>
+  <ColorPicker key="col1" sel="{@sw_sel}"/>
+</page>
+
+<page name="collections">
+  <ListView key="lv1" items="{@list_items}" sel="{@list_sel}"/>
+  <TableView key="tv1" headers="{@tbl_heads}" rows="{@tbl_rows}"/>
+  <SwipeView key="svp1" pages="{@sw_pages}" idx="{@sw_idx}"/>
+  <Avatar key="av1" initials="Z" accent="{@on}"/>
+  <Avatar key="av2" initials="ab" accent="{@off}"/>
+  <SettingItem key="si1" icon="gear" title="标题" desc="描述"/>
+</page>
+
+<page name="setting_expander">
+  <SettingExpander key="se1" title="标题" desc="描述" expanded="{@on}">
+    <text key="c1" text="内容"/>
+  </SettingExpander>
+</page>
+
+<page name="dialog">
+  <AcrylicCard key="ac1">
+    <text key="c1" text="内容"/>
+  </AcrylicCard>
+  <CornerOverlay key="co1" radius="r-lg">
+    <text key="c2" text="内容"/>
+  </CornerOverlay>
+  <Dialog key="dg1" title="确认" text="确定要删吗" buttons="{@dlg_buttons}"/>
+</page>
+
+<page name="date_time">
+  <DatePicker key="dp1" heads="{@dp_heads}" cells="{@dp_cells}" rows="{@dp_rows}" sel="{@dp_sel}"/>
+  <TimePicker key="tp1" hours="{@tp_hours}" hour="{@tp_hour}" minutes="{@tp_minutes}" minute="{@tp_minute}"/>
+</page>
+
+<page name="text_input">
+  <TextField key="tf1:h" value="{@tf_val}" placeholder="请输入" focused="{@on}"/>
+  <TextField key="tf2" value="{@empty}" placeholder="占位" focused="{@off}"/>
+  <TextArea key="ta1" lines="{@area_lines}"/>
+  <ScrollableTextArea key="sta1" lines="{@area_lines}" ratio="{@ratio}"/>
+  <AutoSuggestBox key="as1:h" suggestions="{@sugs}" open="{@on}" sel="{@sug_sel}"/>
+  <AutoSuggestBox key="as2" suggestions="{@sugs}" open="{@off}" sel="{@sug_sel}"/>
+  <TextInputMenu key="tim1" items="{@mi_items}"/>
+</page>

@@ -3,12 +3,25 @@
 // 放在那里会被**另编译一次**成独立测试 crate，而本文件里的 use super::* 只在
 // 「作为 demo 二进制的子模块」时成立 —— 那次编译必然报
 use super::*;
+use zephyra_core::id::NodeTag;
+use zephyra_core::props;
 
-fn demo_with(pressed: bool, name: &'static str) -> Demo {
-    Demo {
-        hovered: None,
-        pressed: pressed.then(|| ElementKey::from(name)),
+/// 按 key 从树上找第一个匹配的元素（demo 的 key 全局唯一，key 即身份）。
+fn find<'a>(el: &'a Element, key: &str) -> Option<&'a Element> {
+    if el.key().and_then(|k| k.as_name()) == Some(key) {
+        return Some(el);
     }
+    el.children().iter().find_map(|c| find(c, key))
+}
+
+/// 建一棵 demo 树（与 `View::view` 同一条路：ui/demo.zypui 实例化）。
+fn tree(hovered: Option<&'static str>, pressed: Option<&'static str>) -> Element {
+    let demo = Demo {
+        hovered: hovered.map(ElementKey::from),
+        pressed: pressed.map(ElementKey::from),
+    };
+    let theme = zephyra_core::theme::Theme::dark();
+    demo.view(&zephyra_core::context::Context::new(&theme))
 }
 
 /// **源码里不许有样式** —— 这条就是那把锁。
@@ -26,7 +39,8 @@ fn demo_with(pressed: bool, name: &'static str) -> Demo {
 #[test]
 fn button_source_writes_no_appearance_at_all() {
     for pressed in [false, true] {
-        let el = button("menu", &demo_with(pressed, "menu"));
+        let t = tree(None, pressed.then_some("menu"));
+        let el = find(&t, "menu").expect("menu 按钮必须在树上");
         for key in [&props::BORDER_COLOR, &props::BORDER_WIDTH] {
             assert_eq!(
                 el.props().lookup(key),
@@ -45,14 +59,16 @@ fn button_source_writes_no_appearance_at_all() {
 /// 「这个状态长什么样」由样式表的 `Control.pressed { }` 说。
 #[test]
 fn the_state_reaches_the_element_as_a_class_name() {
-    let pressed = button("menu", &demo_with(true, "menu"));
+    let pressed_tree = tree(None, Some("menu"));
+    let pressed = find(&pressed_tree, "menu").expect("menu 必须在树上");
     assert_eq!(
         pressed.style_names(),
         &["pressed"],
         "pressing must add the pressed class"
     );
 
-    let idle = button("menu", &demo_with(false, "menu"));
+    let idle_tree = tree(None, None);
+    let idle = find(&idle_tree, "menu").expect("menu 必须在树上");
     assert!(
         idle.style_names().is_empty(),
         "no state must mean no class -- otherwise every button looks pressed"
@@ -61,15 +77,21 @@ fn the_state_reaches_the_element_as_a_class_name() {
 
 /// 按下的**是当前这个按钮**，不是所有按钮。
 ///
-/// `Demo::pressed` 存的是 key，而 `button()` 拿自己的 key 去比。
-/// 这条钉住「按钮认得住自己」：写成常量 true 的话，会出现
-/// 「按一个、全亮」——那种错从截图上很难定位。
+/// `Demo::pressed` 存的是 key，而模板里每个按钮拿自己的 key 去比
+/// （`press(b.name)`）。这条钉住「按钮认得住自己」：写成常量 true 的话，
+/// 会出现「按一个、全亮」——那种错从截图上很难定位。
 #[test]
 fn only_the_pressed_button_gets_the_class() {
-    let demo = demo_with(true, "gear");
-    assert_eq!(button("gear", &demo).style_names(), &["pressed"]);
+    let t = tree(None, Some("gear"));
+    assert_eq!(
+        find(&t, "gear").expect("gear 必须在树上").style_names(),
+        &["pressed"]
+    );
     assert!(
-        button("menu", &demo).style_names().is_empty(),
+        find(&t, "menu")
+            .expect("menu 必须在树上")
+            .style_names()
+            .is_empty(),
         "another button must stay idle"
     );
 }

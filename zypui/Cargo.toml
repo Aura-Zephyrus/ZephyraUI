@@ -1,0 +1,43 @@
+[package]
+name = "zypui"
+description = "ZephyraUI UI-file runtime: one IR for .zypui sources, decode/expand/eval/instantiate. No parser here — parsing lives in zypuic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# `.zypui` 的**运行时**半边。
+#
+# # 分工（对位 zephyra-style / zstylec 那对）
+#
+#   zypuic   编译期：XML 子集解析器 + 校验 + 二进制编码（文本 → RawUi → .bin）
+#   zypui    运行时：同一份 RawUi 的解码 + 组件展开 + 表达式求值 + 实例化成 Element
+#
+# 两边共享**同一份 IR**（`ir.rs`）。zephyra-style 的 IR 文档把「两种模式必须共用
+# 同一份表示」标成本设计的命门 —— 这里同样成立：dev 模式 zypuic::parse 直读文本、
+# release 模式 decode 读二进制，之后 expand/instantiate 只有一份实现。
+#
+# # 为什么运行时没有解析器
+#
+# 解析器（手写 XML 子集）只住在 zypuic。发布二进制里装的是编译产物
+# （`include_bytes!`），运行时只做零解析的反序列化 —— 「编译为二进制、
+# 无运行时解析」这条要求落在这 crate 的边界上。
+#
+# # 字符串为什么全是 `&'static str`
+#
+# `zephyra_core::Element` 的 key 与分类名只收 `&'static str`（元素树每帧重建，
+# 运行期字符串等于每帧泄漏）。parse 与 decode 各自把字符串 `Box::leak` **一次**
+# （每次加载一次，不是每帧一次）；表达式求值产生的动态串走 `Interner` 去重，
+# 同一串只泄一份。IR 树本身由调用方持有（每应用一份），不参与每帧重建。
+
+[dependencies]
+# IR 的终点是 `zephyra_core::Element` —— 实例化就是把声明树喂给核心。
+zephyra-core = { path = "../zephyra/zephyra-core" }
+
+[lib]
+name = "zypui"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "forbid"

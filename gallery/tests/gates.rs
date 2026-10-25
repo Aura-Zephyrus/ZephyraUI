@@ -1255,19 +1255,16 @@ fn the_app_always_asks_for_the_mica_look() {
 /// # 为什么这两张表并存（而不是合并成一张）
 ///
 /// 它们分工不同：`ROUTES` 给导航栏与 `resolve_route`（只需要 id / 标题 / 图标），
-/// `PAGES` 还多一个构造函数，首页要遍历它拿标题与图标。
-///
-/// 两份表天然会漂 —— 加了一页忘了加另一份时，`resolve_route` 认得这个路由
-/// （于是导航栏能点进去）却查不到构造器（于是 `pages::page` 静默回首页）。
-/// 症状是**"点得进去、进去是首页"**：地址栏那一瞬变了，随后一切正常，
-/// 所以肉眼与截图都发现不了。
+/// `PAGES` 是**全部**页面清单（含 Settings）。页面的结构住在 `ui/shell.zypui`
+/// —— 两份表漂了就是「点得进去、进去是首页」：地址栏那一瞬变了，随后一切
+/// 正常，所以肉眼与截图都发现不了。
 #[test]
 fn route_table_and_page_table_agree() {
     // `ROUTES` 是导航项（不含 Settings，它由 shell 置底），`PAGES` 是**全部**
     // 可构造页面（含 Settings）。所以比较的一边要补上 Settings。
     let mut from_routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     from_routes.push(SETTINGS_ROUTE.0);
-    let from_pages: Vec<&str> = PAGES.iter().map(|p| p.id).collect();
+    let from_pages: Vec<&str> = PAGES.iter().map(|p| p.0).collect();
 
     assert_eq!(
         from_routes, from_pages,
@@ -1335,8 +1332,8 @@ fn every_route_renders_its_own_page() {
 fn every_page_key_is_a_legal_route() {
     let bad: Vec<&str> = PAGES
         .iter()
-        .filter(|p| zephyra_gallery::app::resolve_route(p.id).is_none())
-        .map(|p| p.id)
+        .filter(|p| zephyra_gallery::app::resolve_route(p.0).is_none())
+        .map(|p| p.0)
         .collect();
     assert!(
         bad.is_empty(),
@@ -1503,46 +1500,66 @@ fn every_tr_key_used_in_source_exists_in_every_language() {
     use std::path::{Path, PathBuf};
     use zephyra_gallery::app::{catalog_keys, messages, SUPPORTED};
 
-    fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+    fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in
             std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{} 可读: {e}", dir.display()))
         {
             let path = entry.expect("目录项可读").path();
             if path.is_dir() {
-                collect_rs(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
+                collect_sources(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs" || e == "zypui") {
                 out.push(path);
             }
         }
     }
 
+    // 结构迁到 `.zypui` 之后，tr 的调用点有两处形状：
+    // - Rust 侧（数据面 / 绑定）：`g.tr("key")`；
+    // - `.zypui` 模板：`tr('key')`。
+    // 两处都扫 —— 键集合与写法无关，漏翻不分语言。
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     let mut files = Vec::new();
-    collect_rs(&root, &mut files);
+    collect_sources(&root, &mut files);
+    collect_sources(&ui, &mut files);
 
-    // `g.tr("…")` 是唯一的取文案入口（页面全部拿 `&Gallery`），
-    // 键是紧随其后的引号串。
-    //
     // **跳过注释行**：这条门禁扫的是源码文本，而注释里写「源码里每个
     // `g.tr("…")`」这类句子是正当的 —— 不跳过的话，门禁会把注释里的
     // 省略号当成键名报出来（真实发生过一次：`mod.rs` 的门禁说明本身
     // 让这条门禁红了）。
     let mut used: Vec<String> = Vec::new();
-    for file in &files {
-        let text = std::fs::read_to_string(file)
-            .unwrap_or_else(|e| panic!("{} 可读: {e}", file.display()));
-        for line in text.lines() {
-            if line.trim_start().starts_with("//") {
+    let scan = |line: &str, pattern: &str, quote: char, used: &mut Vec<String>| {
+        for (i, _) in line.match_indices(pattern) {
+            let rest = &line[i + pattern.len()..];
+            let Some(end) = rest.find(quote) else {
                 continue;
+            };
+            let key = &rest[..end];
+            if !used.iter().any(|k| k == key) {
+                used.push(key.to_string());
             }
-            for (i, _) in line.match_indices("g.tr(\"") {
-                let rest = &line[i + "g.tr(\"".len()..];
-                let Some(end) = rest.find('"') else { continue };
-                let key = &rest[..end];
-                if !used.iter().any(|k| k == key) {
-                    used.push(key.to_string());
+        }
+    };
+    for file in &files {
+        let mut text = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("{} 可读: {e}", file.display()));
+        // `.zypui` 的注释是 XML 块注释（`<!-- … -->`，可跨多行）—— 先整体
+        // 剥掉再逐行扫；续行不以 `<!--` 开头，逐行跳过挡不住它。
+        if file.extension().is_some_and(|e| e == "zypui") {
+            while let Some(start) = text.find("<!--") {
+                match text[start..].find("-->") {
+                    Some(end) => text.replace_range(start..start + end + 3, ""),
+                    None => break,
                 }
             }
+        }
+        for line in text.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") || t.starts_with("<!--") || t.starts_with("-->") {
+                continue;
+            }
+            scan(line, "g.tr(\"", '"', &mut used);
+            scan(line, "tr('", '\'', &mut used);
         }
     }
     assert!(
@@ -1748,8 +1765,6 @@ fn reference_family_keys_all_wired() {
 /// 这条会因为「全部回落到 basics」而绿 —— 那是**布局回退**，不是族齐全。
 #[test]
 fn reference_page_has_all_families() {
-    use zephyra_gallery::app::pages::reference;
-
     // ⚠ 这个数字是**有意写死**的：族数变化时它必须红一次，逼人回来确认
     // 「新族的内容真的塞进了一屏」（参考页无滚动，装不下就是裁切）。
     // 改成 `REF_FAMILIES.len()` 会让门禁失去作用 —— 它要防的正是「表改了、
@@ -1767,8 +1782,8 @@ fn reference_page_has_all_families() {
         let ctx = Context::new(&theme);
         let element = g.view(&ctx);
         let root = Node::from_element(&element);
-        // 每族树里必须有该族的特征 key —— 特征 key 是各族 page() 里
-        // 第一个可辨识控件的 key，改控件时同步改这里。
+        // 每族树里必须有该族的特征 key —— 特征 key 是各族组件里第一个
+        // 可辨识控件的 key，改控件时同步改这里。
         let probe = match *fam {
             "basics" => "combo-material",
             "toggles" => "check:alpha",
@@ -1785,7 +1800,6 @@ fn reference_page_has_all_families() {
             find_by_key(&root, probe).is_some(),
             "参考页第 {i} 族（{fam}）的树里找不到特征控件 {probe} —— 该族内容没接进 reference"
         );
-        let _ = reference::page(&g);
     }
 }
 // ------------------------------------------- 门禁 21：响应式（官方断点 + 列数）

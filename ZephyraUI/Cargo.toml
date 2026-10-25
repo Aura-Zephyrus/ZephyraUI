@@ -29,6 +29,9 @@ zephyra-core = { path = "../zephyra/zephyra-core" }
 # 不在这里重实现 —— 那正是把它们放在 `zephyra/` 的原因。
 zephyra-style = { path = "../zephyra/zephyra-style" }
 
+# 控件结构的声明式来源：`ui/controls.zypui` 编译出的二进制在这里解码。
+zypui = { path = "../zypui" }
+
 # ⚠️ 控件的**文案**归 gallery，不归这里：同一个 Button 在不同应用里
 # 叫 "确定" / "OK" / "Submit"。控件只发 key，文案表是应用的。
 #
@@ -40,3 +43,11 @@ path = "src/lib.rs"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+# parity 测试走 dev 路径（直接 parse 源文件，不经过产品二进制）。
+zypuic = { path = "../zypuic" }
+
+[build-dependencies]
+# 构建期把 ui/controls.zypui 编译成二进制（与 zstylec 同一模式）。
+zypuic = { path = "../zypuic" }

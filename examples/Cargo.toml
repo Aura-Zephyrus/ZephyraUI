@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
+# demo 的结构声明（ui/demo.zypui）：编译期由 zypuic 编成二进制，运行期经
+# `zypui::Ui` 实例化 —— `Demo` 实现 `zypui::Host` 提供绑定与输入状态。
+zypui = { path = "../zypui" }
 # 后端无关的渲染层。`--dump-cpu` 那条路（`CpuHost`、图集、顶点流）**不需要任何 GPU
 # 后端**，而 `zephyra-winit` / `zephyra-winit-d3d12` 只是把这一层重新导出了一遍。
 #
@@ -16,7 +19,7 @@ zephyra-fx = { path = "../zephyra/zephyra-fx" }
 # dev 模式下直接解析样式表文本（release 侧不该链它，见 zstylec 的文档）
 zstylec = { path = "../zstylec" }
 zephyra-style = { path = "../zephyra/zephyra-style" }
-# 演示宿主：真开窗口 + GPU 渲染（Linux 上是 wgpu/Vulkan）。
+# 演示宿主：真开窗口 + GPU 渲染（Linux 上是裸 Vulkan/ash）。
 #
 # # 只有一个后端会被编进来
 #
@@ -43,7 +46,7 @@ winit = "0.30"
 default = ["d3d12"]
 d3d12 = ["dep:zephyra-winit-d3d12"]
 d3d11 = ["dep:zephyra-winit"]
-# Linux 后端（winit + wgpu/Vulkan）。与上面两个**互斥**：同一个二进制只编一个后端，
+# Linux 后端（winit + 裸 Vulkan/ash，**不用 wgpu**）。与上面两个**互斥**：同一个二进制只编一个后端，
 # 理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
 #
 # ⚠ `default` 仍然是 `d3d12`，而 d3d12 在 Linux 上是空 crate（`#![cfg(windows)]`）——
@@ -76,3 +79,8 @@ path = "demo.rs"
 [[test]]
 name = "demo_interaction"
 path = "demo_tests.rs"
+
+# 构建期把 ui/demo.zypui 编译成 OUT_DIR 下的二进制（运行时零解析）。
+# ⚠ 必须放在文件末尾：插进 [dependencies] 段中间会把后续依赖截进 build-deps。
+[build-dependencies]
+zypuic = { path = "../zypuic" }

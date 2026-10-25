@@ -2363,6 +2363,8 @@ dependencies = [
  "zephyra-winit",
  "zephyra-winit-d3d12",
  "zstylec",
+ "zypui",
+ "zypuic",
 ]
 
 [[package]]
@@ -2388,6 +2390,8 @@ dependencies = [
  "zephyra-winit",
  "zephyra-winit-d3d12",
  "zstylec",
+ "zypui",
+ "zypuic",
 ]
 
 [[package]]
@@ -2423,6 +2427,8 @@ version = "0.1.0"
 dependencies = [
  "zephyra-core",
  "zephyra-style",
+ "zypui",
+ "zypuic",
 ]
 
 [[package]]
@@ -2496,4 +2502,19 @@ dependencies = [
  "cssparser",
  "zephyra-core",
  "zephyra-style",
+]
+
+[[package]]
+name = "zypui"
+version = "0.1.0"
+dependencies = [
+ "zephyra-core",
+]
+
+[[package]]
+name = "zypuic"
+version = "0.1.0"
+dependencies = [
+ "zephyra-core",
+ "zypui",
 ]

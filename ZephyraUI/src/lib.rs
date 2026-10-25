@@ -27,6 +27,7 @@
 pub mod controls;
 pub mod styles;
 pub mod tokens;
+pub mod ui;
 
 pub use controls::*;
 pub use styles::{stylesheet, STYLESHEETS};

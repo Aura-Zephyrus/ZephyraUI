@@ -1,0 +1,578 @@
+<!-- 控件层的结构声明（.zypui 组件模板）。
+
+     这一份是 ZephyraUI/src/controls/*.rs 的结构逻辑翻译：Rust 构造器里
+     「建哪些节点、发哪些分类名、内容属性是什么」全部搬到这里；hover/variant
+     的类名扇出改为表达式。外观值一个都没有 —— 全部在 .zstyle。
+
+     类序即 dump 序：每个 class 属性的词序与 Rust 版 style_names() 逐一
+     对齐（parity 测试逐字节对照的另一半）。两处必须同改。
+
+     惯例：
+     - `press ? 'pressed' : (hover ? 'hovered' : '')` = state()（pressed 优先）。
+     - 交互态只住组件模板里；实例 key（Use 的 key）是 hover/press 基准。
+     - 数据驱动列表的逐项状态用 hover(key) / press(key) 显式给 key。
+     - 可选图标位用 if cond="icon"：实参缺省即假。
+     - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。 -->
+
+<component name="Button" params="label icon variant">
+  <control class="button {variant} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <if cond="icon">
+      <container key="icon" icon="{icon}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-icon"/>
+    </if>
+    <text key="label" text="{label}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-label"/>
+  </control>
+</component>
+
+<component name="ToolButton" params="icon">
+  <control class="tool-button {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="icon" icon="{icon}" class="{press ? 'pressed' : (hover ? 'hovered' : '')} tool-icon"/>
+  </control>
+</component>
+
+<component name="PillButton" params="label icon checked">
+  <control class="pill {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <if cond="icon">
+      <container key="icon" icon="{icon}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-icon"/>
+    </if>
+    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-label"/>
+  </control>
+</component>
+
+<component name="InfoBadge" params="text severity solid">
+  <control class="badge {severity} {solid ? '' : 'outline'}">
+    <text key="text" text="{text}" class="{severity} {solid ? '' : 'outline'} badge-text"/>
+  </control>
+</component>
+
+<component name="DotBadge" params="severity">
+  <container class="badge-dot {severity}"/>
+</component>
+
+<component name="Card" params="extra">
+  <container class="card {extra}">
+    <children/>
+  </container>
+</component>
+
+<component name="SettingCard" params="title desc">
+  <container class="setting-card">
+    <container key="texts" class="setting-texts">
+      <text key="title" text="{title}" class="setting-title"/>
+      <text key="desc" text="{desc}" class="setting-desc"/>
+    </container>
+    <container key="control-slot" class="setting-control">
+      <children/>
+    </container>
+  </container>
+</component>
+
+<component name="ClipCard" params="icon title desc">
+  <container class="clip-card">
+    <container key="icon" icon="{icon}" class="clip-icon"/>
+    <container key="texts" class="clip-texts">
+      <text key="title" text="{title}" class="clip-title"/>
+      <text key="desc" text="{desc}" class="clip-desc"/>
+    </container>
+  </container>
+</component>
+
+<!-- 可点区域的 key 就是实例 key（内部名会同页撞名，见 card.rs 注释）。 -->
+<component name="Expander" params="title expanded">
+  <container class="expander">
+    <container key="{key}" interactive="true" class="expander-header">
+      <text key="title" text="{title}" class="expander-title"/>
+      <container key="chevron" icon="chevron-down" class="expander-chevron {expanded ? 'open' : 'closed'}"/>
+    </container>
+    <container key="content" class="expander-content" collapsed="{!expanded}">
+      <children/>
+    </container>
+  </container>
+</component>
+
+<component name="TextLabel" params="text level">
+  <text text="{text}" class="{level}"/>
+</component>
+
+<component name="Caption" params="text">
+  <text text="{text}" class="text-caption"/>
+</component>
+
+<!-- 选中族共用骨架：指示器 + 标记常驻（状态不增删节点）。 -->
+<component name="CheckBox" params="label checked">
+  <control class="check-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="indicator" class="check-indicator {checked ? 'checked'}">
+      <container key="mark" class="check-mark {checked ? 'checked'}"/>
+    </container>
+    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
+  </control>
+</component>
+
+<component name="RadioButton" params="label checked">
+  <control class="radio-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="indicator" class="radio-indicator {checked ? 'checked'}">
+      <container key="mark" class="radio-dot {checked ? 'checked'}"/>
+    </container>
+    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
+  </control>
+</component>
+
+<component name="ToggleSwitch" params="checked">
+  <control class="switch {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="track" class="switch-track {checked ? 'on'}">
+      <container key="knob" class="switch-knob"/>
+    </container>
+  </control>
+</component>
+
+<!-- 填充宽是内容几何（fill: 键例外）；轨道宽常量与样式表门禁对齐。 -->
+<component name="Slider" params="value01 label">
+  <control class="slider {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="track" class="slider-track">
+      <container key="fill:slider" class="slider-fill" width="{min(max(value01, 0.0), 1.0) * 220.0}"/>
+      <container key="thumb" class="slider-thumb"/>
+    </container>
+    <if cond="label">
+      <text key="value" text="{label}" class="slider-value"/>
+    </if>
+  </control>
+</component>
+
+<component name="ProgressBar" params="value01 state">
+  <control class="progress" interactive="true">
+    <container key="fill:progress" class="progress-fill {state}" width="{min(max(value01, 0.0), 1.0) * 240.0}"/>
+  </control>
+</component>
+
+<!-- 分段/列表/选择栏的逐项 hover/press 用 hover(key) 显式给。 -->
+<component name="Segmented" params="items sel">
+  <container class="segmented">
+    <for var="e" list="items">
+      <control key="{e.id}" interactive="true" class="seg-item {e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')}">
+        <text key="label" text="{e.label}" class="{e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')} seg-label"/>
+      </control>
+    </for>
+  </container>
+</component>
+
+<component name="NavItem" params="label icon selected compact">
+  <control class="nav-item {selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="bar" class="nav-bar {selected ? 'selected'}"/>
+    <container key="icon" icon="{icon}" class="{selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')} nav-icon"/>
+    <text key="label" text="{label}" collapsed="{compact}" class="{selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')} nav-label"/>
+  </control>
+</component>
+
+<component name="Menu" params="entries">
+  <container class="menu">
+    <for var="e" index="i" list="entries">
+      <if cond="e.label == ''">
+        <container key="{'msep:' + str(i)}" class="menu-separator"/>
+        <else>
+          <MenuItem key="{e.key}" label="{e.label}"/>
+        </else>
+      </if>
+    </for>
+  </container>
+</component>
+
+<component name="MenuItem" params="label checked arrow">
+  <container class="menu-item {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="check" class="menu-check {checked ? 'checked'}"/>
+    <text key="label" text="{label}" class="menu-item-label"/>
+    <container key="arrow" icon="chevron-down" class="menu-arrow {arrow ? 'on'}"/>
+  </container>
+</component>
+
+<!-- 顶级项：open 是展开项下标（-1 = 全收起）。 -->
+<component name="MenuBar" params="labels open">
+  <container class="menu-bar">
+    <for var="lb" index="i" list="labels">
+      <container key="{'bar:' + str(i)}" interactive="true" class="menu-bar-item {i == open ? 'open'}">
+        <text key="label" text="{lb}" class="bar-item-label"/>
+      </container>
+    </for>
+  </container>
+</component>
+
+<component name="NavSubItem" params="label icon selected">
+  <control class="nav-sub {selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <container key="indent" class="nav-indent"/>
+    <if cond="icon">
+      <container key="icon" icon="{icon}" class="{selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')} sub-icon"/>
+    </if>
+    <text key="label" text="{label}" class="{selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')} sub-label"/>
+  </control>
+</component>
+
+<component name="SelectorBar" params="items sel">
+  <container class="selector-bar">
+    <for var="e" list="items">
+      <control key="{e.id}" interactive="true" class="selector-item {e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')}">
+        <text key="label" text="{e.label}" class="{e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')} selector-label"/>
+      </control>
+    </for>
+  </container>
+</component>
+
+<component name="ErrorPage" params="title message retry retry_key">
+  <container class="error-page">
+    <container key="top-gap" class="error-gap"/>
+    <container key="icon" icon="close" class="error-icon"/>
+    <text key="title" text="{title}" class="error-title"/>
+    <text key="message" text="{message}" class="error-message"/>
+    <Button key="{retry_key}" label="{retry}" variant="accent"/>
+  </container>
+</component>
+
+<component name="ProgressRing" params="value state show_value">
+  <container class="progress-ring">
+    <container key="ring" class="ring-track {state}">
+      <if cond="show_value">
+        <text key="value" text="{value}" class="ring-value"/>
+      </if>
+    </container>
+  </container>
+</component>
+
+<component name="InfoBar" params="title text severity closable">
+  <container class="info-bar {severity}">
+    <container key="bar-icon" icon="{severity == 'success' ? 'check' : (severity == 'caution' ? 'bell' : (severity == 'error' ? 'close' : 'bell'))}" class="bar-icon {severity}"/>
+    <container key="texts" class="bar-texts">
+      <text key="title" text="{title}" class="bar-title"/>
+      <text key="text" text="{text}" class="bar-text"/>
+    </container>
+    <!-- collapsed 是「有则设 true」：closable 时不设该属性（与 Rust 版
+         `if !closable { with(COLLAPSED, true) }` 同形，空 false 也是多余属性）。 -->
+    <if cond="closable">
+      <control key="bar:close" class="bar-close" interactive="true">
+        <container key="icon" icon="close" class="bar-close-icon"/>
+      </control>
+      <else>
+        <control key="bar:close" class="bar-close" interactive="true" collapsed="true">
+          <container key="icon" icon="close" class="bar-close-icon"/>
+        </control>
+      </else>
+    </if>
+  </container>
+</component>
+
+<component name="Toast" params="title text severity">
+  <container class="toast {severity}">
+    <container key="toast-icon" icon="{severity == 'success' ? 'check' : (severity == 'caution' ? 'bell' : (severity == 'error' ? 'close' : 'bell'))}" class="bar-icon {severity}"/>
+    <container key="texts" class="bar-texts">
+      <text key="title" text="{title}" class="{severity} bar-title"/>
+      <text key="text" text="{text}" class="{severity} bar-text"/>
+    </container>
+  </container>
+</component>
+
+<component name="ToolTip" params="text">
+  <container class="tool-tip">
+    <text key="text" text="{text}" class="tip-text"/>
+  </container>
+</component>
+
+<!-- 三颗点按 frame 轮换大小档（Rust 版 (i + 3 - frame % 3) % 3 展开）。 -->
+<component name="BusyIndicator" params="frame">
+  <container class="busy">
+    <container key="busy:0" class="busy-dot {frame % 3 == 0 ? 'dot-lg' : (frame % 3 == 1 ? 'dot-sm' : 'dot-md')}"/>
+    <container key="busy:1" class="busy-dot {frame % 3 == 0 ? 'dot-md' : (frame % 3 == 1 ? 'dot-lg' : 'dot-sm')}"/>
+    <container key="busy:2" class="busy-dot {frame % 3 == 0 ? 'dot-sm' : (frame % 3 == 1 ? 'dot-md' : 'dot-lg')}"/>
+  </container>
+</component>
+
+<component name="PageIndicator" params="count current">
+  <container class="page-indicator">
+    <for var="i" list="range(count)">
+      <container key="{'pip:' + str(i)}" class="pip {i == current ? 'selected'}"/>
+    </for>
+  </container>
+</component>
+
+<!-- 根类序 [round, round, …]：Rust 版 style("round") + 类表里的 "round"
+     各出现一次 —— 忠实复刻现状，parity 对照按此。 -->
+<component name="RoundButton" params="label icon checked">
+  <control class="round round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <if cond="icon">
+      <container key="icon" icon="{icon}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-icon"/>
+    </if>
+    <text key="label" text="{label}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-label"/>
+  </control>
+</component>
+
+<component name="Hyperlink" params="text url">
+  <control class="hyperlink {hover ? 'hovered' : ''}" interactive="true" url="{url}">
+    <text key="label" text="{text}" class="{hover ? 'hovered' : ''} hyperlink-label"/>
+    <container key="underline" class="{hover ? 'hovered' : ''} link-underline"/>
+  </control>
+</component>
+
+<component name="DropDownButton" params="label icon open">
+  <control class="drop-down drop-down {open ? 'open'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <if cond="icon">
+      <container key="icon" icon="{icon}" class="dd-icon"/>
+    </if>
+    <text key="label" text="{label}" class="dd-label"/>
+    <container key="chevron" icon="chevron-down" class="dd-chevron"/>
+  </control>
+</component>
+
+<component name="ComboBox" params="value">
+  <control class="combo-box {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <text key="value" text="{value}" class="combo-value"/>
+    <container key="chevron" icon="chevron-down" class="combo-chevron"/>
+  </control>
+</component>
+
+<!-- 步进钮的 hover/press 基准是它们自己的 key（与 Rust 版一致：
+     调用方按 "spin:up"/"spin:down" 查输入态）。 -->
+<component name="SpinBox" params="value">
+  <control class="spin-box {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <text key="value" text="{value}" class="spin-value"/>
+    <control key="spin:up" class="spin-step {press('spin:up') ? 'pressed' : (hover('spin:up') ? 'hovered' : '')}" interactive="true">
+      <container key="icon" icon="chevron-up" class="spin-step-icon"/>
+    </control>
+    <control key="spin:down" class="spin-step {press('spin:down') ? 'pressed' : (hover('spin:down') ? 'hovered' : '')}" interactive="true">
+      <container key="icon" icon="chevron-down" class="spin-step-icon"/>
+    </control>
+  </control>
+</component>
+
+<!-- 8x2 色板：格子色在样式表 sw-0..15（源码发词）。 -->
+<component name="ColorPicker" params="sel">
+  <container class="color-picker">
+    <container key="sw-row:0" class="swatch-row">
+      <for var="i" list="range(8)">
+        <container key="{'swatch:' + str(i)}" interactive="true" class="swatch {'sw-' + str(i)} {press('swatch:' + str(i)) ? 'pressed' : (hover('swatch:' + str(i)) ? 'hovered' : '')} {i == sel ? 'selected'}"/>
+      </for>
+    </container>
+    <container key="sw-row:1" class="swatch-row">
+      <for var="i" list="range(8)">
+        <container key="{'swatch:' + str(i + 8)}" interactive="true" class="swatch {'sw-' + str(i + 8)} {press('swatch:' + str(i + 8)) ? 'pressed' : (hover('swatch:' + str(i + 8)) ? 'hovered' : '')} {i + 8 == sel ? 'selected'}"/>
+      </for>
+    </container>
+  </container>
+</component>
+
+<component name="ListView" params="items sel">
+  <container class="list-view">
+    <for var="e" list="items">
+      <control key="{e.id}" interactive="true" class="list-row {e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')}">
+        <text key="label" text="{e.label}" class="{e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')} list-label"/>
+      </control>
+    </for>
+  </container>
+</component>
+
+<!-- 定列宽静态表：数据格可点（选中是应用状态，控件只发 key）。 -->
+<component name="TableView" params="headers rows">
+  <container class="table-view">
+    <container key="head" class="table-head-row">
+      <for var="h" index="c" list="headers">
+        <text key="{'th:' + str(c)}" text="{h}" class="table-head"/>
+      </for>
+    </container>
+    <for var="row" index="r" list="rows">
+      <container key="{'tr:' + str(r)}" class="table-row">
+        <for var="cell" index="c" list="row.cells">
+          <text key="{'td:' + str(r) + str(c)}" text="{cell}" interactive="true" class="table-cell {press('td:' + str(r) + str(c)) ? 'pressed' : (hover('td:' + str(r) + str(c)) ? 'hovered' : '')}"/>
+        </for>
+      </container>
+    </for>
+  </container>
+</component>
+
+<!-- 翻页点即翻页按钮（core 无拖拽手势）。 -->
+<component name="SwipeView" params="pages idx">
+  <container class="swipe-view">
+    <container key="card" class="swipe-card">
+      <for var="p" index="i" list="pages">
+        <if cond="i == idx">
+          <text key="title" text="{p.title}" class="swipe-title"/>
+          <text key="desc" text="{p.desc}" class="swipe-desc"/>
+        </if>
+      </for>
+    </container>
+    <container key="pips" class="swipe-pips">
+      <for var="p" index="i" list="pages">
+        <container key="{'sw:' + str(i)}" interactive="true" class="swipe-pip {i == idx ? 'selected'} {press('sw:' + str(i)) ? 'pressed' : (hover('sw:' + str(i)) ? 'hovered' : '')}"/>
+      </for>
+    </container>
+  </container>
+</component>
+
+<component name="Avatar" params="initials accent">
+  <container class="avatar {accent ? 'accent'}">
+    <text key="initials" text="{initials}" class="avatar-text {accent ? 'accent'}"/>
+  </container>
+</component>
+
+<component name="SettingItem" params="icon title desc">
+  <container class="setting-item">
+    <container key="icon" icon="{icon}" class="setting-icon"/>
+    <container key="texts" class="setting-texts">
+      <text key="title" text="{title}" class="setting-title"/>
+      <text key="desc" text="{desc}" class="setting-desc"/>
+    </container>
+  </container>
+</component>
+
+<component name="SettingExpander" params="title desc expanded">
+  <container class="setting-expander">
+    <container key="{key}" interactive="true" class="setting-header">
+      <container key="texts" class="setting-texts">
+        <text key="title" text="{title}" class="setting-title"/>
+        <text key="desc" text="{desc}" class="setting-desc"/>
+      </container>
+      <container key="chevron" icon="chevron-down" class="setting-chevron {expanded ? 'open'}"/>
+    </container>
+    <container key="content" class="setting-content" collapsed="{!expanded}">
+      <children/>
+    </container>
+  </container>
+</component>
+
+<component name="AcrylicCard" params="">
+  <container class="acrylic-card">
+    <children/>
+  </container>
+</component>
+
+<component name="CornerOverlay" params="radius">
+  <container class="corner-overlay {radius}">
+    <children/>
+  </container>
+</component>
+
+<component name="Dialog" params="title text buttons">
+  <container class="dialog">
+    <text key="title" text="{title}" class="dialog-title"/>
+    <text key="text" text="{text}" class="dialog-text"/>
+    <container key="buttons" class="dialog-buttons">
+      <for var="b" list="buttons">
+        <Button key="{b.id}" label="{b.label}" variant="{b.primary ? 'accent' : 'standard'}"/>
+      </for>
+    </container>
+  </container>
+</component>
+
+<!-- 日历：格子数据由宿主给（rec.day，负数 = 空格）；at(list, r*7+c) 分格。
+     key 的两位零填充与 Rust 版 key 表逐串一致。 -->
+<component name="DatePicker" params="heads cells rows sel">
+  <container class="date-picker">
+    <container key="heads" class="dp-heads">
+      <for var="h" index="i" list="heads">
+        <text key="{'dph:' + str(i)}" text="{h}" class="dp-head"/>
+      </for>
+    </container>
+    <for var="r" list="range(rows)">
+      <container key="{'dpr:' + str(r)}" class="dp-row">
+        <for var="c" list="range(7)">
+          <if cond="at(cells, r * 7 + c).day >= 0">
+            <container key="{'dpc:' + str(r) + str(c)}" interactive="true" class="dp-cell {press('dpc:' + str(r) + str(c)) ? 'pressed' : (hover('dpc:' + str(r) + str(c)) ? 'hovered' : '')}">
+              <container key="day" class="dp-day {at(cells, r * 7 + c).day == sel ? 'selected'}">
+                <text key="label" text="{str(at(cells, r * 7 + c).day)}" class="dp-day-label {at(cells, r * 7 + c).day == sel ? 'selected'}"/>
+              </container>
+            </container>
+            <else>
+              <container key="{'dpc:' + str(r) + str(c)}" class="dp-cell"/>
+            </else>
+          </if>
+        </for>
+      </container>
+    </for>
+  </container>
+</component>
+
+<!-- 时/分两列：可见窗口由宿主给；选中项按文字比对（与 Rust 版一致）。 -->
+<component name="TimePicker" params="hours hour minutes minute">
+  <container class="time-picker">
+    <container key="hours" class="tp-col">
+      <for var="e" list="hours">
+        <container key="{e.key}" interactive="true" class="tp-item {e.label == hour ? 'selected'} {press(e.key) ? 'pressed' : (hover(e.key) ? 'hovered' : '')}">
+          <text key="label" text="{e.label}" class="tp-label {e.label == hour ? 'selected'}"/>
+        </container>
+      </for>
+    </container>
+    <container key="minutes" class="tp-col">
+      <for var="e" list="minutes">
+        <container key="{e.key}" interactive="true" class="tp-item {e.label == minute ? 'selected'} {press(e.key) ? 'pressed' : (hover(e.key) ? 'hovered' : '')}">
+          <text key="label" text="{e.label}" class="tp-label {e.label == minute ? 'selected'}"/>
+        </container>
+      </for>
+    </container>
+  </container>
+</component>
+
+<!-- 单行输入框。children 槽位给 AutoSuggestBox 追加建议列表用
+     （Rust 版 field.with_children([list]) 同一形态）。 -->
+<component name="TextField" params="value placeholder focused">
+  <control class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <text key="text" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
+    <if cond="value != ''">
+      <control key="field:clear" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}" interactive="true">
+        <container key="icon" icon="close" class="{focused ? 'focused'} {hover ? 'hovered' : ''} field-clear-icon"/>
+      </control>
+    </if>
+    <children/>
+  </control>
+</component>
+
+<component name="TextArea" params="lines">
+  <container class="text-area">
+    <for var="l" index="i" list="lines">
+      <text key="{'area:' + str(i)}" text="{l}" class="area-line"/>
+    </for>
+  </container>
+</component>
+
+<component name="ScrollableTextArea" params="lines ratio">
+  <container class="scroll-area">
+    <TextArea key="area" lines="{lines}"/>
+    <container key="scrollbar" class="scrollbar">
+      <container key="fill:scroll" class="scroll-thumb" height="{max(ratio * 120.0, 16.0)}"/>
+    </container>
+  </container>
+</component>
+
+<!-- ⚠ 忠实复刻 Rust 版的存量行为：`field.with_children([list])` 里
+     with_children 是**替换**语义 —— 输入框自己的 text/clear 子节点被建议
+     列表整个换掉。这里不修（改了就是行为变更），parity 按现状对照；
+     要修请两侧同修并更新 parity 页。 -->
+<component name="AutoSuggestBox" params="suggestions open sel">
+  <control class="text-field {open ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+    <if cond="open">
+      <container key="suggestions" class="suggest-list">
+        <SugRows suggestions="{suggestions}" sel="{sel}"/>
+      </container>
+      <else>
+        <container key="suggestions" class="suggest-list" collapsed="true">
+          <SugRows suggestions="{suggestions}" sel="{sel}"/>
+        </container>
+      </else>
+    </if>
+  </control>
+</component>
+
+<component name="SugRows" params="suggestions sel">
+  <for var="s" index="i" list="suggestions">
+    <container key="{'sug:' + str(i)}" class="suggest-row {i == sel ? 'selected'}">
+      <text key="label" text="{s}" class="suggest-label"/>
+    </container>
+  </for>
+</component>
+
+<!-- 右键菜单（内联形态）：分隔线在项与项之间（i &gt; 0）。 -->
+<component name="TextInputMenu" params="items">
+  <container class="context-menu">
+    <for var="item" index="i" list="items">
+      <!-- Rust 的分隔线键表从 "msep:1" 开表、按下标取：i=1 → "msep:2"。 -->
+      <if cond="i > 0">
+        <container key="{'msep:' + str(i + 1)}" class="menu-separator"/>
+      </if>
+      <container key="{'mi:' + str(i)}" interactive="true" class="menu-item">
+        <text key="label" text="{item}" class="menu-label"/>
+      </container>
+    </for>
+  </container>
+</component>

@@ -16,6 +16,13 @@ members = [
     "zephyra/zephyra-fx",
     "zephyra/zephyra-style",
     "zstylec",
+    # `.zypui` 的两半（对位 zephyra-style / zstylec 那对）：
+    #   zypui    运行时：同一份 IR 的解码 + 表达式求值 + 实例化成 Element
+    #   zypuic   编译期：XML 子集解析器 + 校验 + 二进制编码（文本 → RawUi → .bin）
+    # 两边共享 zypui::ir 一份表示 —— zstylec 与 zephyra-style 的「同一份 IR
+    # 是命门」结论在这里同样成立，dev/release 漂移在结构上不可能。
+    "zypui",
+    "zypuic",
     # 命令行前端。与 zstylec 同一个 workspace —— 而不只是路径依赖邻居 ——
     # 所以「CLI 看到的属性表」与「编译器看到的属性表」不可能是两份。
     "ZephyraCLI",

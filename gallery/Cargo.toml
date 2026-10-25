@@ -30,6 +30,7 @@ zephyra-fx = { path = "../zephyra/zephyra-fx" }
 zephyra-style = { path = "../zephyra/zephyra-style" }
 zephyra-ui = { path = "../ZephyraUI" }
 zstylec = { path = "../zstylec" }
+zypui = { path = "../zypui" }
 
 # 平台能力抽象（窗口外观：暗色 / 圆角 / Mica）。应用只依赖 trait，
 # Windows 的实现与 Linux 的降级都在实现 crate 里。
@@ -40,6 +41,9 @@ zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", op
 zephyra-winit = { path = "../zephyra/zephyra-base/zephyra-winit", optional = true }
 zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
 winit = "0.30"
+
+[build-dependencies]
+zypuic = { path = "../zypuic" }
 
 [[bin]]
 name = "gallery"

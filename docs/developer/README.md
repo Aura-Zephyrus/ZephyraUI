@@ -15,6 +15,7 @@
 | 04 | [样式表](04-stylesheets.md) | 要写 `.zstyle` |
 | 05 | [帧流水线](05-frame-pipeline.md) | 关心性能，或排查「没重绘」类问题 |
 | 06 | [后端与替换点](06-backends.md) | 要换渲染后端 |
+| 07 | [声明式结构](07-declarative-ui.md) | 要写 `.zypui`（结构模板 + 组件） |
 
 ## 参考
 
