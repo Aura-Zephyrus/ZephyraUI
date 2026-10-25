@@ -256,14 +256,22 @@ impl DebugInfo {
                     ))
                     .into_owned()
                 };
-                // ERROR 及以上（2 = ERROR / 3 = CORRUPTION）把**消息 ID**收进返回值。
+                // ERROR 及更糟（CORRUPTION）把**消息 ID**收进返回值。
                 //
-                // drain 原来只打印，于是「命令列表合法」这个结论永远得不到证据 ——
-                // 验证层是**排队**报的，而跨帧资源状态错位（527）在像素上只表现为「第二帧
-                // 模糊偏亮一点」。返回 ID 而不是计数，是为了让调用方能**按消息**豁免：
-                // 820（ClearRenderTargetView 的清屏色与创建时不同）只是性能提示，
-                // 而 527（屏障的 Before 状态与实际不符）是实打实的 bug。
-                if msg.Severity.0 >= D3D12_MESSAGE_SEVERITY_ERROR.0 {
+                // ⚠ 严重级的数字是**越发越轻**的：CORRUPTION = 0 < ERROR = 1
+                // < WARNING = 2 < INFO = 3（值取自 windows-rs 的
+                // `D3D12_MESSAGE_SEVERITY_*` 常量）。所以「ERROR 及以上」是
+                // `<= ERROR`，不是 `>= ERROR`。原先写反了：那条比较会把
+                // WARNING / INFO 全收进来、反而漏掉 CORRUPTION —— 于是
+                // 「清屏色与创建时不同」这种纯性能提示（820）会挤进 severe
+                // 列表，让调用方要么被噪声炸、要么只能整体豁免（那连真 ERROR
+                // 一起放过了）。本仓的 command_validation harness 就是被它
+                // 逼出来的：第一版全红，红的却全是 820。
+                //
+                // 返回 ID 而不是计数，是为了让调用方能**按消息**豁免：
+                // 820 只是性能提示，而 527（屏障的 Before 状态与实际不符）
+                // 是实打实的 bug。
+                if msg.Severity.0 <= D3D12_MESSAGE_SEVERITY_ERROR.0 {
                     severe.push(msg.ID.0 as u32);
                 }
                 eprintln!(
@@ -881,6 +889,17 @@ impl Offscreen {
         heap: &DescriptorHeap,
         slot: u32,
     ) -> Result<Self, SurfaceError> {
+        Self::build(device, size, 1, heap, slot)
+    }
+
+    /// [`Self::in_heap`] 的采样数可指定版（`samples = 1` 时逐字段等价）。
+    fn build(
+        device: &ID3D12Device,
+        size: (u32, u32),
+        samples: u32,
+        heap: &DescriptorHeap,
+        slot: u32,
+    ) -> Result<Self, SurfaceError> {
         if size.0 == 0 || size.1 == 0 {
             return Err(SurfaceError::new(
                 "离屏目标尺寸为零",
@@ -892,7 +911,7 @@ impl Offscreen {
             &heap_props(D3D12_HEAP_TYPE_DEFAULT),
             // `ALLOW_RENDER_TARGET` 是**必须**的：能不能当 RTV 在创建时就定死了，
             // 少了它连初始状态 `RENDER_TARGET` 都不合法（`E_INVALIDARG`）。
-            &texture_desc(size, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+            &texture_desc_msaa(size, samples, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
             D3D12_RESOURCE_STATE_RENDER_TARGET,
         )?;
         let rtv = heap.cpu(slot)?;
@@ -903,6 +922,33 @@ impl Offscreen {
             size,
             _heap: None,
         })
+    }
+
+    /// 建 `size` 大小、`samples` 采样的 RGBA8 离屏目标（自带 RTV 堆）。
+    ///
+    /// # 为什么单采样那条路不够
+    ///
+    /// [`Self::new`] 建的资源 `SampleDesc.Count` 恒为 1，而采样数是**创建时定死**的 ——
+    /// 一张 4× 纹理不能事后变成 1×。折射的 backdrop 副本
+    /// （[`Renderer::refresh_dst_copy`](crate::Renderer::refresh_dst_copy) 的
+    /// `ResolveSubresource` 岔路）要的正是**多重采样源**：不把这个构造喂到渲染器
+    /// 面前，那条岔路在本仓没有任何自动化覆盖，而它正是 2026-10-24 冻死画廊
+    /// （`Close()` 回 `0x80070057`、之后每帧 `Reset` 全败）的那一条。
+    pub fn new_msaa(
+        device: &ID3D12Device,
+        size: (u32, u32),
+        samples: u32,
+    ) -> Result<Self, SurfaceError> {
+        if samples < 1 {
+            return Err(SurfaceError::new(
+                "离屏目标采样数为零",
+                windows::core::Error::new(E_POINTER, "zero-sample offscreen target"),
+            ));
+        }
+        let heap = DescriptorHeap::new_rtv(device, 1)?;
+        let mut me = Self::build(device, size, samples, &heap, 0)?;
+        me._heap = Some(heap);
+        Ok(me)
     }
 
     /// 整屏裁剪矩形。
@@ -1162,6 +1208,20 @@ pub fn texture_desc(size: (u32, u32), flags: D3D12_RESOURCE_FLAGS) -> D3D12_RESO
         Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
         Flags: flags,
     }
+}
+
+/// 与 [`texture_desc`] 相同，但采样数可指定（`samples = 1` 时逐字段等价）。
+///
+/// 采样数是资源描述里的 `SampleDesc.Count`，**创建时定死** —— 事后改不了。
+/// 所以多重采样离屏目标必须在描述里就给对，没有「先建 1× 再升级」这条路。
+pub fn texture_desc_msaa(
+    size: (u32, u32),
+    samples: u32,
+    flags: D3D12_RESOURCE_FLAGS,
+) -> D3D12_RESOURCE_DESC {
+    let mut desc = texture_desc(size, flags);
+    desc.SampleDesc.Count = samples.max(1);
+    desc
 }
 
 /// 标准堆属性。

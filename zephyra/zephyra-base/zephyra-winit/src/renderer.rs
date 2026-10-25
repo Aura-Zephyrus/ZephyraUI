@@ -81,7 +81,7 @@ use windows::Win32::Graphics::Direct3D11::{
 use zephyra_core::core::Color;
 use zephyra_core::filter::{BlendMode, Coeff};
 use zephyra_core::frame::Damage;
-use zephyra_core::paint::DisplayList;
+use zephyra_core::paint::{Command, DisplayList};
 
 use crate::quad::{self, RenderReport, Vertex};
 use crate::shader::{ShaderError, Shaders};
@@ -494,6 +494,18 @@ pub(crate) enum BlendSlot {
     Src,
     /// `ONE / INV_SRC_ALPHA` —— 预乘空间的 `SrcOver`。
     SrcOver,
+    /// 按 [`BlendMode`] 下标取 `self.blends[m]` 的混合状态。
+    ///
+    /// 只用于**合成趟**：命令自己的混合模式必须在那里生效。离屏路径曾恒用
+    /// `SrcOver`，症状是「带滤镜的元素的混合模式被静默丢弃」—— 模糊+Multiply
+    /// 画出来是模糊+Alpha 混合，而计数与日志一切正常（2026-10-25 由
+    /// `stress_many_filtered_commands_stay_clean` 压力场景揭出）。
+    ///
+    /// 只接受**系数可表达**的 15 个模式（`Clear..Screen`）：PS 变体那 14 个
+    /// 的源色是图元几何而不是 RT 内容（`ShadeSource` 不采样 `g_tex`），
+    /// 复用到合成趟上会把染色顶点色当源色 —— 那条路要新的着色器入口，
+    /// 见 `unimplemented_blends` 的已知缺口记账。
+    Mode(usize),
 }
 
 impl OffscreenRt {
@@ -570,6 +582,24 @@ fn single_item_list(item: &Item) -> DisplayList {
     let mut inner = DisplayList::new();
     inner.push(item.key, item.command.clone());
     inner
+}
+
+/// 命令的混合模式（按 [`BlendMode`] 下标）；剪裁标记没有混合模式。
+///
+/// # 为什么渲染器自己匹配而不是 core 出一个 `command_blend`
+///
+/// 合成趟是**唯一**需要「命令的 blend」的地方（普通段走 `DrawRun.blend`，
+/// 已经按段切好）。core 那边加一个公有助手意味着第四个「取命令字段」的入口，
+/// 而它的全部消费者就是这一个 match —— 放使用者旁边，漏掉某个变体时编译
+/// 器会指着这里说。
+fn command_blend_mode(cmd: &Command) -> Option<usize> {
+    match cmd {
+        Command::Quad { blend, .. }
+        | Command::Path { blend, .. }
+        | Command::Image { blend, .. }
+        | Command::Text { blend, .. } => Some(*blend as usize),
+        Command::PushClip(_) | Command::PopClip => None,
+    }
 }
 
 /// 离屏 pass 用的一对乒乓 RT（E4.4 / E4.6）。
@@ -1040,6 +1070,34 @@ impl Renderer {
                     if redraw {
                         let r = self.draw_range(&env, list, &(index..index + 1));
                         report.absorb(r);
+                        // ⚠⚠ 重画原图这一趟**已经把上面的 `saturating_sub(1)`
+                        // 又抵消掉了**，所以这里必须再减一次。
+                        //
+                        // 账是这样走的（`unimplemented_filters` 的定义是「有滤镜
+                        // 但**没被执行**的命令数」）：
+                        //
+                        // | 步 | `unimplemented_filters` |
+                        // |---|---|
+                        // | `expand` 展开这条命令 | +1 |
+                        // | 离屏 pass 内部 `saturating_sub(1)` | −1（归零）|
+                        // | `absorb(inner)` | +0 |
+                        // | 上面的 `saturating_sub(1)` | −1（0 处饱和，保持 0）|
+                        // | **本行** `draw_range` 又展开同一条 | **+1 ← 元凶** |
+                        //
+                        // 症状：`unimplemented_filters` **永远比 0 大 1**，而它按
+                        // 定义是「谁没接上」的唯一诊断信号 —— 于是每次用投影 /
+                        // 折射都报「有一条滤镜没实现」，而画面其实是对的。
+                        //
+                        // 重画阶段要减一，是因为滤镜**已经在离屏 pass 里做过**，
+                        // 这一趟画的只是元素本体。
+                        //
+                        // ⚠ 减法必须在 `absorb` **之后**：反过来写就是「先减再原样
+                        // 加回来」，净效果为零 —— 而症状与没写一样（计数恒为 1），
+                        // 所以这个顺序错误不会自己暴露。D3D12 后端同一处修复见
+                        // `zephyra-winit-d3d12/src/renderer.rs` 的 `redraw` 分支
+                        // （2026-10-24 由 `command_validation` harness 揭出）。
+                        report.unimplemented_filters =
+                            report.unimplemented_filters.saturating_sub(1);
                     }
                 }
             }
@@ -1266,7 +1324,7 @@ impl Renderer {
             // 固定功能方程只能"原样接受"。用 `SrcOver` 会再叠一次 ⇒ 整体过曝。
             let mode = run.blend as usize;
             let ps_variant = crate::shader::ps_for_blend_mode(mode);
-            let (ps_idx, blend, dst_srv) = match ps_variant {
+            let (ps_idx, blend, dst_srv, executed) = match ps_variant {
                 // 系数可表达：PS 只算源色，混合交给固定功能方程。
                 // `None` = 后面不必再绑 `g_dst`（`PSMain` 不读它）。
                 None => (
@@ -1275,6 +1333,7 @@ impl Renderer {
                         .clone()
                         .unwrap_or_else(|| self.blend.clone()),
                     None,
+                    0u32,
                 ),
                 // PS 合成模式：需要 `dst` 的副本，绑到 **t1**（`g_dst` 的槽位）。
                 Some(k) => match self.refresh_dst_copy(device, context, env.rtv, env.size) {
@@ -1283,11 +1342,21 @@ impl Renderer {
                         // `blends[1]` 是 `BlendMode::Src` = `(One, Zero)`。
                         self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
                         Some(srv),
+                        // ★ 减账：PS 变体真的画了，这条（些）命令的混合**被执行**。
+                        // fx 侧按**命令**计 `unimplemented_blends`，而相邻同模式
+                        // 命令在这里合并成一段 —— 按段减会少减、计数器继续说谎
+                        // （2026-10-24 由 D3D12 的 command_validation harness 揭出，
+                        // 两个后端同修）。
+                        run.commands,
                     ),
                     // 建不出目标副本 ⇒ 退回 `SrcOver` 而不是整帧崩。
-                    None => (0usize, self.blend.clone(), None),
+                    None => (0usize, self.blend.clone(), None, 0),
                 },
             };
+            // PS 变体执行过的命令从「未实现」里减掉（0 时是空操作）。
+            report.unimplemented_blends = report
+                .unimplemented_blends
+                .saturating_sub(executed as usize);
             // 绑 `g_dst`。
             //
             // ⚠ 必须绑在**每段**之前而不是帧首一次：可分离 / 非可分离模式要读的
@@ -1497,6 +1566,15 @@ impl Renderer {
         if dst_srv.is_some() {
             report.refraction_passes += 1;
         }
+        // 命令自己的混合模式在**合成趟**生效 —— 滤镜链的结果与已画内容按它合成。
+        //
+        // 系数可表达的 15 个（`Clear..Screen`）换混合状态即可；PS 变体那 14 个
+        // 暂不走这条路（`unimplemented_blends` 会如实报数，见
+        // `stress_filtered_ps_variant_blends_stay_counted` 钉住的已知缺口）。
+        let blend_slot = match command_blend_mode(&item.command) {
+            Some(m) if crate::shader::ps_for_blend_mode(m).is_none() => BlendSlot::Mode(m),
+            _ => BlendSlot::SrcOver,
+        };
         self.draw_pass_quad(
             env,
             &q,
@@ -1505,7 +1583,7 @@ impl Renderer {
             dst_srv.as_ref(),
             env.rtv,
             env.size,
-            BlendSlot::SrcOver,
+            blend_slot,
             damage_scissor(env.size, env.damage),
         );
         report
@@ -1518,8 +1596,28 @@ impl Renderer {
     /// `damage` 是**屏幕**坐标系的矩形，而离屏 RT 的原点在 `bounds.x/y` 且尺寸是
     /// `rt_size`。拿屏幕脏区去裁它，两套坐标系求交的结果毫无意义 —— 元素在屏幕
     /// 中央时交集通常是空的，于是**整个离屏 pass 静默什么都不画**。
+    ///
+    /// # 为什么设 RT 之前要先解绑 PS 的 SRV 槽
+    ///
+    /// 离屏 RT_A 在上一趟（上一帧的合成趟 / 同帧上一个离屏 pass）里是**采样源**，
+    /// 此刻还挂在 t0（折射时 t1 也挂着目标副本）。不停槽就设它当渲染目标，
+    /// 调试层每帧报两条 WARNING：
+    ///
+    /// ```text
+    /// OMSetRenderTargets: Resource being set to OM RenderTarget slot 0
+    ///   is still bound on input!
+    /// OMSetRenderTargets[AndUnorderedAccessViews]: Forcing PS shader
+    ///   resource slot 0 to NULL.
+    /// ```
+    ///
+    /// 驱动会**替我们**把槽置空（所以画面一直是对的），但那是隐式行为：置空的是
+    /// 哪些槽、什么时候置，属于驱动自选。显式先解绑，警告消失且状态转换可预测。
+    /// 代价是两次 `PSSetShaderResources`，而离屏 pass 本来就要重设一整轮状态。
     fn bind_offscreen(&self, context: &ID3D11DeviceContext, rt: &OffscreenRt, size: (u32, u32)) {
         unsafe {
+            // 先清 t0 / t1（PS 声明了两个槽，见 `shaders/zephyra.hlsl` 文件级声明）
+            // —— 顺序在 `OMSetRenderTargets` **之前**，这就是上面那条警告的成因。
+            context.PSSetShaderResources(0, Some(&[None, None]));
             context.OMSetRenderTargets(
                 Some(&[Some(rt.rtv.clone())]),
                 None::<&ID3D11DepthStencilView>,
@@ -1631,6 +1729,12 @@ impl Renderer {
             context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R16_UINT, 0);
             context.OMSetBlendState(&self.blend, None, 0xFFFF_FFFF);
             context.PSSetShader(&self.shaders.ps[0], None);
+            // t1（`g_dst`）也要绑一个**有效**对象：着色器文件级声明了两个槽，
+            // 悬空 SRV 在某些驱动上会让采样返回未定义值（同 `draw_range` 里 t0
+            // 兜底图集的那条理由）。`bind_offscreen` 现在会先把两个槽清掉
+            // （否则设离屏 RT 时它还挂在采样源上，调试层报 still bound on
+            // input），所以这里必须自己补 —— 内容趟的 `ps[0]` 不读它，图集只是占位。
+            context.PSSetShaderResources(1, Some(&[Some(self.atlas_srv.clone())]));
         }
         for run in runs {
             if run.vertex_count == 0 {
@@ -1725,10 +1829,19 @@ impl Renderer {
         let blend = match blend_slot {
             BlendSlot::Src => self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
             BlendSlot::SrcOver => self.blend.clone(),
+            // 系数模式一定有状态（建表时 15 个全部建成，见 `Renderer::new`）；
+            // 万一没有就退回 SrcOver —— 宁可少一个模式，也不要画错。
+            BlendSlot::Mode(m) => self.blends[m].clone().unwrap_or_else(|| self.blend.clone()),
         };
         unsafe {
             let stride = std::mem::size_of::<Vertex>() as u32;
             let offset = 0u32;
+            // ⚠ 设 RT **之前**先清 t0 / t1 —— 与 `bind_offscreen` 同一个理由，
+            // 但在乒乓链里是**每趟**都撞上：本函数在末尾才绑 SRV，于是第 2 趟
+            // 要把第 1 趟的源（A）设成渲染目标时，A 还挂在两个槽上。调试层对
+            // 此报 `OMSETRENDERTARGETS_HAZARD`（WARNING），驱动会替我们置空，
+            // 但那是隐式行为。折射链没有模糊趟，所以只有模糊链现形。
+            context.PSSetShaderResources(0, Some(&[None, None]));
             context.OMSetRenderTargets(
                 Some(&[Some(dst_rtv.clone())]),
                 None::<&ID3D11DepthStencilView>,

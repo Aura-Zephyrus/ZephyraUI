@@ -370,7 +370,6 @@ pub fn info_queue(
 /// 队列里**信息级**的消息常常才是根因（"注意：此处无绑定"、"像素格式不支持
 /// sRGB"），而错误级往往只是它的后果。只打错误会正好错过真正有用的那一条。
 pub fn dump_queue_messages(queue: Option<&windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>) {
-    use windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE;
     let Some(queue) = queue else {
         if std::env::var("ZEPHYRA_D3D_DEBUG").as_deref() == Ok("1") {
             eprintln!(
@@ -394,49 +393,151 @@ pub fn dump_queue_messages(queue: Option<&windows::Win32::Graphics::Direct3D11::
     // 本机上会让 `GetMessage(0)` 直接回 `E_INVALIDARG`，尽管
     // `GetNumStoredMessages` 明明说有 6 条。
     //
-    // `len` 必须**先填成目标结构体的大小**再传进去 —— 它是 in-out 参数，语义是
-    // "我给的缓冲区有多大"。填 0 调用会让 D3D11 回 `E_INVALIDARG`，而那条错误
-    // 只说"参数错误"，完全看不出是哪一个 —— 我为此白绕了一圈。
-    // 先看看队列里到底有什么。`GetNumStoredMessages` 说有 N 条，那么第 0 条**一定存在**
-    // —— 取不出来就是**取法**错了，不是「没有消息」。
+    // ⚠ 这个 push **必须配一个 pop**：过滤器是栈，每帧 push 不 pop 会让栈无界
+    // 增长（60fps × 一小时 = 二十多万层）。push 失败（运行时没有这个方法）
+    // 就不 pop —— 那时栈里没有我们压的东西，pop 会弹掉调用方自己的过滤器。
     //
-    // `GetMessage(MessageIndex, pMessage, pMessageByteLength)`：
-    // `pMessageByteLength` 是 **in-out**，入参必须是 `pMessage` 指向的缓冲区大小。
-    //
-    // 早先这里在调用**前**就把 `len` 设成 `size_of::<D3D11_MESSAGE>()`（对），
-    // 但把 `E_INVALIDARG` 一律当成「队列空了」而 `break` —— 于是**一条都没打出来**，
-    // 而队列里明明有 12 条。看起来像「驱动没报任何错」，实际是「我们没在读」。
+    // ⚠⚠ 但**光压过滤器不够**：`GetMessage` 的 `pMessageByteLength` 入参是
+    // 「缓冲区大小，**含描述串**」，而描述串是紧随 `D3D11_MESSAGE` 一起写出的
+    // （官方文档原话："Size of pMessage in bytes, including the size of the
+    // message string"）。只给 32 字节时任何带描述的消息都回 `E_INVALIDARG`。
+    // 本文件曾把这个错误同时归给「取回过滤器」和「len 填成结构体大小（对）」——
+    // 两个判断都不够：正确解法是**两段式**（见 [`read_message`]）。
     let total = unsafe { queue.GetNumStoredMessages() };
+    let pushed = unsafe { queue.PushEmptyRetrievalFilter() }.is_ok();
     for i in 0..total.min(64) {
-        let mut msg = unsafe { std::mem::zeroed::<D3D11_MESSAGE>() };
-        let mut len = std::mem::size_of::<D3D11_MESSAGE>();
-        let hr = unsafe { queue.GetMessage(i, Some(&mut msg as *mut _), &mut len) };
-        if hr.is_err() {
+        let Some(m) = read_message(queue, i) else {
             eprintln!(
-                "[d3d] GetMessage({i}) 失败 {hr:?}（缓冲区 {} 字节，存储数 {total}）—— \
-                 这说明**取消息的调用本身**有问题，不是队列为空",
-                std::mem::size_of::<D3D11_MESSAGE>()
+                "[d3d] GetMessage({i}) 失败（存储数 {total}）—— \
+                 这说明**取消息的调用本身**有问题，不是队列为空"
             );
-            break;
-        }
-        // 描述文本：`pDescription` 可能带也可能不带 NUL，两种都要处理。
-        let desc = if msg.pDescription.is_null() {
-            String::new()
-        } else {
-            let n = if msg.DescriptionByteLength > 0 {
-                msg.DescriptionByteLength as usize
-            } else {
-                let mut n = 0usize;
-                while unsafe { *msg.pDescription.add(n) } != 0 {
-                    n += 1;
-                }
-                n
-            };
-            let bytes = unsafe { std::slice::from_raw_parts(msg.pDescription, n) };
-            String::from_utf8_lossy(bytes).into_owned()
+            continue;
         };
-        eprintln!("[d3d] {:?} #{:?} {}", msg.Severity, msg.ID, desc);
+        eprintln!("[d3d] {:?} #{:?} {}", m.severity, m.id, m.desc);
     }
+    if pushed {
+        unsafe { queue.PopRetrievalFilter() };
+    }
+}
+
+/// 一条已取出的调试消息（描述串已拷成 [`String`]，不指向队列内存）。
+struct DebugMessage {
+    severity: windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE_SEVERITY,
+    id: windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE_ID,
+    desc: String,
+}
+
+/// 读第 `i` 条消息（含紧随其后的描述串），读不出来返回 `None`。
+///
+/// # 为什么必须两段式
+///
+/// 官方文档的推荐用法就是「先问尺寸、再取消息」：
+///
+/// ```text
+/// SIZE_T len = 0;
+/// GetMessage(0, NULL, &len);          // 问：这条消息一共多少字节
+/// auto *p = malloc(len);
+/// GetMessage(0, p, &len);             // 取：描述串紧跟在结构体后面
+/// ```
+///
+/// `D3D11_MESSAGE` 本体只有 32 字节，而一条带描述的消息实际要一百多字节 ——
+/// 描述**紧跟在结构体后面**一起写出。只给 32 字节时 `GetMessage` 回
+/// `E_INVALIDARG`，而那条错误只说"参数错误"，看不出是哪一个参数。
+///
+/// 这与 D3D12 的 `DebugInfo::drain` 是**同一个坑**（见那边「缓冲区必须给足」
+/// 的注释）：两次都让人判成「调试层不可用 / 没有错误」，而队列里明明躺着消息。
+fn read_message(
+    queue: &windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue,
+    i: u64,
+) -> Option<DebugMessage> {
+    use windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE;
+    // 先空指针问一次要多少字节。问不出来就退回一个宽松的固定值（结构体本身
+    // 必须放得下，否则 `cast` 出来就是野指针）。
+    let mut need: usize = 0;
+    if unsafe { queue.GetMessage(i, None, &mut need) }.is_err() {
+        need = 0;
+    }
+    let mut buf = vec![0u8; need.max(std::mem::size_of::<D3D11_MESSAGE>())];
+    let mut len = buf.len();
+    if unsafe { queue.GetMessage(i, Some(buf.as_mut_ptr().cast()), &mut len) }.is_err() {
+        return None;
+    }
+    // 描述串在 `buf` 里，所以趁 `buf` 还活着立刻转成 `String` —— 返回的结构体
+    // 不持有任何指向队列或栈的指针。
+    let msg: &D3D11_MESSAGE = unsafe { &*buf.as_ptr().cast::<D3D11_MESSAGE>() };
+    // 描述串跟在结构体后面，所以合法长度上界是缓冲区里结构体之后的那部分。
+    let cap = buf
+        .len()
+        .saturating_sub(std::mem::size_of::<D3D11_MESSAGE>());
+    let desc = if msg.pDescription.is_null() {
+        String::new()
+    } else {
+        let n = if msg.DescriptionByteLength > 0 {
+            (msg.DescriptionByteLength as usize).min(cap)
+        } else {
+            // 长度没给就按 NUL 结尾数（有的消息两种都没给，那就当空串）。
+            let mut n = 0usize;
+            while n < cap && unsafe { *msg.pDescription.add(n) } != 0 {
+                n += 1;
+            }
+            n
+        };
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(msg.pDescription, n) })
+            .into_owned()
+    };
+    Some(DebugMessage {
+        severity: msg.Severity,
+        id: msg.ID,
+        desc,
+    })
+}
+
+/// 把队列里 **ERROR / CORRUPTION** 级消息的 ID 收进来返回，然后清空队列。
+///
+/// 与 [`dump_queue_messages`] 的分工：那个负责**打全量**（信息级常常是根因，
+/// 见它的文档），这个负责**断言** —— 门禁要回答的是「调试层有没有报 ERROR」，
+/// 不是「有没有消息」。消息照样逐条打出来，失败时文本就在 stderr 上。
+///
+/// # ⚠ 严重级数字是**越发越轻**的
+///
+/// `CORRUPTION = 0 < ERROR = 1 < WARNING = 2 < INFO = 3`（值取自 windows-rs 的
+/// `D3D11_MESSAGE_SEVERITY_*` 常量）。所以「ERROR 及更糟」是 `<= ERROR`，
+/// **不是** `>= ERROR`。D3D12 那边的 `DebugInfo::drain` 把这个比较写反过：
+/// `>= ERROR` 会把 WARNING / INFO 全收进来、恰好漏掉 CORRUPTION —— 于是纯性能
+/// 提示挤进 severe 列表，调用方要么被噪声炸、要么只能整体豁免（连真 ERROR 一起
+/// 放过）。2026-10-24 由 `command_validation` harness 揭出，两边同修。
+///
+/// # 为什么返回 ID 而不是计数
+///
+/// 让调用方能**按消息**豁免：有的机器上某条消息是已知无害的（驱动实现的
+/// 选择），而「计数 > 0 就失败」会把它和真错误一起毙掉。
+pub fn drain_severe_messages(
+    queue: Option<&windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>,
+) -> Vec<u32> {
+    use windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE_SEVERITY_ERROR;
+    let Some(queue) = queue else {
+        return Vec::new();
+    };
+    let mut severe: Vec<u32> = Vec::new();
+    let total = unsafe { queue.GetNumStoredMessages() };
+    // 与 `dump_queue_messages` 同一套：压「全部放行」的取回过滤器（读完弹掉），
+    // 再用两段式读每条消息（缓冲区必须含描述串，见 [`read_message`]）。
+    let pushed = unsafe { queue.PushEmptyRetrievalFilter() }.is_ok();
+    for i in 0..total.min(64) {
+        let Some(m) = read_message(queue, i) else {
+            eprintln!("[d3d] drain_severe：GetMessage({i}) 失败（存储数 {total}）");
+            continue;
+        };
+        if m.severity.0 <= D3D11_MESSAGE_SEVERITY_ERROR.0 {
+            severe.push(m.id.0 as u32);
+        }
+        eprintln!("[d3d] {:?} #{:?} {}", m.severity, m.id, m.desc);
+    }
+    if pushed {
+        unsafe { queue.PopRetrievalFilter() };
+    }
+    unsafe { queue.ClearStoredMessages() };
+    severe
 }
 /// 一张多重采样颜色目标：纹理本体 + 它的渲染目标视图。
 ///

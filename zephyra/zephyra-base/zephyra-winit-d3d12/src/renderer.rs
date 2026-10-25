@@ -736,6 +736,25 @@ struct CmdEnv<'a> {
     key: zephyra_core::paint::SortKey,
 }
 
+/// 命令的混合模式（按 [`zephyra_core::filter::BlendMode`] 下标）；剪裁标记没有。
+///
+/// # 为什么渲染器自己匹配
+///
+/// 合成趟是**唯一**需要「命令的 blend」的地方（普通段走 `DrawRun.blend`，
+/// 已按段切好）。与 D3D11 侧同名的助手并列存在而不是抽去 core：两个后端的
+/// 合成路径本来就是两份实现，共用一个助手只会让「改一处忘了另一处」变成
+/// 「改一处悄悄影响两边」。
+fn command_blend_mode(cmd: &zephyra_core::paint::Command) -> Option<usize> {
+    use zephyra_core::paint::Command;
+    match cmd {
+        Command::Quad { blend, .. }
+        | Command::Path { blend, .. }
+        | Command::Image { blend, .. }
+        | Command::Text { blend, .. } => Some(*blend as usize),
+        Command::PushClip(_) | Command::PopClip => None,
+    }
+}
+
 /// 由脏区算出帧内 scissor。
 ///
 /// # 清屏与 scissor 是**两件事**（曾经在这里写错过）
@@ -1195,7 +1214,7 @@ impl Renderer {
     ) -> Option<u32> {
         use windows::Win32::Graphics::Direct3D12::{
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
         };
 
         // ⚠ 这里**必须**是模块级的 [`DST_SRV_SLOT`]，不能自己再算一次。
@@ -1259,7 +1278,7 @@ impl Renderer {
             // 折射玻璃里浮现上一页控件残影是同一类症状，只是触发条件不同。
             //
             // ⚠ `ResolveSubresource` 解析的是**整个子资源**，所以源与目标必须逐位同尺寸。
-            // 交换链带 25% 余量时（`Swapchain::resize`）会不成立 —— 那一档本来就还缺
+            // 交换链带 25% 余量时（`Swapchain::resize`）源会大于内容 —— 那一档本来就还缺
             // 「按区解析」，此处保守地**放弃本次折射**（返回 `None` ⇒ 调用方退回
             // `SrcOver`）：宁可少个效果，也不要录进一条非法命令。非法命令的后果不是
             // 画错，是 `Close()` 报 `E_INVALIDARG`、整帧提交失败、此后每帧 `Reset` 都失败 ——
@@ -1267,15 +1286,41 @@ impl Renderer {
             //
             // 源的状态不转：MSAA 纹理从建起来就一直是 `RENDER_TARGET`
             // （见 `swapchain.rs` `resolve_msaa` 的文档），且它整帧都是那个渲染目标。
-            if (src_desc.Width as u32, src_desc.Height) != (cw, ch) {
+            //
+            // ★ 这里必须要求**逐位相等**，不能拿 `min` 兜底。副本就是按 `size` 建的，
+            // 所以「源比内容小」同样是不匹配：拿 `min(size, src)` 当判据时，源更小
+            // 那一档会**通过检查**然后把一张小图解析进大副本 —— 尺寸不匹配的解析是
+            // 规格级非法调用，录进去就冻死。`min` 只对下面拷贝岔路的源框有意义。
+            if (src_desc.Width as u32, src_desc.Height) != (size.0, size.1) {
                 return None;
             }
             // 目标状态必须走 [`RESOLVE_DST_STATE`]（`RESOLVE_DEST`），不能用
             // `RENDER_TARGET` —— 理由与后果都写在那个常量的文档里。
+            //
+            // ★ 源同样必须转状态：`RESOLVE_SOURCE`。原注释写的是「源不转，它从
+            // 建起来就是 RENDER_TARGET」—— 驱动容忍，规格不容忍：调试层 538
+            // 「Expected State Bits (all): RESOLVE_SOURCE」，而严格的驱动在
+            // `Close()` 就拒（0x80070057 + 永久冻结）。两条各错过一遍，症状
+            // 一模一样，所以两边都转。
+            //
+            // 屏障成对：解析完立刻转回 `RENDER_TARGET` —— 源还是本帧的渲染
+            // 目标（折射合成趟紧接着要绑它画；PS 变体那条路它正绑着）。
+            gpu_barrier(
+                list,
+                rt,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+            );
             gpu_barrier(list, &dst_res, before, RESOLVE_DST_STATE);
             unsafe {
                 list.ResolveSubresource(&dst_res, 0, rt, 0, src_desc.Format);
             }
+            gpu_barrier(
+                list,
+                rt,
+                D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+            );
             slot.as_mut()?.state = RESOLVE_DST_STATE;
         } else {
             // 单采样源 ⇒ `CopyTextureRegion` + 源框。不用 `CopyResource`：容量可能大于
@@ -1961,6 +2006,10 @@ impl Renderer {
                 scratch.path_first,
                 scratch.path_index_start,
                 BlendMode::SrcOver,
+                // 普通段画的是主目标（MSAA 开时多重采样）。
+                false,
+                self.samples,
+                &mut report,
             )?;
         }
         self.scratch = scratch;
@@ -2055,6 +2104,19 @@ impl Renderer {
         path_first: u32,
         path_index_start: u32,
         default_blend: BlendMode,
+        // 本趟画的是「刚清成全 0 的离屏 RT_A」还是真实目标。
+        //
+        // `true` = 内容趟：混合状态**一律 `Src`**，命令的混合模式留给合成趟
+        // （对真实目标生效）。`false` = 普通段 / 重画段：按 `run.blend`
+        // 逐段决定 PS 变体与混合状态。
+        into_fresh_rt: bool,
+        // 本趟目标的采样数。**不是** `self.samples`：离屏内容趟画的是单采样
+        // RT_A，用 `self.samples`（MSAA 开时是 4）建 PSO 就是「4× PSO 画进
+        // 1× RTV」—— 调试层 614，严格的驱动在 `Close()` 就拒。
+        samples: u32,
+        // 帧统计。PS 变体真的画上时要减 `unimplemented_blends` —— 那个计数
+        // 按**命令**计（fx 侧），而这里按**段**走，所以减 `run.commands`。
+        report: &mut RenderReport,
     ) -> Result<(), SurfaceError> {
         unsafe {
             // 索引缓冲**必须**在 draw 之前绑定 —— 漏掉它不报错，只是整帧什么都不画。
@@ -2080,29 +2142,50 @@ impl Renderer {
                 continue;
             }
             let mode = run.blend as usize;
-            let (ps_idx, pso_mode) = match shader::ps_for_blend_mode(mode) {
-                // 系数可表达：PS 只算源色，混合交给固定功能方程。
-                None => (0usize, mode),
-                // PS 合成模式：要读 `dst`，先取副本；取不到就退回默认。
-                Some(k) => match self.refresh_dst_copy(device, list, env.rt, env.size) {
-                    Some(dst_slot) => {
-                        // 副本绑到 `t1`（根签名第 1 个参数）。
-                        unsafe {
-                            list.SetGraphicsRootDescriptorTable(1, self.srv_heap.gpu(dst_slot)?);
+            let (ps_idx, pso_mode) = if into_fresh_rt {
+                // 内容趟：元素画进**刚清成全 0** 的 RT_A，混合状态必须 `Src`。
+                //
+                // 按 `run.blend` 走的后果分两种，都错且都不报错：
+                // - 系数模式读 dst（`Modulate` / `DstIn` / `Clear`…）：
+                //   RT_A 全是 0 ⇒ 内容变成纯黑，合成上去是一团黑；
+                // - PS 变体：`refresh_dst_copy` 拷的是同一张全 0 的 RT_A
+                //   ⇒ 对着零混合（Multiply 出纯黑）。
+                //
+                // 命令的混合模式属于**合成趟** —— 那里才是「与真实目标」混合。
+                // D3D11 侧的内容趟一直是默认 `SrcOver`（对全 0 等价于 Src），
+                // 两边由此对齐（2026-10-25 由 D3D11 侧压力场景揭出后同修）。
+                //
+                // 顺带省掉每条离屏命令一次 dst 拷贝 + 一对屏障。
+                (0usize, BlendMode::Src as usize)
+            } else {
+                match shader::ps_for_blend_mode(mode) {
+                    // 系数可表达：PS 只算源色，混合交给固定功能方程。
+                    None => (0usize, mode),
+                    // PS 合成模式：要读 `dst`，先取副本；取不到就退回默认。
+                    Some(k) => match self.refresh_dst_copy(device, list, env.rt, env.size) {
+                        Some(dst_slot) => {
+                            // 副本绑到 `t1`（根签名第 1 个参数）。
+                            unsafe {
+                                list.SetGraphicsRootDescriptorTable(
+                                    1,
+                                    self.srv_heap.gpu(dst_slot)?,
+                                );
+                            }
+                            // PS 已写出最终颜色 ⇒ 混合状态用 `Src`。
+                            //
+                            // ★ 减账：这条（些）命令的混合**被执行**了。fx 侧按命令
+                            // 计 `unimplemented_blends`，而相邻同模式命令在这里合并成
+                            // 一段 —— 按段减会少减、计数器继续说谎（2026-10-24 揭出）。
+                            report.unimplemented_blends = report
+                                .unimplemented_blends
+                                .saturating_sub(run.commands as usize);
+                            (k, BlendMode::Src as usize)
                         }
-                        // PS 已写出最终颜色 ⇒ 混合状态用 `Src`。
-                        (k, BlendMode::Src as usize)
-                    }
-                    None => (0usize, default_blend as usize),
-                },
+                        None => (0usize, default_blend as usize),
+                    },
+                }
             };
-            let pso = self.pso_for(
-                device,
-                self.elements.descs(),
-                ps_idx,
-                pso_mode,
-                self.samples,
-            )?;
+            let pso = self.pso_for(device, self.elements.descs(), ps_idx, pso_mode, samples)?;
             // 纹理绑定。只有 `Command::Image` 逐段换；矩形 / 字形 / 多边形记 `None`，
             // 绑图集兜住（`g_tex` 在 PS 里被声明，`t0` 悬空会让某些驱动解除引用并崩溃）。
             let slot = match &run.texture {
@@ -2273,6 +2356,14 @@ impl Renderer {
             scratch.path_first,
             scratch.path_index_start,
             BlendMode::SrcOver,
+            // 内容趟画的是刚清成全 0 的 RT_A —— 混合状态一律 `Src`，
+            // 命令的混合模式在合成趟生效（见 `replay` 里 `into_fresh_rt` 那段）。
+            true,
+            // ⚠ 离屏 RT 是**单采样**的 —— 传 `self.samples` 会是「4× PSO 画进
+            // 1× RTV」（调试层 614）。模糊趟那边一直是硬编码 1，内容趟这条
+            // 路由由 command_validation harness 抓到（2026-10-24）。
+            1,
+            &mut report,
         )?;
         self.scratch = scratch;
         // 离屏期间不该有「未实现的滤镜」—— 内容里那条命令的滤镜正是在做这件事。
@@ -2414,6 +2505,20 @@ impl Renderer {
             ),
         };
         let drew_refraction = dst_srv.is_some();
+        // 命令自己的混合模式在**合成趟**生效 —— 滤镜链的结果与已画内容按它合成。
+        //
+        // ⚠ 只传**系数可表达**的 15 个（`Clear..Screen`）：PS 变体那 14 个的
+        // 混合状态是 `Src`（PS 自己算最终色），而合成趟的 PS 是 `PSComposite`
+        // —— 把变体模式传给 `pso_for` 会拿到「PSComposite + Src」的组合，
+        // 等于把目标整个换成 RT 内容。那条路要新的着色器入口，见
+        // `unimplemented_blends` 的已知缺口记账（D3D11 侧同一处修复，
+        // 2026-10-25 由 `stress_many_filtered_commands_stay_clean` 揭出）。
+        let composite_blend = match command_blend_mode(cmd) {
+            Some(m) if shader::ps_for_blend_mode(m).is_none() => {
+                mode_by_index(m).unwrap_or(BlendMode::SrcOver)
+            }
+            _ => BlendMode::SrcOver,
+        };
         self.draw_pass_quad(
             device,
             list,
@@ -2423,7 +2528,7 @@ impl Renderer {
             dst_srv.as_ref(),
             cmd_env.rtv,
             cmd_env.size,
-            BlendMode::SrcOver,
+            composite_blend,
             damage_scissor(cmd_env.size, cmd_env.damage),
             self.samples,
         )?;
@@ -2909,12 +3014,23 @@ fn create_atlas(device: &ID3D12Device, size: u32) -> Result<ID3D12Resource, Surf
     )
 }
 /// 屏障的本地别名，让 `record` 里的调用短一点。
+///
+/// # 空转屏障必须跳过
+///
+/// `before == after` 的屏障在调试层是 **ERROR**（525「Before and after states
+/// must be different」）。`rt_barrier` 早有这道守卫，这里原先没有 ——
+/// `refresh_dst_copy` 第一帧的「副本 → `RESOLVE_DEST`」就是空转（副本建出来
+/// 就在那个状态里），于是每帧第一条屏障必报 525。本仓的 command_validation
+/// harness 开到调试层后当场抓到。
 fn gpu_barrier(
     list: &ID3D12GraphicsCommandList,
     res: &ID3D12Resource,
     before: D3D12_RESOURCE_STATES,
     after: D3D12_RESOURCE_STATES,
 ) {
+    if before == after {
+        return;
+    }
     crate::surface::Gpu::barrier(list, res, before, after);
 }
 

@@ -412,15 +412,35 @@ impl Swapchain {
     /// 本项目的帧顺序是「`barrier_to_render_target` → 绘制 → resolve →
     /// `barrier_to_present`」，天然满足。
     ///
-    /// 源（MSAA 纹理）不需要转换：它从建起来就一直是 `RENDER_TARGET`。
+    /// # 源也必须转：`RESOLVE_SOURCE`
+    ///
+    /// 原注释写的是「源（MSAA 纹理）不需要转换：它从建起来就一直是
+    /// `RENDER_TARGET`」—— 驱动容忍，规格不容忍：调试层 538「Expected State
+    /// Bits (all): RESOLVE_SOURCE」，严格的驱动在 `Close()` 就拒
+    /// （0x80070057 + 永久冻结）。与 10-24 修掉的目标状态（`RESOLVE_DEST`）
+    /// 是同一族错误的两半，`refresh_dst_copy` 那边同一次修完。
     pub fn resolve_msaa(&self, list: &ID3D12GraphicsCommandList) -> Result<(), SurfaceError> {
         let Some(m) = &self.msaa else {
             return Ok(());
         };
         let dst = self.buffer(self.back_buffer_index())?;
+        Gpu::barrier(
+            list,
+            &m.tex,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+        );
         unsafe {
             list.ResolveSubresource(&dst, 0, &m.tex, 0, self.format());
         }
+        // 转回去：下一帧开画时它还要当渲染目标（帧首 `barrier_to_render_target`
+        // 只转后缓冲，不碰它）。
+        Gpu::barrier(
+            list,
+            &m.tex,
+            D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+        );
         Ok(())
     }
 

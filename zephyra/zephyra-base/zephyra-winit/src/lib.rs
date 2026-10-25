@@ -76,7 +76,7 @@ pub use zephyra_fx::{
 pub use zephyra_fx::{srgb_bytes, write_bmp};
 
 pub use renderer::{RenderCtx, Renderer};
-pub use surface::{dcomp_enabled, Gpu, Surface, SurfaceError};
+pub use surface::{dcomp_enabled, drain_severe_messages, info_queue, Gpu, Surface, SurfaceError};
 pub use texture::TextureTable;
 
 pub use winit;
