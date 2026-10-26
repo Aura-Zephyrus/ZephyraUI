@@ -1,4 +1,4 @@
-//! Gallery 应用：RinUI 示例应用（gallery）的 Zephyra 重写版。
+//! Gallery 前端应用状态：RinUI 示例应用（gallery）的 Zephyra 重写版。
 //!
 //! # 状态从哪来
 //!
@@ -75,7 +75,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
 ///
 /// 参考层不再是**路由**（9 条路由平铺进导航栏装不下 —— 二级导航
 /// `nav_sub_item` 不折叠，9 个子项常驻会把 756 高的导航栏撑爆），而是
-/// `reference` **页内**的 segmented 切换。十族内容复用 `ui/shell.zypui` 里各页面组件的
+/// `reference` **页内**的 segmented 切换。十族内容复用 `frontend/shell.zypui` 里各页面组件的
 /// 组件，每族独立一屏，一屏装得下。
 pub const REF_FAMILIES: &[&str] = &[
     "basics",
@@ -1495,7 +1495,7 @@ impl Gallery {
                     Some(idx)
                 };
             }
-            // 菜单条目：core 的菜单是**内联卡**而不是浮层（见 `ui/shell.zypui` 的 PageMenus），
+            // 菜单条目：core 的菜单是**内联卡**而不是浮层（见 `frontend/shell.zypui` 的 PageMenus），
             // 所以「点一项」的最小诚实语义就是收起菜单。菜单里没有真动作，
             // 点完不收起才是看起来"点了没反应"。
             _ if key.starts_with("m:") => self.menu_open = None,
@@ -1715,7 +1715,7 @@ impl View for Gallery {
 
 // ───────────────────────── zypui 宿主 ─────────────────────────
 //
-// 每帧一棵树：`Window` 页从 `ui/shell.zypui` 实例化，模板经 @绑定 读这里
+// 每帧一棵树：`Window` 页从 `frontend/shell.zypui` 实例化，模板经 @绑定 读这里
 // 的状态、经 tr('…') 读文案、经 hover/press 内置词读输入态。绑定名与
 // shell.zypui 里的 @引用一一对应 —— 模板引用了不存在的名字时求值为假
 // （画面直接可见），真拦住漂移的是 parity 测试。

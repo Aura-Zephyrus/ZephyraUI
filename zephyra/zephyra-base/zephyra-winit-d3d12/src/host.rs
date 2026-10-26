@@ -26,8 +26,8 @@
 use std::sync::Arc;
 
 use windows::Win32::Foundation::HWND;
-use winit::event::ElementState;
 use winit::event::WindowEvent as WEvent;
+use winit::event::{ElementState, MouseScrollDelta};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -77,6 +77,9 @@ pub struct HostWindow<V: View> {
     router: InputRouter,
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
+    pending_key_events: Vec<zephyra_fx::KeyInput>,
+    pending_scroll: Option<zephyra_fx::ScrollInput>,
+    pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 图集变化）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
@@ -137,6 +140,8 @@ pub struct HostWindow<V: View> {
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
     last_stats: String,
+    resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
+    profiler: zephyra_fx::bridge::PerformanceProfiler,
     /// 窗口。**最后析构**，见模块文档。
     window: Arc<Window>,
 }
@@ -245,13 +250,19 @@ impl<V: View> HostWindow<V> {
     /// `new_lenient` 保留默认尺寸，是为了不改变既有调用点（按视口自适应的应用
     /// 不受影响）。
     pub fn new_lenient_sized(event_loop: &ActiveEventLoop, view: V, size: (u32, u32)) -> Self {
+        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
         let attrs = Window::default_attributes()
             .with_title("ZephyraUI (D3D12)")
-            .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1));
+            .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1))
+            .with_decorations(!frameless);
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
                 .expect("create_window（D3D12 后端）"),
+        );
+        eprintln!(
+            "[zephyra-d3d12] 窗口装饰: {}",
+            if frameless { "frameless" } else { "system" }
         );
         let size = window.inner_size();
         // 宿主必须能**自己说出**坐标系：「点哪儿不好使」这类问题的头号嫌疑就是
@@ -341,6 +352,9 @@ impl<V: View> HostWindow<V> {
             router: InputRouter::new(),
             pointer: None,
             pointer_pos: (0.0, 0.0),
+            pending_key_events: Vec::new(),
+            pending_scroll: None,
+            pending_pointer_events: Vec::new(),
             dirty: true,
             reported_device_dead: false,
             last_recovery_attempt: None,
@@ -357,6 +371,8 @@ impl<V: View> HostWindow<V> {
             textures: TextureTable::new(),
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
             last_stats: String::new(),
+            resource_telemetry: None,
+            profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
             window,
         }
     }
@@ -543,6 +559,11 @@ impl<V: View> HostWindow<V> {
     /// **不**包含 `present` —— 那由 [`Self::present`] 单独做，因为 resize 必须在
     /// 绘制之前处理（见 `sync_swapchain`），而呈现必须在绘制之后。
     pub fn frame(&mut self) -> Frame {
+        self.frame_inner(false).0
+    }
+
+    fn frame_inner(&mut self, capture: bool) -> (Frame, Option<Vec<u8>>) {
+        let frame_started = self.profiler.is_running().then(std::time::Instant::now);
         // ⚠ resize 必须在**布局与绘制之前**，见 [`Self::sync_swapchain`] 的说明。
         // 顺序反了会留下一个「从未被写过的新后缓冲」，而且它可能永远等不到下一帧。
         //
@@ -567,17 +588,18 @@ impl<V: View> HostWindow<V> {
                 // 不再更新，于是「看着没反应」。
                 self.try_recover_device();
             }
-            return self.empty_frame();
+            return (self.empty_frame(), None);
         }
         self.drain_debug();
 
+        let update_started = frame_started.map(|_| std::time::Instant::now());
         let theme = self.theme;
         // 作用域要短：`ctx` 借着 `self.engine`，而下面还要可变借用 `self`。
         //
         // 在作用域**内**就把 `FrameOutcome` 拆成 `Copy` 标量：`Updated` 借着一份
         // `&DisplayList`，带出作用域会让借用活到函数末尾，与下面的
         // `&mut self` 冲突。列表留到 `render_pass` 里用 `self.cache.list()` 现取。
-        let (stats, damage, redrawn) = {
+        let (stats, damage, content_redrawn) = {
             // 挂上**内置**图标集 —— 于是矢量图标在这条路径上也走完整的
             // 「图标名 → 展平 → 三角化 → `Command::Path`」链条。
             //
@@ -616,15 +638,24 @@ impl<V: View> HostWindow<V> {
                 FrameOutcome::Updated { stats, damage, .. } => (stats, damage, true),
             }
         };
+        let update_us = update_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or_default();
 
         // ⚠ `Unchanged` 时**连 present 都不能做**：本后端是 flip model
         // （`FLIP_DISCARD`，DComp 路径 `FLIP_SEQUENTIAL`），`Present` 之后后缓冲内容
         // 未定义。不画就 present 会把未定义内容推上屏。
-        let report = if redrawn {
-            self.render_pass(damage)
+        let redrawn = content_redrawn || capture;
+        let damage = if capture { Damage::Full } else { damage };
+        let render_started = frame_started.map(|_| std::time::Instant::now());
+        let (report, captured) = if redrawn {
+            self.render_pass(damage, capture)
         } else {
-            RenderReport::default()
+            (RenderReport::default(), None)
         };
+        let render_submit_us = render_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or_default();
 
         if trace_enabled() {
             self.frames += 1;
@@ -690,14 +721,24 @@ impl<V: View> HostWindow<V> {
                 .map(|k| k.to_string())
                 .unwrap_or_else(|| "-".into()),
         );
-
-        Frame {
-            diff: stats,
-            render: report,
-            hovered: self.router.hovered().map(|k| k.to_string()),
-            damage,
-            redrawn,
+        if let Some(started) = frame_started {
+            self.profiler.record(zephyra_fx::bridge::FrameTiming {
+                update_us,
+                render_submit_us,
+                total_us: started.elapsed().as_micros() as u64,
+            });
         }
+
+        (
+            Frame {
+                diff: stats,
+                render: report,
+                hovered: self.router.hovered().map(|k| k.to_string()),
+                damage,
+                redrawn,
+            },
+            captured,
+        )
     }
 
     /// 一帧的 GPU 部分。
@@ -708,7 +749,7 @@ impl<V: View> HostWindow<V> {
     /// 「先上传、等一帧、再画」会在中间那帧读到**已销毁**的纹理资源。
     ///
     /// 因此这里把两件事记进**同一条命令列表**：要么都成，要么都不成。
-    fn render_pass(&mut self, damage: Damage) -> RenderReport {
+    fn render_pass(&mut self, damage: Damage, capture: bool) -> (RenderReport, Option<Vec<u8>>) {
         // # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
         //
         // flip model（`CreateSwapChainForComposition` 恒为 FLIP_SEQUENTIAL）的
@@ -734,7 +775,7 @@ impl<V: View> HostWindow<V> {
         if let Err(e) = self.gpu.begin_frame() {
             eprintln!("[zephyra-d3d12] 开帧失败: {e}");
             self.drain_debug();
-            return RenderReport::default();
+            return (RenderReport::default(), None);
         }
 
         // 图集：只有**位图内容**变了才传。判据是 `atlas_revision()`，不是字形数 ——
@@ -757,7 +798,7 @@ impl<V: View> HostWindow<V> {
         // 自动转换状态。所以这一段与 MSAA 无关，始终执行。
         if let Err(e) = self.chain.barrier_to_render_target(self.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转 RENDER_TARGET 失败: {e}");
-            return RenderReport::default();
+            return (RenderReport::default(), None);
         }
         // ⚠ MSAA 开启时渲染目标是**多重采样纹理**，不是后缓冲。
         //
@@ -769,7 +810,7 @@ impl<V: View> HostWindow<V> {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("[zephyra-d3d12] 取不到 MSAA 的 RTV: {e}");
-                    return RenderReport::default();
+                    return (RenderReport::default(), None);
                 }
             }
         } else {
@@ -777,7 +818,7 @@ impl<V: View> HostWindow<V> {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("[zephyra-d3d12] 取不到后缓冲的 RTV: {e}");
-                    return RenderReport::default();
+                    return (RenderReport::default(), None);
                 }
             }
         };
@@ -836,13 +877,56 @@ impl<V: View> HostWindow<V> {
                 eprintln!("[zephyra-d3d12] MSAA 解析失败: {e}");
             }
         }
+        let staging = if capture {
+            match self
+                .chain
+                .record_readback(&self.gpu.device, self.gpu.list())
+            {
+                Ok(staging) => Some(staging),
+                Err(e) => {
+                    eprintln!("[zephyra-d3d12] 截图读回命令记录失败: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         if let Err(e) = self.chain.barrier_to_present(self.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转回 PRESENT 失败: {e}");
         }
         if let Err(e) = self.gpu.submit() {
             eprintln!("[zephyra-d3d12] 提交失败: {e}");
+            return (report, None);
         }
-        report
+        let captured = if let Some(staging) = staging {
+            if let Err(e) = self.gpu.wait_gpu() {
+                eprintln!("[zephyra-d3d12] 等待截图读回失败: {e}");
+                None
+            } else {
+                let size = self.chain.content_size();
+                let pixels = crate::Offscreen::map(&staging, size);
+                if pixels.is_empty() {
+                    eprintln!("[zephyra-d3d12] 截图读回缓冲为空");
+                    None
+                } else {
+                    Some(zephyra_fx::pixels::bmp_bytes(
+                        &zephyra_fx::PixelRead {
+                            data: pixels,
+                            order: zephyra_fx::pixels::ChannelOrder::Rgba,
+                            row_pitch: size.0 * 4,
+                            width: size.0,
+                            height: size.1,
+                            declared_width: size.0,
+                            declared_height: size.1,
+                        },
+                        true,
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+        (report, captured)
     }
 
     /// 让拖动窗口边时**逐帧跟随**（而不是拖完才更新一次）。
@@ -1267,6 +1351,9 @@ impl<V: View> HostWindow<V> {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
+            key_events: std::mem::take(&mut self.pending_key_events),
+            scroll: self.pending_scroll.take(),
+            pointer_events: std::mem::take(&mut self.pending_pointer_events),
             viewport: (size.0 as f32, size.1 as f32),
             scale: scale as f32,
             dt_ms,
@@ -1281,6 +1368,11 @@ impl<V: View> HostWindow<V> {
     /// 处理指针移动。返回是否产生了路由事件。
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer_pos = (x, y);
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Move,
+        });
         if trace_enabled() {
             eprintln!("[trace] CursorMoved ({x:.1}, {y:.1})");
         }
@@ -1305,6 +1397,11 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_down(&mut self) -> bool {
         self.pointer = Some(0);
         let (x, y) = self.pointer_pos;
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Down,
+        });
         let theme = self.theme;
         self.route(|router, node, out| {
             router.on_pointer(
@@ -1326,6 +1423,11 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_up(&mut self) -> bool {
         self.pointer = None;
         let (x, y) = self.pointer_pos;
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Up,
+        });
         let theme = self.theme;
         self.route(|router, node, out| {
             router.on_pointer(
@@ -1454,10 +1556,9 @@ fn hwnd_of<W: raw_window_handle::HasWindowHandle>(window: &W) -> Option<isize> {
 /// - **注入同源**：`inject_*` 直接调 [`HostWindow::on_cursor_moved`] /
 ///   [`HostWindow::on_pointer_down`] / [`HostWindow::on_pointer_up`]——合成
 ///   与物理事件零分叉（D3D11 侧同一论证）；
-/// - **截图诚实降级**：本后端的呈现走 DComp/交换链重建链路，后缓冲读回
-///   （MSAA resolve + copy to readback heap）尚未接线——返回 `None`，桥回
-///   「此后端不支持像素读回」。树/属性/注入三个高频能力不受影响；截图
-///   属 `ZEPHYRA_DEBUG_PORT` 真机验证轨道的后续项。
+/// - **截图时强制渲染并读回**：`screenshot()` 经 `frame_inner(true)` 完整重绘，
+///   MSAA resolve 后复制到 readback heap，再由桥返回 BMP 像素；D3D12 的真机闭环
+///   已覆盖该路径，避免把旧的「尚未接线」能力说明留在实现旁。
 impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     fn viewport(&self) -> (f32, f32) {
         let (w, h) = self.client_size();
@@ -1472,10 +1573,7 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     }
 
     fn props_dump(&self, path: &[usize]) -> Option<String> {
-        let mut node = self.cache.node()?;
-        for &i in path {
-            node = node.children().get(i)?;
-        }
+        let node = zephyra_fx::bridge::node_at_path(self.cache.node()?, path)?;
         Some(zephyra_fx::bridge::props_dump_of(node))
     }
 
@@ -1487,21 +1585,93 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         }
     }
 
+    fn resources(&mut self) -> Result<String, String> {
+        let telemetry = self
+            .resource_telemetry
+            .get_or_insert_with(zephyra_platform_win::ProcessTelemetry::new);
+        let sample = telemetry.sample()?;
+        Ok(sample.to_text(telemetry.gpu_error()))
+    }
+
     fn inject_hover(&mut self, x: f32, y: f32) {
         self.on_cursor_moved(x, y);
+        self.dirty = true;
+        self.sync_input();
     }
 
     fn inject_click(&mut self, x: f32, y: f32) {
-        // move → down → up：与物理点击完全同序。
+        // Keep each edge visible to views that derive clicks from pressed-state changes.
         self.on_cursor_moved(x, y);
+        self.sync_input();
         self.on_pointer_down();
+        self.dirty = true;
+        self.sync_input();
         self.on_pointer_up();
         self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_pointer_down(&mut self) {
+        self.on_pointer_down();
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_pointer_up(&mut self) {
+        self.on_pointer_up();
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn profile_start(&mut self, duration_seconds: u64) -> Result<(), String> {
+        self.profiler.start(duration_seconds)
+    }
+
+    fn profile_report(&mut self) -> Result<String, String> {
+        self.profiler.report()
+    }
+
+    fn inject_key(&mut self, key: &str) {
+        self.pending_key_events.extend([
+            zephyra_fx::KeyInput {
+                key: key.to_string(),
+                pressed: true,
+            },
+            zephyra_fx::KeyInput {
+                key: key.to_string(),
+                pressed: false,
+            },
+        ]);
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32) {
+        self.on_cursor_moved(x, y);
+        self.pending_scroll = Some(zephyra_fx::ScrollInput {
+            x,
+            y,
+            delta_x,
+            delta_y,
+        });
+        self.dirty = true;
+        self.sync_input();
     }
 
     fn screenshot(&mut self) -> Option<Vec<u8>> {
-        eprintln!("[zephyra-d3d12] 调试桥截图尚未接线（后缓冲读回），返回 ERR");
-        None
+        let (frame, screenshot) = self.frame_inner(true);
+        if frame.redrawn {
+            self.present();
+        }
+        screenshot
+    }
+}
+
+fn logical_key_name(key: &winit::keyboard::Key) -> String {
+    match key {
+        winit::keyboard::Key::Character(text) => text.to_string(),
+        winit::keyboard::Key::Named(named) => format!("{named:?}"),
+        other => format!("{other:?}"),
     }
 }
 
@@ -1544,7 +1714,24 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
                     self.on_pointer_up();
                 }
             },
-            WEvent::KeyboardInput { .. } => {
+            WEvent::KeyboardInput { event, .. } => {
+                self.pending_key_events.push(zephyra_fx::KeyInput {
+                    key: logical_key_name(&event.logical_key),
+                    pressed: event.state == ElementState::Pressed,
+                });
+                self.dirty = true;
+            }
+            WEvent::MouseWheel { delta, .. } => {
+                let (delta_x, delta_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                };
+                self.pending_scroll = Some(zephyra_fx::ScrollInput {
+                    x: self.pointer_pos.0,
+                    y: self.pointer_pos.1,
+                    delta_x,
+                    delta_y,
+                });
                 self.dirty = true;
             }
             _ => {}
@@ -1557,18 +1744,12 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         // 测试与布局（与 D3D11 侧同一时序契约）。
         //
         // ⚠ 控制流要跟桥联动：本后端是**事件驱动**（静止时 `about_to_wait`
-        // 不被调，与 D3D11 的常驻重绘循环不同），而 TCP 数据不会唤醒 Wait 模式
-        // —— 所以**有客户端时切 Poll**（命令低延迟），无客户端回 Wait
-        // （静止零开销的本后端卖点不动）。
+        // 不被调，与 D3D11 的常驻重绘循环不同），而 TCP 数据不会唤醒 Wait 模式。
+        // 所以有客户端时切 Poll；没有客户端但桥已开启时以低频 WaitUntil 重试 accept，
+        // 避免首个客户端断开后宿主永久睡眠。未启用桥时仍保留静止零开销。
         if let Some(mut b) = self.bridge.take() {
             b.poll(self);
-            let active = b.has_client();
             self.bridge = Some(b);
-            event_loop.set_control_flow(if active {
-                winit::event_loop::ControlFlow::Poll
-            } else {
-                winit::event_loop::ControlFlow::Wait
-            });
         }
         // 只在「有待处理的事件」时跑一帧。静止时一帧都不跑 —— 这既符合保留式 UI 的
         // 卖点，也让 demo 在静止时几乎没有 GPU 开销。
@@ -1587,7 +1768,7 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         //
         // ⚠ 设备已死时**无条件**跑一帧：`dirty` 可能已经被清掉（设备是在
         // `present()` 里死的），那样就再没有 `frame()` 可跑，恢复代码永远不执行。
-        if self.dirty || self.chain.device_dead() {
+        if self.dirty || self.chain.device_dead() || self.profiler.is_running() {
             let f = self.frame();
             if f.redrawn {
                 self.present();
@@ -1597,11 +1778,21 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         // 自己醒。不这么做，设备在空闲时挂掉就永远等不到下一次 `about_to_wait`，
         // 于是「恢复代码永不执行」。
         //
-        // ⚠ 设备**活着**时必须显式设回 `Wait`：`set_control_flow` 的值会**保留**，
-        // 而 `WaitUntil` 的期限一旦过去就会立刻再醒 —— 那会变成忙等（CPU 空转）。
+        // 控制流在这里统一决定：桥有客户端时低延迟 Poll；桥空闲时 50ms 重试 accept，
+        // 因为 TCP 连接本身不会唤醒 `Wait`；未启用桥时仍然零开销等待。
         if self.chain.device_dead() {
             let next = std::time::Instant::now() + DEVICE_RECOVERY_RETRY_INTERVAL;
             event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next));
+        } else if self
+            .bridge
+            .as_ref()
+            .is_some_and(zephyra_fx::bridge::DebugBridge::has_client)
+        {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        } else if self.bridge.is_some() {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                std::time::Instant::now() + std::time::Duration::from_millis(50),
+            ));
         } else {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
         }

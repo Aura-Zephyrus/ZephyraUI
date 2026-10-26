@@ -109,6 +109,14 @@ pub struct InputState {
     pub pressed: Option<ElementKey>,
     /// 当前活跃指针数。
     pub pointers: usize,
+    /// 本次同步收到的键盘边沿事件。一次 MCP `press_key` 会在同一轮同步中带入
+    /// Pressed 与 Released；应用可按逻辑键名处理快捷键或文本编辑命令。
+    pub key_events: Vec<KeyInput>,
+    /// 本次同步收到的滚轮增量与当前鼠标位置。正 `delta_y` 表示向上滚动；
+    /// 单位沿用 winit（物理像素或行数），应用按具体设备语义解释。
+    pub scroll: Option<ScrollInput>,
+    /// 本次同步按接收顺序发生的鼠标移动与按键边沿；按住移动时各帧持续收到 Move。
+    pub pointer_events: Vec<PointerInput>,
     /// 客户区视口，**物理像素**，与宿主的 `inner_size()` 同源。
     /// scale 是当时的缩放比（`window.scale_factor()`）。
     ///
@@ -149,6 +157,42 @@ pub struct InputState {
     /// 放在这里而不是另开一个 trait 方法：它与视口 / 缩放比同属
     /// 「宿主每帧开头把外部事实推给视图」那一批，多一条路径只会更容易漏。
     pub languages: Vec<String>,
+}
+
+/// 一个逻辑键的按下/抬起边沿。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyInput {
+    /// winit 逻辑键名：字符键为其文本，命名键为 `Enter` / `ArrowDown` 等。
+    pub key: String,
+    pub pressed: bool,
+}
+
+/// 一次滚轮输入。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollInput {
+    /// 事件发生时的客户区物理像素坐标。
+    pub x: f32,
+    pub y: f32,
+    /// 水平滚动增量。
+    pub delta_x: f32,
+    /// 垂直滚动增量；正数向上。
+    pub delta_y: f32,
+}
+
+/// 一次鼠标路径事件，坐标为客户区物理像素。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerInput {
+    pub x: f32,
+    pub y: f32,
+    pub phase: PointerInputPhase,
+}
+
+/// 鼠标路径的生命周期相位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerInputPhase {
+    Down,
+    Move,
+    Up,
 }
 
 /// 一帧里应用要做的事：宿主把「当前状态」变成一棵 `Element`。

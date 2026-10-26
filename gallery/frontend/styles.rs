@@ -8,7 +8,7 @@
 //! ```text
 //!   1. 控件层（15 个）      —— Button / Card / Dialog 的长相
 //!   2. 应用外壳 shell.zstyle —— 标题栏 / 导航 / 内容卡
-//!   3. 页面 page-*.zstyle   —— 每页自己的容器间距
+//!   3. 页面 pages.zstyle    —— 每页自己的容器间距
 //! ```
 //!
 //! # 为什么控件层在前而不是在后
@@ -41,8 +41,8 @@
 /// 合成一份之后它们相邻，改间距一眼看全；真正按页不同的东西（`.hero`、
 /// `.glass-*`）在自己的规则块里，也不会被别页的同名规则盖掉。
 const APP_SHEETS: &[(&str, &str)] = &[
-    ("shell", include_str!("../styles/shell.zstyle")),
-    ("pages", include_str!("../styles/pages.zstyle")),
+    ("shell", include_str!("shell.zstyle")),
+    ("pages", include_str!("pages.zstyle")),
 ];
 
 /// 全部样式表（控件层 + 本应用），按**加载顺序**返回 `(名字, 源码)`。

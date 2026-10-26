@@ -45,6 +45,7 @@ fn run_frames(g: &mut Gallery, n: u32) -> Vec<Option<&'static str>> {
             // 空表 = "读不到"，于是语言固定为 `SUPPORTED` 第一项，
             // 断言与宿主机器的 Windows 语言设置无关。
             languages: Vec::new(),
+            ..InputState::default()
         });
         out.push(g.enter_class());
     }
@@ -65,6 +66,7 @@ fn run_frames_dt(g: &mut Gallery, dt: f32, n: u32) {
             scale: 1.0,
             dt_ms: dt,
             languages: Vec::new(),
+            ..InputState::default()
         });
     }
 }
@@ -215,6 +217,7 @@ fn first_frame_zero_interval_is_safe_and_emits_no_class() {
         scale: 1.0,
         dt_ms: 0.0,
         languages: Vec::new(),
+        ..InputState::default()
     });
     assert_eq!(g.enter_ms, 0.0);
     assert_eq!(g.enter_class(), None);
@@ -238,6 +241,7 @@ fn huge_interval_is_clamped() {
         scale: 1.0,
         dt_ms: 100_000.0,
         languages: Vec::new(),
+        ..InputState::default()
     });
     assert_eq!(
         g.enter_ms, 0.0,
@@ -253,6 +257,7 @@ fn huge_interval_is_clamped() {
         scale: 1.0,
         dt_ms: 100_000.0,
         languages: Vec::new(),
+        ..InputState::default()
     });
     assert_eq!(g.enter_ms, anim::ENTER_MS);
     assert_eq!(g.enter_class(), None, "放完即无分类名");

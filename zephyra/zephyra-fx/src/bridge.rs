@@ -30,11 +30,11 @@
 //! 注入的 hover/click 在**同一帧**就参与命中测试与布局，AI 读回的树永远是
 //! 操控后的状态。截图是唯一例外——它必须发生在「渲染后、present 前」
 //! （flip model 下 present 之后后缓冲内容未定义），由宿主实现
-//! [`BridgeHost::screenshot`] 时自行择机（D3D11 侧的做法见
-//! `zephyra-winit` 的 `frame_captured`）。
+//! [`BridgeHost::screenshot`] 时自行择机（D3D11 与 D3D12 都在 present 前读回）。
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 /// 默认端口。`zephyra mcp` 与 `ZEPHYRA_DEBUG_PORT` 缺省都用它。
 pub const DEFAULT_PORT: u16 = 7878;
@@ -49,6 +49,8 @@ pub enum Command {
     Ping,
     /// 布局树 dump（缩进文本，路径列可直接复制给 `props`）。
     Tree,
+    /// 给模型的文本布局上下文：视口、最近帧统计与带绝对坐标的树。
+    Layout,
     /// 指定节点的属性表。`path` 是树里的子下标链（`0.1.2`）。
     Props { path: Vec<usize> },
     /// 最近一帧的统计（quads / dirty / hovered）。
@@ -59,8 +61,178 @@ pub enum Command {
     Hover { x: f32, y: f32 },
     /// 注入一次完整点击：move → down → up（顺序在同一帧内完成）。
     Click { x: f32, y: f32 },
+    /// 按下主指针按钮并保持。
+    PointerDown,
+    /// 抬起主指针按钮。
+    PointerUp,
+    /// 在有限时长内开启性能采样。
+    ProfileStart { duration_seconds: u64 },
+    /// 查询性能采样状态或已完成报告。
+    ProfileReport,
+    /// 注入一个逻辑键的按下与抬起。
+    PressKey { key: String },
+    /// 在给定指针位置注入滚轮增量。
+    Scroll {
+        x: f32,
+        y: f32,
+        delta_x: f32,
+        delta_y: f32,
+    },
+    /// 获取进程 CPU/GPU 与内存资源数据。
+    Resources,
     /// 渲一帧并读回像素，回 BMP 二进制（见 [`Response::Binary`]）。
     Shot,
+}
+
+/// 单帧 CPU 生成阶段耗时；单位为微秒，不包含 GPU 完成等待。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameTiming {
+    pub update_us: u64,
+    pub render_submit_us: u64,
+    pub total_us: u64,
+}
+
+#[derive(Debug)]
+pub struct PerformanceProfiler {
+    deadline: Option<Instant>,
+    started_at: Option<Instant>,
+    samples: Vec<ProfileSample>,
+    running: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProfileSample {
+    elapsed_ms: u64,
+    timing: FrameTiming,
+}
+
+impl PerformanceProfiler {
+    pub fn new() -> Self {
+        Self {
+            deadline: None,
+            started_at: None,
+            samples: Vec::new(),
+            running: false,
+        }
+    }
+
+    pub fn start(&mut self, duration_seconds: u64) -> Result<(), String> {
+        const MAX_DURATION_SECONDS: u64 = 300;
+        if !(1..=MAX_DURATION_SECONDS).contains(&duration_seconds) {
+            return Err(format!("采集时长必须在 1..={MAX_DURATION_SECONDS} 秒内"));
+        }
+        let now = Instant::now();
+        self.started_at = Some(now);
+        self.deadline = Some(now + Duration::from_secs(duration_seconds));
+        self.samples.clear();
+        self.samples.reserve(3000);
+        self.running = true;
+        Ok(())
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
+            && self
+                .deadline
+                .is_some_and(|deadline| Instant::now() < deadline)
+    }
+
+    pub fn record(&mut self, timing: FrameTiming) {
+        if !self.is_running() {
+            self.running = false;
+            return;
+        }
+        let elapsed_ms = self
+            .started_at
+            .map(|started| started.elapsed().as_millis() as u64)
+            .unwrap_or_default();
+        self.samples.push(ProfileSample { elapsed_ms, timing });
+        if self.samples.len() >= 3000
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.running = false;
+        }
+    }
+
+    pub fn report(&mut self) -> Result<String, String> {
+        if self.started_at.is_none() {
+            return Err("尚未启动性能采样".into());
+        }
+        if self.is_running() {
+            let remaining_ms = self
+                .deadline
+                .unwrap()
+                .saturating_duration_since(Instant::now())
+                .as_millis();
+            return Ok(format!("PROFILE_STATE running remaining_ms={remaining_ms}"));
+        }
+        self.running = false;
+        Ok(format_profile_report(
+            self.started_at.unwrap(),
+            &self.samples,
+        ))
+    }
+}
+
+impl Default for PerformanceProfiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn format_profile_report(started_at: Instant, samples: &[ProfileSample]) -> String {
+    if samples.is_empty() {
+        return "PROFILE_STATE complete\nframes=0\n采集期间没有完成的宿主帧".into();
+    }
+    let quantile = |mut values: Vec<u64>, percentile: usize| {
+        values.sort_unstable();
+        values[((values.len() - 1) * percentile).div_ceil(100)]
+    };
+    let column = |select: fn(&FrameTiming) -> u64| {
+        let values: Vec<u64> = samples
+            .iter()
+            .map(|sample| select(&sample.timing))
+            .collect();
+        let average = values.iter().sum::<u64>() as f64 / values.len() as f64;
+        format!(
+            "min={}us avg={average:.1}us p50={}us p95={}us max={}us",
+            values.iter().min().unwrap(),
+            quantile(values.clone(), 50),
+            quantile(values.clone(), 95),
+            values.iter().max().unwrap()
+        )
+    };
+    let mut report = format!(
+        concat!(
+            "PROFILE_STATE complete\n",
+            "frames={}\n",
+            "elapsed_ms={}\n",
+            "frame_total {}\n",
+            "update_layout {}\n",
+            "render_submit {}\n",
+            "frame_index elapsed_ms total_us update_layout_us render_submit_us\n"
+        ),
+        samples.len(),
+        started_at.elapsed().as_millis(),
+        column(|sample| sample.total_us),
+        column(|sample| sample.update_us),
+        column(|sample| sample.render_submit_us),
+    );
+    use std::fmt::Write as _;
+    for (index, sample) in samples.iter().enumerate() {
+        let _ = writeln!(
+            report,
+            "{} {} {} {} {}",
+            index + 1,
+            sample.elapsed_ms,
+            sample.timing.total_us,
+            sample.timing.update_us,
+            sample.timing.render_submit_us
+        );
+    }
+    report
 }
 
 /// 一条命令的响应（写回 TCP 的形式）。
@@ -89,11 +261,39 @@ pub trait BridgeHost {
     /// 最近一帧的统计。
     fn stats(&self) -> String;
 
+    /// 进程与图形设备的资源占用；后端无法读取时返回可说明原因的错误。
+    fn resources(&mut self) -> Result<String, String> {
+        Err("此后端未提供资源遥测".into())
+    }
+
     /// 注入指针移动。
     fn inject_hover(&mut self, x: f32, y: f32);
 
     /// 注入一次完整点击（move → down → up）。
     fn inject_click(&mut self, x: f32, y: f32);
+
+    /// 按下主指针按钮。
+    fn inject_pointer_down(&mut self);
+
+    /// 抬起主指针按钮。
+    fn inject_pointer_up(&mut self);
+
+    /// 启动有限时长的性能采样。
+    fn profile_start(&mut self, duration_seconds: u64) -> Result<(), String> {
+        let _ = duration_seconds;
+        Err("此后端未提供帧性能分析".into())
+    }
+
+    /// 返回采样状态；完成后返回逐帧报告。
+    fn profile_report(&mut self) -> Result<String, String> {
+        Err("此后端未提供帧性能分析".into())
+    }
+
+    /// 注入一个逻辑键的完整按下/抬起。
+    fn inject_key(&mut self, key: &str);
+
+    /// 注入滚轮事件，增量方向与 winit 一致（正 y 向上）。
+    fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32);
 
     /// **立即**渲一帧并读回像素，返回 BMP 字节。后端不支持读回时返回 `None`。
     ///
@@ -114,6 +314,9 @@ struct Connection {
     stream: TcpStream,
     /// 半行缓冲：非阻塞读到的字节先攒在这，凑齐一行才解析。
     buf: Vec<u8>,
+    /// 非阻塞写缓冲：大截图可能超过 TCP 发送缓冲，须跨帧续写。
+    write_buf: Vec<u8>,
+    write_offset: usize,
 }
 
 impl DebugBridge {
@@ -163,6 +366,8 @@ impl DebugBridge {
                 self.conn = Some(Connection {
                     stream,
                     buf: Vec::new(),
+                    write_buf: Vec::new(),
+                    write_offset: 0,
                 });
             }
         }
@@ -170,6 +375,15 @@ impl DebugBridge {
         let Some(conn) = &mut self.conn else {
             return;
         };
+        match flush_response(conn) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(e) => {
+                eprintln!("[zephyra] 调试桥响应发送失败: {e}");
+                self.conn = None;
+                return;
+            }
+        }
 
         // 读可用字节（非阻塞：WouldBlock = 本帧没有新命令）。
         let mut chunk = [0u8; 4096];
@@ -197,10 +411,7 @@ impl DebugBridge {
         }
 
         // 逐条处理凑齐的行。半行留在缓冲里等下一帧。
-        loop {
-            let Some(pos) = conn.buf.iter().position(|&b| b == b'\n') else {
-                break;
-            };
+        while let Some(pos) = conn.buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = conn.buf.drain(..=pos).collect();
             let line = String::from_utf8_lossy(&line[..line.len() - 1]); // 去 \n
             let line = line.trim();
@@ -211,9 +422,15 @@ impl DebugBridge {
                 Ok(cmd) => execute(&cmd, host),
                 Err(e) => Response::Err(e),
             };
-            if !write_response(&mut conn.stream, &resp) {
-                self.conn = None;
-                return;
+            conn.write_buf.extend_from_slice(&response_bytes(&resp));
+            match flush_response(conn) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(e) => {
+                    eprintln!("[zephyra] 调试桥响应发送失败: {e}");
+                    self.conn = None;
+                    return;
+                }
             }
         }
     }
@@ -240,22 +457,23 @@ use std::fmt::Write as _;
 ///
 /// 每行 `path tag key absx,absy w*h [styles...]`：
 ///
-/// - **path**（子下标链，如 `0.1.2`）是 `props` 命令的钥匙；
+/// - **path**（根节点 `0` 加子下标链，如 `0.1.2`）是 `props` 命令的钥匙；
 /// - 坐标已累成**绝对**值——`hover`/`click` 用的就是这一坐标系，
 ///   AI 从树里抄一个坐标就能点，不需要自己做相对/绝对换算；
 /// - 缩进只为人读，解析靠 path 列。
 pub fn tree_dump_of(root: &zephyra_core::node::Node) -> String {
-    fn rec(node: &zephyra_core::node::Node, path: String, dx: f32, dy: f32, out: &mut String) {
+    fn rec(node: &zephyra_core::node::Node, path: String, out: &mut String) {
         let r = node.arranged_rect();
-        let (x, y) = (dx + r.x, dy + r.y);
         let key = match node.key() {
             Some(k) => format!("{k}"),
             None => "-".into(),
         };
         let _ = write!(
             out,
-            "{path} {:?} {key} {x:.0},{y:.0} {:.0}x{:.0}",
+            "{path} {:?} {key} {:.0},{:.0} {:.0}x{:.0}",
             node.tag(),
+            r.x,
+            r.y,
             r.width,
             r.height
         );
@@ -268,12 +486,26 @@ pub fn tree_dump_of(root: &zephyra_core::node::Node) -> String {
             for _ in 0..depth {
                 out.push_str("  ");
             }
-            rec(child, format!("{path}.{i}"), x, y, out);
+            rec(child, format!("{path}.{i}"), out);
         }
     }
     let mut out = String::new();
-    rec(root, "0".into(), 0.0, 0.0, &mut out);
+    rec(root, "0".into(), &mut out);
     out
+}
+
+/// 按布局树路径取节点。首段 `0` 表示根节点，后续段是逐层子下标。
+pub fn node_at_path<'a>(
+    root: &'a zephyra_core::node::Node,
+    path: &[usize],
+) -> Option<&'a zephyra_core::node::Node> {
+    let (&root_index, children) = path.split_first()?;
+    if root_index != 0 {
+        return None;
+    }
+    children
+        .iter()
+        .try_fold(root, |node, &index| node.children().get(index))
 }
 
 /// 单节点属性表 dump（`props` 命令的正文）。
@@ -288,7 +520,7 @@ pub fn props_dump_of(node: &zephyra_core::node::Node) -> String {
     }
     let _ = writeln!(
         s,
-        "rect {:.0},{:.0} {:.0}x{:.0} (相对父)",
+        "rect {:.0},{:.0} {:.0}x{:.0} (absolute)",
         r.x, r.y, r.width, r.height
     );
     for name in node.style_names() {
@@ -310,11 +542,19 @@ pub fn props_dump_of(node: &zephyra_core::node::Node) -> String {
 /// ```text
 /// ping
 /// tree
+/// layout
 /// props 0.1.2
 /// stats
 /// viewport
 /// hover 120.5 48
 /// click 120.5 48
+/// pointer_down
+/// pointer_up
+/// press_key Enter
+/// scroll 120 48 0 -3
+/// resources
+/// profile_start 30
+/// profile_report
 /// shot
 /// ```
 pub fn parse_command(line: &str) -> Result<Command, String> {
@@ -324,7 +564,22 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
     match cmd {
         "ping" => Ok(Command::Ping),
         "tree" => Ok(Command::Tree),
+        "layout" => Ok(Command::Layout),
         "stats" => Ok(Command::Stats),
+        "resources" => Ok(Command::Resources),
+        "profile_report" if rest.is_empty() => Ok(Command::ProfileReport),
+        "profile_start" => {
+            if rest.len() != 1 {
+                return Err("profile_start 需要一个采集秒数，范围 1..=300".into());
+            }
+            let duration_seconds = rest[0]
+                .parse::<u64>()
+                .map_err(|_| "采集秒数必须是 1..=300 的整数")?;
+            if !(1..=300).contains(&duration_seconds) {
+                return Err("采集秒数必须在 1..=300 范围内".into());
+            }
+            Ok(Command::ProfileStart { duration_seconds })
+        }
         "viewport" => Ok(Command::Viewport),
         "shot" => Ok(Command::Shot),
         "props" => {
@@ -352,8 +607,43 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
                 Ok(Command::Click { x, y })
             }
         }
+        "pointer_down" if rest.is_empty() => Ok(Command::PointerDown),
+        "pointer_up" if rest.is_empty() => Ok(Command::PointerUp),
+        "press_key" => {
+            if rest.len() != 1 || rest[0].chars().any(char::is_control) {
+                return Err("press_key 需要一个逻辑键名，如 `press_key Enter` 或 `press_key a`".into());
+            }
+            Ok(Command::PressKey {
+                key: rest[0].to_string(),
+            })
+        }
+        "scroll" => {
+            if rest.len() != 4 {
+                return Err("scroll 需要 x y delta_x delta_y 四个数字参数".into());
+            }
+            let parse = |i: usize, name: &str| {
+                rest[i]
+                    .parse::<f32>()
+                    .map_err(|_| format!("{name} `{}` 不是数字", rest[i]))
+            };
+            let (x, y, delta_x, delta_y) = (
+                parse(0, "x 坐标")?,
+                parse(1, "y 坐标")?,
+                parse(2, "delta_x")?,
+                parse(3, "delta_y")?,
+            );
+            if ![x, y, delta_x, delta_y].into_iter().all(f32::is_finite) {
+                return Err("滚轮坐标与增量必须是有限数".into());
+            }
+            Ok(Command::Scroll {
+                x,
+                y,
+                delta_x,
+                delta_y,
+            })
+        }
         other => Err(format!(
-            "未知命令 `{other}`；可用：ping tree props stats viewport hover click shot"
+            "未知命令 `{other}`；可用：ping tree layout props stats resources profile_start profile_report viewport hover click pointer_down pointer_up press_key scroll shot"
         )),
     }
 }
@@ -373,6 +663,16 @@ fn execute(cmd: &Command, host: &mut dyn BridgeHost) -> Response {
     match cmd {
         Command::Ping => Response::Text(vec!["pong".into()]),
         Command::Tree => Response::Text(host.tree_dump().lines().map(str::to_string).collect()),
+        Command::Layout => {
+            let (w, h) = host.viewport();
+            let mut lines = vec![
+                format!("viewport {w:.0}x{h:.0} physical-pixels"),
+                format!("stats {}", host.stats()),
+                "layout-tree path tag key absolute-x,absolute-y widthxheight [classes]".into(),
+            ];
+            lines.extend(host.tree_dump().lines().map(str::to_string));
+            Response::Text(lines)
+        }
         Command::Props { path } => match host.props_dump(path) {
             Some(s) => Response::Text(s.lines().map(str::to_string).collect()),
             None => Response::Err(format!(
@@ -384,6 +684,10 @@ fn execute(cmd: &Command, host: &mut dyn BridgeHost) -> Response {
             )),
         },
         Command::Stats => Response::Text(host.stats().lines().map(str::to_string).collect()),
+        Command::Resources => match host.resources() {
+            Ok(resources) => Response::Text(resources.lines().map(str::to_string).collect()),
+            Err(error) => Response::Err(error),
+        },
         Command::Viewport => {
             let (w, h) = host.viewport();
             Response::Text(vec![format!("{w} {h}")])
@@ -395,6 +699,37 @@ fn execute(cmd: &Command, host: &mut dyn BridgeHost) -> Response {
         Command::Click { x, y } => {
             host.inject_click(*x, *y);
             Response::Text(vec!["clicked".into()])
+        }
+        Command::PointerDown => {
+            host.inject_pointer_down();
+            Response::Text(vec!["pointer_down".into()])
+        }
+        Command::PointerUp => {
+            host.inject_pointer_up();
+            Response::Text(vec!["pointer_up".into()])
+        }
+        Command::ProfileStart { duration_seconds } => match host.profile_start(*duration_seconds) {
+            Ok(()) => Response::Text(vec![format!(
+                "performance profiling started for {duration_seconds}s"
+            )]),
+            Err(error) => Response::Err(error),
+        },
+        Command::ProfileReport => match host.profile_report() {
+            Ok(report) => Response::Text(report.lines().map(str::to_string).collect()),
+            Err(error) => Response::Err(error),
+        },
+        Command::PressKey { key } => {
+            host.inject_key(key);
+            Response::Text(vec![format!("pressed {key}")])
+        }
+        Command::Scroll {
+            x,
+            y,
+            delta_x,
+            delta_y,
+        } => {
+            host.inject_scroll(*x, *y, *delta_x, *delta_y);
+            Response::Text(vec!["scrolled".into()])
         }
         Command::Shot => match host.screenshot() {
             Some(data) => Response::Binary {
@@ -410,7 +745,7 @@ fn execute(cmd: &Command, host: &mut dyn BridgeHost) -> Response {
 ///
 /// 文本响应：每行一条 + 终止行 `OK`。二进制：`BIN <len> <note>\n` + 原始字节
 /// + `\nOK`。客户端读到 `OK` / 消费完 `BIN` 才算一条响应结束。
-fn write_response(stream: &mut TcpStream, resp: &Response) -> bool {
+fn response_bytes(resp: &Response) -> Vec<u8> {
     let mut head = String::new();
     match resp {
         Response::Text(lines) => {
@@ -429,15 +764,28 @@ fn write_response(stream: &mut TcpStream, resp: &Response) -> bool {
             head.push_str(&format!("BIN {} {note}\n", data.len()));
         }
     }
-    if stream.write_all(head.as_bytes()).is_err() {
-        return false;
-    }
+    let mut out = head.into_bytes();
     if let Response::Binary { data, .. } = resp {
-        if stream.write_all(data).is_err() || stream.write_all(b"\nOK\n").is_err() {
-            return false;
+        out.extend_from_slice(data);
+        out.extend_from_slice(b"\nOK\n");
+    }
+    out
+}
+
+/// Writes as much of a queued response as the non-blocking socket currently accepts.
+/// Returns `false` while bytes remain for a later poll.
+fn flush_response(conn: &mut Connection) -> Result<bool, std::io::Error> {
+    while conn.write_offset < conn.write_buf.len() {
+        match conn.stream.write(&conn.write_buf[conn.write_offset..]) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => conn.write_offset += n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+            Err(e) => return Err(e),
         }
     }
-    stream.flush().is_ok()
+    conn.write_buf.clear();
+    conn.write_offset = 0;
+    Ok(true)
 }
 
 /// 属性值 → 人读文本（`props` 命令用；后端 host 实现也复用它 dump 属性表）。
@@ -488,6 +836,7 @@ mod tests {
     fn parses_known_commands() {
         assert_eq!(parse_command("ping"), Ok(Command::Ping));
         assert_eq!(parse_command("tree"), Ok(Command::Tree));
+        assert_eq!(parse_command("layout"), Ok(Command::Layout));
         assert_eq!(parse_command("stats"), Ok(Command::Stats));
         assert_eq!(parse_command("shot"), Ok(Command::Shot));
         assert_eq!(
@@ -504,6 +853,31 @@ mod tests {
             parse_command("click 10 20"),
             Ok(Command::Click { x: 10.0, y: 20.0 })
         );
+        assert_eq!(parse_command("pointer_down"), Ok(Command::PointerDown));
+        assert_eq!(parse_command("pointer_up"), Ok(Command::PointerUp));
+        assert_eq!(
+            parse_command("profile_start 30"),
+            Ok(Command::ProfileStart {
+                duration_seconds: 30
+            })
+        );
+        assert_eq!(parse_command("profile_report"), Ok(Command::ProfileReport));
+        assert_eq!(
+            parse_command("press_key ArrowDown"),
+            Ok(Command::PressKey {
+                key: "ArrowDown".into()
+            })
+        );
+        assert_eq!(
+            parse_command("scroll 10 20 0 -3"),
+            Ok(Command::Scroll {
+                x: 10.0,
+                y: 20.0,
+                delta_x: 0.0,
+                delta_y: -3.0,
+            })
+        );
+        assert_eq!(parse_command("resources"), Ok(Command::Resources));
     }
 
     #[test]
@@ -516,6 +890,12 @@ mod tests {
             ("hover 1", "缺一个坐标"),
             ("hover a b", "坐标不是数字"),
             ("hover nan 0", "非有限数"),
+            ("press_key", "缺键名"),
+            ("press_key Enter key", "多余键名"),
+            ("scroll 0 0 1", "滚轮参数不足"),
+            ("scroll 0 0 nan 1", "滚轮非有限"),
+            ("profile_start 0", "时长越界"),
+            ("profile_start 301", "时长越界"),
         ] {
             let err = parse_command(line).unwrap_err();
             assert!(!err.is_empty(), "`{line}`（{why}）的错误文案不能是空的");
@@ -538,6 +918,9 @@ mod tests {
     struct MockHost {
         clicks: Vec<(f32, f32)>,
         hovers: Vec<(f32, f32)>,
+        keys: Vec<String>,
+        scrolls: Vec<(f32, f32, f32, f32)>,
+        pointer_button_events: Vec<bool>,
         shot_bytes: Option<Vec<u8>>,
     }
 
@@ -546,6 +929,9 @@ mod tests {
             Self {
                 clicks: Vec::new(),
                 hovers: Vec::new(),
+                keys: Vec::new(),
+                scrolls: Vec::new(),
+                pointer_button_events: Vec::new(),
                 shot_bytes: None,
             }
         }
@@ -573,9 +959,112 @@ mod tests {
         fn inject_click(&mut self, x: f32, y: f32) {
             self.clicks.push((x, y));
         }
+        fn inject_pointer_down(&mut self) {
+            self.pointer_button_events.push(true);
+        }
+        fn inject_pointer_up(&mut self) {
+            self.pointer_button_events.push(false);
+        }
+        fn inject_key(&mut self, key: &str) {
+            self.keys.push(key.to_string());
+        }
+
+        fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32) {
+            self.scrolls.push((x, y, delta_x, delta_y));
+        }
         fn screenshot(&mut self) -> Option<Vec<u8>> {
             self.shot_bytes.clone()
         }
+    }
+
+    #[test]
+    fn performance_profiler_is_opt_in_bounded_and_formats_frame_detail() {
+        let mut profiler = PerformanceProfiler::new();
+        assert!(profiler.report().unwrap_err().contains("尚未启动"));
+        assert!(profiler.start(0).is_err());
+        assert!(profiler.start(301).is_err());
+        profiler.start(1).unwrap();
+        profiler.record(FrameTiming {
+            update_us: 120,
+            render_submit_us: 80,
+            total_us: 210,
+        });
+        let report = format_profile_report(
+            Instant::now(),
+            &[ProfileSample {
+                elapsed_ms: 1,
+                timing: FrameTiming {
+                    update_us: 120,
+                    render_submit_us: 80,
+                    total_us: 210,
+                },
+            }],
+        );
+        assert!(report.contains("PROFILE_STATE complete"));
+        assert!(
+            report.contains("frame_index elapsed_ms total_us update_layout_us render_submit_us")
+        );
+        assert!(report.contains("1 1 210 120 80"));
+    }
+
+    #[test]
+    fn performance_profiler_stops_at_the_frame_limit() {
+        let mut profiler = PerformanceProfiler::new();
+        profiler.start(300).unwrap();
+        for _ in 0..3000 {
+            profiler.record(FrameTiming {
+                update_us: 1,
+                render_submit_us: 2,
+                total_us: 3,
+            });
+        }
+        assert!(!profiler.is_running());
+        assert!(profiler.report().unwrap().contains("frames=3000"));
+    }
+
+    #[test]
+    fn dispatches_pointer_button_edges_independently() {
+        let mut host = MockHost::new();
+        assert_eq!(
+            execute(&Command::PointerDown, &mut host),
+            Response::Text(vec!["pointer_down".into()])
+        );
+        assert_eq!(
+            execute(&Command::PointerUp, &mut host),
+            Response::Text(vec!["pointer_up".into()])
+        );
+        assert_eq!(host.pointer_button_events, [true, false]);
+    }
+
+    #[test]
+    fn dispatches_key_scroll_and_text_layout() {
+        let mut host = MockHost::new();
+        assert_eq!(
+            execute(
+                &Command::PressKey {
+                    key: "Enter".into()
+                },
+                &mut host
+            ),
+            Response::Text(vec!["pressed Enter".into()])
+        );
+        assert_eq!(host.keys, ["Enter"]);
+        execute(
+            &Command::Scroll {
+                x: 4.0,
+                y: 5.0,
+                delta_x: 0.0,
+                delta_y: -2.0,
+            },
+            &mut host,
+        );
+        assert_eq!(host.scrolls, [(4.0, 5.0, 0.0, -2.0)]);
+        let Response::Text(layout) = execute(&Command::Layout, &mut host) else {
+            panic!("layout 必须返回文本")
+        };
+        assert!(layout[0].contains("800x600"));
+        assert!(layout[2].contains("absolute-x"));
+        assert!(layout.iter().any(|line| line.contains("0.0 Text title")));
     }
 
     /// 客户端读一条响应：读到 `OK` 行或 `ERR` 行为止（`BIN` 时先消费载荷）。
@@ -634,15 +1123,23 @@ mod tests {
 
     #[test]
     fn full_round_trip_over_tcp() {
-        let (mut bridge, port) = bridge_on_ephemeral_port();
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let (bridge, port) = bridge_on_ephemeral_port();
         let mut host = MockHost::new();
         host.shot_bytes = Some(b"BMP!".to_vec());
-
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let worker_done = done.clone();
+        let (host_tx, host_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut bridge = bridge;
+            while !worker_done.load(Ordering::Acquire) {
+                bridge.poll(&mut host);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            host_tx.send(host).unwrap();
+        });
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        client.set_nonblocking(false).unwrap();
-        // accept 发生在 poll 里，先 poll 一次把连接收进来。
-        bridge.poll(&mut host);
-        assert!(bridge.conn.is_some(), "poll 应当接受待处理的连接");
 
         // 文本命令。⚠ 逐条发收：桥在一次 poll 里会把凑齐的多条命令**连续**
         // 回包，客户端按「读到 OK 为止」切分时无法回头再切——协议是逐条的，
@@ -655,7 +1152,6 @@ mod tests {
         ] {
             client.write_all(cmd.as_bytes()).unwrap();
             client.write_all(b"\n").unwrap();
-            bridge.poll(&mut host);
             let r = read_response(&mut client);
             assert!(r.contains(expect), "`{cmd}` 的响应缺 `{expect}`：{r}");
             assert!(r.ends_with("OK\n"), "文本响应以 OK 终止：{r}");
@@ -663,30 +1159,66 @@ mod tests {
 
         // 注入命令到达宿主（各自一轮，响应都要读走——否则残留会污染下轮切分）。
         client.write_all(b"click 33 44\n").unwrap();
-        bridge.poll(&mut host);
         assert!(read_response(&mut client).contains("clicked"));
         client.write_all(b"hover 1 2\n").unwrap();
-        bridge.poll(&mut host);
         assert!(read_response(&mut client).contains("hovered"));
-        assert_eq!(host.clicks, vec![(33.0, 44.0)]);
-        assert_eq!(host.hovers, vec![(1.0, 2.0)]);
 
         // 无效路径得到 ERR，且连接不断（下一条命令还能走）。
         client.write_all(b"props 9.9\n").unwrap();
-        bridge.poll(&mut host);
         let r = read_response(&mut client);
         assert!(r.starts_with("ERR "), "{r}");
         client.write_all(b"tree\n").unwrap();
-        bridge.poll(&mut host);
         let r = read_response(&mut client);
         assert!(r.contains("Text title"), "{r}");
 
         // 二进制响应。
         client.write_all(b"shot\n").unwrap();
-        bridge.poll(&mut host);
         let r = read_response(&mut client);
         assert!(r.contains("BIN 4 bmp 24bpp"), "{r}");
         assert!(r.ends_with("BMP!\nOK\n"), "{r}");
+        drop(client);
+        done.store(true, Ordering::Release);
+        let host = host_rx.recv().unwrap();
+        worker.join().unwrap();
+        assert_eq!(host.clicks, vec![(33.0, 44.0)]);
+        assert_eq!(host.hovers, vec![(1.0, 2.0)]);
+    }
+
+    #[test]
+    fn large_screenshot_is_drained_across_nonblocking_polls() {
+        use std::io::{BufRead, BufReader, Read};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let (bridge, port) = bridge_on_ephemeral_port();
+        let mut host = MockHost::new();
+        let mut payload = vec![0x5a; 1024 * 1024];
+        payload[100..104].copy_from_slice(b"\nOK\n");
+        host.shot_bytes = Some(payload.clone());
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let worker_done = done.clone();
+        let worker = std::thread::spawn(move || {
+            let mut bridge = bridge;
+            while !worker_done.load(Ordering::Acquire) {
+                bridge.poll(&mut host);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.write_all(b"shot\n").unwrap();
+        let mut reader = BufReader::new(client);
+        let mut header = String::new();
+        reader.read_line(&mut header).unwrap();
+        assert_eq!(header, format!("BIN {} bmp 24bpp\n", payload.len()));
+        let mut received = vec![0; payload.len()];
+        reader.read_exact(&mut received).unwrap();
+        assert_eq!(received, payload);
+        let mut terminator = [0; 4];
+        reader.read_exact(&mut terminator).unwrap();
+        assert_eq!(&terminator, b"\nOK\n");
+
+        done.store(true, Ordering::Release);
+        worker.join().unwrap();
     }
 
     #[test]
@@ -730,3 +1262,7 @@ mod tests {
         assert!(bridge.conn.is_some(), "新客户端应当能接上");
     }
 }
+
+#[cfg(test)]
+#[path = "bridge_tree_dump_tests.rs"]
+mod tree_dump_tests;

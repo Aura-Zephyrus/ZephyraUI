@@ -709,7 +709,7 @@ fn dump_cpu(light: bool) {
 
 /// demo 自带的 MiSans 字体（含 CJK）。不放副本，直接内嵌仓库里那一份 ——
 /// 7.7MB 进两次二进制没有意义。
-const DEMO_FONT: &[u8] = include_bytes!("../../examples/fonts/MiSans-Regular.ttf");
+const DEMO_FONT: &[u8] = include_bytes!("../../../examples/fonts/MiSans-Regular.ttf");
 
 /// 让 `zephyra_fx` 选中自带字体（与 `examples/demo.rs` 同手法）。
 fn use_demo_font() {

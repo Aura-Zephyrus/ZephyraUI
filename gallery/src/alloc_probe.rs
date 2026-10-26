@@ -57,7 +57,7 @@ fn record(n: usize) {
 
 /// 包一层的全局分配器。
 ///
-/// 由 `bin/main.rs` 用 `#[global_allocator]` 注册 —— **不要**在这里注册：
+/// 由 `src/bin/main.rs` 用 `#[global_allocator]` 注册 —— **不要**在这里注册：
 /// `#[global_allocator]` 只能有一个，且必须待在可执行文件里。
 pub struct Counting;
 
@@ -90,7 +90,7 @@ unsafe impl GlobalAlloc for Counting {
 // 报 `E0759 conflicts with global allocator` —— 而 lib 单独编译时完全正常，
 // 所以症状只在本 crate 第一次同时编 lib + bin 时才现形。
 //
-// 现在注册在 `bin/main.rs`。lib 只提供类型与计数器，于是探针逻辑**可单测**，
+// 现在注册在 `src/bin/main.rs`。lib 只提供类型与计数器，于是探针逻辑**可单测**，
 // 而全局状态仍然只有一份。
 
 /// 一次采样的计数。

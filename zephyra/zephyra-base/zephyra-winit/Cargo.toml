@@ -47,6 +47,7 @@ rust-version.workspace = true
 [dependencies]
 zephyra-core = { path = "../../zephyra-core" }
 zephyra-fx = { path = "../../zephyra-fx" }
+zephyra-app-config = { path = "../zephyra-app-config" }
 winit = "0.30"
 # 顶点结构用 bytemuck 的 Pod/Zeroable derive，省掉手写字段校验。
 bytemuck = { version = "1", features = ["derive"] }
@@ -62,6 +63,7 @@ ab_glyph = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 zephyra-dcomp = { path = "../zephyra-dcomp" }
+zephyra-platform-win = { path = "../zephyra-platform-win" }
 # D3D11 渲染 + DXGI 呈现。
 #
 # 版本必须与 `zephyra-dcomp` 一致（都是 0.62）—— COM 接口类型要互相 cast 就得来自

@@ -1,6 +1,6 @@
-<!-- gallery 应用外壳与页面的结构声明（.zypui 组件模板）。
+<!-- gallery 应用外壳与页面的结构声明（.zypui 组件模板），统一放在 frontend/。
 
-     这一份是 src/app/shell.rs 与 src/app/pages/*.rs 的结构逻辑翻译：
+     这一份是 frontend/app/shell.rs 与 frontend/app/pages/*.rs 的结构逻辑翻译：
      「建哪些节点、发哪些分类名、key 是什么」全部搬到这里；状态经 @绑定
      从 Gallery 来，文案走 tr('…')。外观值一个都没有 —— 全部在 .zstyle。
 

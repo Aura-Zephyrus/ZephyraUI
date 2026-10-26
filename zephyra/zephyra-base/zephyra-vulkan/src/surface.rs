@@ -192,7 +192,7 @@ unsafe extern "system" fn debug_messenger_callback(
     };
     if !user_data.is_null() {
         // user_data 指向 `DebugState` 建时 `Box::into_raw` 出来的 Arc 克隆。
-        let sink = unsafe { &*user_data.cast::<Mutex<Vec<DebugMessage>>>() };
+        let sink = unsafe { &*user_data.cast::<Arc<Mutex<Vec<DebugMessage>>>>() };
         sink.lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(msg);
@@ -240,6 +240,10 @@ pub struct Gpu {
     /// 原因 —— 门禁在那种机器上必须能优雅跳过（`debug()` 回 `None`）。
     pub(crate) debug: Option<DebugState>,
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "renderer_tests.rs"]
+mod renderer_tests;
 
 impl fmt::Debug for Gpu {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

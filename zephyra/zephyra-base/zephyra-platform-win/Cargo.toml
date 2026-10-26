@@ -22,6 +22,10 @@ windows = { version = "0.62", features = [
   "Win32_UI_WindowsAndMessaging",
   # live_resize 的测试要建真窗口：GetModuleHandleW / WNDCLASSW
   "Win32_System_LibraryLoader",
+  # MCP 进程/GPU 性能计数器和进程内存统计
+  "Win32_System_Performance",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
   "Win32_Graphics_Gdi",
 ] }
 

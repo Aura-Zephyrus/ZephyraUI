@@ -25,9 +25,15 @@ cd myapp
 myapp/
   Cargo.toml          依赖已指向本机这份 ZephyraUI checkout
   zephyra.toml        窗口尺寸 + 样式表清单
-  src/main.rs         能编译的最小入口（一个 View + 一个窗口）
-  styles/app.zstyle    样式
+  src/main.rs         窗口宿主入口
+  frontend/
+    app.rs             示例 View 与界面状态
+    app.zstyle         前端样式
 ```
+
+应用源码遵循 Rust 项目的常见布局，统一放在 `src/`；Gallery 的库代码和多个
+可执行入口也放在其 `src/`（入口位于 `src/bin/`）。`zephyra new` 生成的单入口
+项目将宿主入口放在 `src/main.rs`，前端实现和样式放在同级 `frontend/`。
 
 `zephyra new` **不覆盖**已存在的目录（退出码 3）。确实要覆盖加 `--force`，而且它只删
 自己写过的那几个文件，不碰目录里的其它东西。
@@ -44,11 +50,12 @@ zephyra run
 开发时用 `dev`：
 
 ```text
-zephyra dev
+zephyra dev --styles frontend
 ```
 
 它默认开 `ZEPHYRA_TRACE=1`（不打开的话开发期最需要的那些行全都不打），并且盯着
-`styles/` 下的 `.zstyle`——改样式不用重编译，变了就重启进程。
+`frontend/` 下的 `.zstyle`——改样式不用重编译，变了就重启进程。
+`ZephyraUI.json` 的修改也会触发重建，以确保窗口配置写入应用产物。
 
 不盯 `.rs`：那是 cargo 自己的事，两个 watcher 管同一份代码会互相触发。
 
@@ -64,7 +71,7 @@ cargo zephyra dev
 ## 查样式表
 
 ```text
-zephyra check styles/app.zstyle
+zephyra check frontend/app.zstyle
 zephyra check --format json a.zstyle b.zstyle     # 给 CI / 编辑器
 zephyra props text                                # 列含 "text" 的属性
 ```

@@ -1,4 +1,4 @@
-/* gallery 的页面样式 —— Apple HIG 度量。
+/* gallery 的页面样式 —— Apple HIG 度量。前端资源放在 frontend/。
  *
  * 与控件层的分工：控件层说「一个 Button 长什么样」，这里说「Button 摆在
  * 页面的哪一行、这一行的左右各多宽」。

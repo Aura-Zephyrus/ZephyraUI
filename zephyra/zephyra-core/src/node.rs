@@ -199,11 +199,10 @@ impl Node {
         &self.children
     }
 
-    /// 已摆放的矩形（**相对父节点**）。
+    /// 已摆放的矩形（**绝对坐标**）。
     ///
-    /// 只读访问器：写入方是排列趟（`pub(crate)` 语义不变），唯一的外部读者是
-    /// `zephyra-fx` 的调试桥——dump 布局树要把逐级矩形累成**绝对**坐标，
-    /// AI 的点击注入用的正是同一坐标系。
+    /// 只读访问器：写入方是排列趟（`pub(crate)` 语义不变）；命中测试与调试桥直接
+    /// 使用这个矩形，因此布局树坐标与指针注入处于同一坐标系。
     pub fn arranged_rect(&self) -> crate::core::Rect {
         self.arranged_rect
     }
@@ -244,7 +243,7 @@ impl Node {
         }
     }
 
-    /// 本节点已摆放的矩形（相对父节点）。
+    /// 本节点已摆放的矩形（绝对坐标）。
     pub fn rect(&self) -> Rect {
         self.arranged_rect
     }

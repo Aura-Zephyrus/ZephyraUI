@@ -36,10 +36,12 @@ use zephyra_platform::{
 };
 
 mod live_resize;
+mod telemetry;
 pub use live_resize::{
     install as install_live_resize, restore as restore_live_resize, set_render_hook, wm_size_count,
     wm_size_skipped, LiveResizeError, RenderHook,
 };
+pub use telemetry::{ProcessResourceSample, ProcessTelemetry};
 mod locale;
 mod version;
 pub use version::build_number;
@@ -47,7 +49,7 @@ pub use version::build_number;
 /// Windows 平台实现。
 ///
 /// 无状态：版本号与系统主题都是**读一次**的外部事实，缓存在 [`std::sync::OnceLock`] 里
-/// （见 [`version::build_number`] 与 [`sys_theme`]），因此本结构体可以零成本复制。
+/// （见 [`version::build_number`] 与 `sys_theme`），因此本结构体可以零成本复制。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Windows;
 

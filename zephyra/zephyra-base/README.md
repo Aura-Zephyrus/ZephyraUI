@@ -73,6 +73,7 @@ base 不依赖 `zephyra-controls`（将来若有）。它只依赖核心，或�
 
 | crate | 职责 | 平台 | unsafe |
 | --- | --- | --- | --- |
+| `zephyra-app-config` | 读取消费项目根目录的 `ZephyraUI.json` | 全平台 | 否 |
 | `zephyra-winit` | 窗口 + 事件循环 + D3D11 设备 + `DisplayList` 回放 | 全平台 | 本 crate 内无 unsafe 块 |
 | `zephyra-winit-d3d12` | 窗口 + D3D12 后端（与 D3D11 **互不依赖**） | Windows | 需要 |
 | `zephyra-dcomp` | DirectComposition 呈现：device/target/visual 树 + composition swapchain | Windows | 需要 |

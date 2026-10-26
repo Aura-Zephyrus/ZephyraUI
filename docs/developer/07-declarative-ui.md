@@ -12,7 +12,7 @@
 
 仓里有两个完整的真实用户：
 
-- `gallery/`（应用外壳 + 17 个页面，结构来源 `gallery/ui/shell.zypui`）；
+- `gallery/`（应用外壳 + 17 个页面，前端文件集中在 `gallery/frontend/`，结构来源 `gallery/frontend/shell.zypui`）；
 - `examples/ui/demo.zypui`（最小示例，六个视图函数的翻译）。
 
 ## 编译成二进制，运行时零解析
@@ -59,6 +59,7 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 | `width` / `height` | WIDTH / HEIGHT | 数值——**仅限 `fill:` 开头的 key**（编译期强制） |
 | `url` | 宿主 `prop_key("url")` 给的键 | 字符串 |
 | `filter` / `blend` | FILTER / BLEND_MODE | **结构值**（见下） |
+| `render-source` | RENDER_SOURCE | 字符串 kind，由宿主的 `Host::render_source` 查找实际源 |
 
 外观值（颜色/字号/圆角…）**刻意不在表内**：`.zypui` 里写不了外观，这是规矩
 不是限制。对应的门禁是「源码/模板零外观」扫描。
@@ -80,6 +81,20 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 
 `Raw` 在条件/拼接等其它上下文里按「假」降级——给错类型时画面上少一个效果，
 不崩帧。
+
+### 外部渲染源：只声明 kind，payload 归宿主
+
+`.zypui` 可以声明一个宿主已登记的渲染源 kind：
+
+```xml
+<container key="video-surface" render-source="video:main"/>
+```
+
+该属性不构造 payload。实例化时调用 `Host::render_source(kind)`；宿主返回对应的
+`RenderSource`（含类型化 payload），未登记或返回不同 kind 会作为构建错误报告。
+宿主应跨帧复用同一个 `RenderSource` / payload `Arc`，避免触发无意义的 diff。
+kind 可以是字符串表达式，因此组件参数也可透传只读 kind 名；模板不能改写或检查
+payload。
 
 ## 组件模板
 
@@ -108,7 +123,7 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 
 字符串只有 `&'static` 一个形状：字面量来自编译产物、动态拼接经 `Interner`
 去重——没有「每帧一次泄漏」能藏的地方。宿主侧 `Interner` 要**跨帧复用**
-（`OnceLock<Mutex<Interner>>`，见 `gallery/src/ui.rs`）。
+（`OnceLock<Mutex<Interner>>`，见 `gallery/frontend/ui.rs`）。
 
 ## 宿主契约
 

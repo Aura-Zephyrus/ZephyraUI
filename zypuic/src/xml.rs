@@ -310,12 +310,8 @@ impl<'a> Parser<'a> {
                         col,
                     });
                 }
-                if let Some(child) = self.element() {
-                    children.push(XNode::El(child));
-                } else {
-                    // 子元素语法坏死：返回 None 让上层报错后前进，避免雪崩。
-                    return None;
-                }
+                // 子元素语法坏死：返回 None 让上层报错后前进，避免雪崩。
+                children.push(XNode::El(self.element()?));
             } else {
                 // 文本段（到下一个 `<`）。
                 let (l, c) = self.pos();

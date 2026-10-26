@@ -7,9 +7,9 @@
 //!
 //! # 模块划分
 //!
-//! - [`surface`]：Instance / Device / Queue / Swapchain / 读回
-//! - [`renderer`]：顶点流 → GPU 一帧
-//! - [`host`]：窗口、事件循环、帧调度
+//! - `surface`：Instance / Device / Queue / Swapchain / 读回
+//! - `renderer`：顶点流 → GPU 一帧
+//! - `host`：窗口、事件循环、帧调度
 //!
 //! # 为什么三个渲染后端互不依赖
 //!
@@ -22,5 +22,5 @@ mod renderer;
 mod surface;
 
 pub use host::HostWindow;
-pub use renderer::{RenderCtx, Renderer, TextureTable};
+pub use renderer::{HookCtx, RenderCtx, RenderHook, Renderer, TextureTable};
 pub use surface::{Gpu, SurfaceError};

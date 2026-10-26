@@ -36,6 +36,7 @@ members = [
     # default-members：默认构建不该出现 unsafe 与 COM 边界。
     "zephyra/zephyra-base/zephyra-platform",
     "zephyra/zephyra-base/zephyra-platform-win",
+    "zephyra/zephyra-base/zephyra-app-config",
     # Linux 实现：与 `zephyra-platform-win` **同级**，两个平台互不认识。
     # 同一条理由不进 default-members（"按需选"），但它一行 unsafe 都没有，
     # 见 Cargo.toml 的说明。

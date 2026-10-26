@@ -768,6 +768,9 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
         // 「元素树里少写了几个图标」无法区分。
         for name in ICON_NAMES {
             let (pixels, w, h) = icon_pixels(name);
+            #[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
+            let _ = app.register_texture(name, &pixels, w, h);
+            #[cfg(not(all(windows, feature = "d3d11", not(feature = "d3d12"))))]
             if let Err(e) = app.register_texture(name, &pixels, w, h) {
                 eprintln!("[demo] 纹理 {name} 注册失败：{e}");
             }
@@ -794,9 +797,14 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
         // 屏幕上是一个还没被写过的 composition swapchain，透出窗口的白色背景 ——
         // 而它的唯一症状就是「窗口全白」，与「画了但颜色不对」看起来不一样，
         // 于是很容易被当成渲染问题去查。
-        app.sync_input();
+        #[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
         app.frame();
-        app.present();
+        #[cfg(not(all(windows, feature = "d3d11", not(feature = "d3d12"))))]
+        {
+            app.sync_input();
+            app.frame();
+            app.present();
+        }
 
         self.inner = Some(app);
     }

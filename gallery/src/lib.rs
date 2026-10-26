@@ -21,7 +21,7 @@
 //!   输入 ─▶ [`app::Gallery::on_input`]  推进时钟 / 还原 click / 记断点
 //!            │
 //!            ▼
-//!   [`app::Gallery::view`] ─▶ [`ui::window`]   「Window」页实例化（ui/shell.zypui）
+//!   [`app::Gallery::view`] ─▶ [`ui::window`]   「Window」页实例化（frontend/shell.zypui）
 //!            │
 //!            ▼
 //!     组件模板展开（外壳 + 页面 + 控件组件，全部在 .zypui）
@@ -38,7 +38,7 @@
 //! | [`app::data`] | 宿主绑定的数据面（菜单、日历、语言段……全部 `&'static` 表） |
 //! | [`app::shell`] | 外壳尺寸常量（与样式表门禁逐字比对） |
 //! | [`app::pages`] | 页面清单（id / 英文标题 / 图标） |
-//! | [`ui`] | `ui/shell.zypui` 的运行时入口（编译期产物 + `include_bytes!`） |
+//! | [`ui`] | `frontend/shell.zypui` 的运行时入口（编译期产物 + `include_bytes!`） |
 //! | [`styles`] | 合并控件层样式表与本应用自己的 |
 
 /// 每帧分配探针的**实现**。
@@ -49,13 +49,16 @@
 /// 放进 lib 会与 bin 里那个 `#[global_allocator] use ...` 冲突
 /// （实测 `E0759`：「conflicts with global allocator in: zephyra_gallery」）。
 ///
-/// 所以这里只放**类型与计数器**，注册由 `bin/main.rs` 那一行负责。
+/// 所以这里只放**类型与计数器**，注册由 `src/bin/main.rs` 那一行负责。
 /// 于是「探针」这个能力在库层可测，而全局状态只有一份。
 #[allow(unsafe_code)]
 pub mod alloc_probe;
 
+#[path = "../frontend/app/mod.rs"]
 pub mod app;
+#[path = "../frontend/styles.rs"]
 pub mod styles;
+#[path = "../frontend/ui.rs"]
 pub mod ui;
 
 /// 缓动的转出口 —— 缓动住在 `zephyra_style::anim`（框架层），而应用里的

@@ -9,7 +9,7 @@
 //! 未知标志**原样透传**给 cargo（`zephyra run -- --nocapture`），因为 cargo 的标志
 //! 比我们多，而且会变 —— 在我们这儿白名单一遍等于给用户设上限。
 
-use super::{cargo_path, spawn_inherit, CliError, Write};
+use super::{app_config_path, cargo_path, spawn_inherit, CliError, Write};
 use crate::args::Args;
 use crate::ExitCode;
 
@@ -42,5 +42,6 @@ fn dispatch(a: &Args, w: &mut dyn Write, is_build: bool) -> Result<ExitCode, Cli
     w.err_line(&format!("$ cargo {}", args.join(" ")));
 
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    spawn_inherit(&cargo, &refs)
+    let config = app_config_path(a)?;
+    spawn_inherit(&cargo, &refs, config.as_deref())
 }

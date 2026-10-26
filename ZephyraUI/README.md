@@ -65,6 +65,9 @@ gallery        应用：页面编排 + 路由 + i18n + 宿主接线
 | `toggle.rs` | CheckBox / RadioButton / ToggleSwitch |
 | `text.rs` | 文本层级（`text_label` / `caption`） |
 
+⚠️ 控件名代表结构/视觉形态，不保证拥有原生控件的全部输入、弹层、滚动、焦点或动画行为。已盘点的能力缺口和后续重写候选见
+[控件能力缺口与重写清单](../docs/todo/control-capability-audit.md)。
+
 ## 样式表
 
 15 份 `controls-*.zstyle`，由 `src/styles.rs` 用 `include_str!` 内嵌。

@@ -52,6 +52,15 @@ pub trait Host {
     /// `key` 是否正被按住。
     fn holds(&self, key: &str) -> bool;
 
+    /// 按 `.zypui` 的 `render-source="kind"` 查找宿主拥有的载荷。
+    ///
+    /// 模板只声明 kind，不构造或修改 payload；返回值应复用宿主持有的稳定
+    /// `RenderSource`，避免每帧创建新载荷触发 diff。
+    fn render_source(&self, kind: &str) -> Option<zephyra_core::paint::RenderSource> {
+        let _ = kind;
+        None
+    }
+
     /// 宿主自定义属性键（`PropertyKey` 相等按**地址**，模板写不了应用键 ——
     /// 键的真相在宿主手里）。`url` 属性由此解析；返回 `None` 时该属性被跳过。
     fn prop_key(&self, name: &str) -> Option<&'static zephyra_core::property::PropertyKey> {
@@ -288,6 +297,29 @@ fn build_node(
                     "blend" => match v {
                         Val::Raw(pv) => el_el.with(&props::BLEND_MODE, pv),
                         _ => el_el,
+                    },
+                    "render-source" => match v.as_str() {
+                        Some("") => el_el,
+                        Some(kind) => {
+                            let Some(source) = ctx.host.render_source(kind) else {
+                                return crate::err(format!(
+                                    "宿主没有注册 `.zypui` 渲染源 kind `{kind}`"
+                                ));
+                            };
+                            if source.kind != kind {
+                                return crate::err(format!(
+                                    "宿主为渲染源 `{kind}` 返回了不同 kind `{}`",
+                                    source.kind
+                                ));
+                            }
+                            el_el.with(&props::RENDER_SOURCE, PropertyValue::custom(source))
+                        }
+                        None => {
+                            return crate::err(format!(
+                                "`render-source` 必须求值为字符串，实际为 {}",
+                                v.type_name()
+                            ));
+                        }
                     },
                     // 编译期白名单拦过；到这里说明 IR 被绕过 zypuic 直构。
                     other => {

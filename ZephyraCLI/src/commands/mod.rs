@@ -198,6 +198,34 @@ pub fn cargo_path() -> Result<std::path::PathBuf, CliError> {
     })
 }
 
+pub fn app_config_path(a: &Args) -> Result<Option<std::path::PathBuf>, CliError> {
+    let root = match a.option("manifest-path") {
+        Some(manifest) => {
+            let manifest = std::path::PathBuf::from(manifest);
+            let manifest = if manifest.is_absolute() {
+                manifest
+            } else {
+                std::env::current_dir()
+                    .map_err(|e| CliError::failure(format!("cannot get current directory: {e}")))?
+                    .join(manifest)
+            };
+            manifest
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(manifest)
+        }
+        None => std::env::current_dir()
+            .map_err(|e| CliError::failure(format!("cannot get current directory: {e}")))?,
+    };
+    let config = root.join("ZephyraUI.json");
+    if !config.is_file() {
+        return Ok(None);
+    }
+    std::fs::canonicalize(&config)
+        .map(Some)
+        .map_err(|e| CliError::failure(format!("cannot resolve {}: {e}", config.display())))
+}
+
 fn which_cargo() -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -214,9 +242,17 @@ fn which_cargo() -> Option<std::path::PathBuf> {
 }
 
 /// 起一个子进程并把它的输出**继承**出去（直接透传，不缓冲）。
-pub fn spawn_inherit(program: &std::path::Path, args: &[&str]) -> Result<ExitCode, CliError> {
-    let status = std::process::Command::new(program)
-        .args(args)
+pub fn spawn_inherit(
+    program: &std::path::Path,
+    args: &[&str],
+    config_path: Option<&std::path::Path>,
+) -> Result<ExitCode, CliError> {
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    if let Some(path) = config_path {
+        command.env("ZEPHYRA_APP_CONFIG_PATH", path);
+    }
+    let status = command
         .status()
         .map_err(|e| CliError::missing(format!("cannot run {}: {e}", program.display())))?;
     Ok(if status.success() {

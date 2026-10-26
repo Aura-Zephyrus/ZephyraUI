@@ -1,8 +1,8 @@
-//! 应用结构的声明式来源：`ui/shell.zypui`（+ 控件组件库）的运行时入口。
+//! 应用结构的声明式来源：`frontend/shell.zypui`（+ 控件组件库）的运行时入口。
 //!
 //! # 两条路，一份 IR（命门）
 //!
-//! - **release**：build.rs 用 zypuic 把 `ui/shell.zypui` 与控件组件库
+//! - **release**：build.rs 用 zypuic 把 `frontend/shell.zypui` 与控件组件库
 //!   一起编译成二进制，这里 `include_bytes!` + `decode` —— 运行时**零解析**。
 //! - **dev**：`zypuic::parse_all` 直读源文件（parity 测试在用）。
 //!

@@ -50,15 +50,15 @@ name = "gallery"
 # ⚠ 没有 `required-features`：Cargo 的 `required-features` 是**与**语义，
 # 表达不了「d3d12 或 linux-vk」，而 Linux 上 d3d12 是空 crate ——
 # 照原样写等于这个 bin 在 Linux 上永远不存在。
-# 后端改由 `bin/main.rs` 里的 `#[cfg(feature)]` 分流。
-path = "bin/main.rs"
+# 后端改由 `src/bin/main.rs` 里的 `#[cfg(feature)]` 分流。
+path = "src/bin/main.rs"
 
 # 文字链探针：不开窗口，直接量「一段文本 → 排版 → 图集 → 顶点」。
 # 存在理由：字形串味/错位在成品图里只是"字看起来不对"，没有数字可对；
 # 这个 bin 把每个字符的 uv、advance、measured size 全打出来。
 [[bin]]
 name = "text-probe"
-path = "bin/text_probe.rs"
+path = "src/bin/text_probe.rs"
 
 [lib]
 name = "zephyra_gallery"

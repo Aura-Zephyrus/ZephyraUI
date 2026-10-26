@@ -65,7 +65,7 @@ core 既没有滚动也不裁剪溢出，属性表里也没有 `min-height` / `m
 
 ## 样式表
 
-两份，由 `src/styles.rs` 用 `include_str!` 内嵌：
+两份，由 `frontend/styles.rs` 用 `include_str!` 内嵌：
 
 | 表 | 内容 |
 |---|---|
@@ -74,6 +74,17 @@ core 既没有滚动也不裁剪溢出，属性表里也没有 `min-height` / `m
 
 从 15 份合成 2 份的原因见 `git log a227257`：旧结构每页一个文件，「新增页面」
 要做三件事且后两处漏了不报错。
+
+前端代码（Rust UI 状态/绑定、`.zypui` 结构与 `.zstyle` 外观）统一放在与 `src/` 同级的 `frontend/`：
+
+| 路径 | 内容 |
+|---|---|
+| `src/bin/main.rs` | Gallery 窗口宿主与诊断命令入口 |
+| `src/bin/text_probe.rs` | 独立文字链诊断程序 |
+| `src/lib.rs` | 把 `frontend/` 的 UI 模块导出给宿主与测试 |
+| `frontend/app/` | Gallery 页面、路由与应用状态 |
+| `frontend/shell.zypui` | 窗口结构和页面模板 |
+| `frontend/*.zstyle` | 应用外壳和页面样式 |
 
 ## 测试
 

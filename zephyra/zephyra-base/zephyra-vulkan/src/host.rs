@@ -23,7 +23,7 @@ use zephyra_core::theme::{Theme, ThemeVariant};
 
 use zephyra_fx::{Frame, InputState, TextEngine, View};
 
-use crate::renderer::{RenderCtx, Renderer};
+use crate::renderer::{RenderCtx, RenderHook, Renderer};
 use crate::surface::Gpu;
 
 /// 窗口 + GPU + 保留树的组合体。
@@ -38,6 +38,7 @@ pub struct HostWindow<V: View> {
     router: InputRouter,
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
+    pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     dirty: bool,
     engine: std::cell::RefCell<TextEngine>,
     atlas_revision_uploaded: u64,
@@ -71,10 +72,12 @@ impl<V: View> HostWindow<V> {
 
     /// 建一个指定客户区尺寸的宿主。
     pub fn new_lenient_sized(event_loop: &ActiveEventLoop, view: V, size: (u32, u32)) -> Self {
+        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("ZephyraUI")
-                .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1)),
+                .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
+                .with_decorations(!frameless),
         ) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -82,6 +85,10 @@ impl<V: View> HostWindow<V> {
                 panic!("建窗失败：winit 拿不到窗口");
             }
         };
+        eprintln!(
+            "[zephyra] 窗口装饰: {}",
+            if frameless { "frameless" } else { "system" }
+        );
 
         let gpu = match Gpu::new(&window) {
             Ok(g) => g,
@@ -137,6 +144,7 @@ impl<V: View> HostWindow<V> {
             router: InputRouter::new(),
             pointer: None,
             pointer_pos: (0.0, 0.0),
+            pending_pointer_events: Vec::new(),
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: u64::MAX,
@@ -152,6 +160,15 @@ impl<V: View> HostWindow<V> {
             dumped: false,
             window,
         }
+    }
+
+    /// 登记外部渲染源钩子（相同 `kind` 会覆盖）。
+    pub fn register_hook(
+        &mut self,
+        kind: impl Into<std::borrow::Cow<'static, str>>,
+        hook: Box<dyn RenderHook>,
+    ) {
+        self.renderer.register_hook(kind, hook);
     }
 
     /// 装一个样式注入点。
@@ -350,6 +367,7 @@ impl<V: View> HostWindow<V> {
                 &self.gpu,
                 self.cmd,
                 fb,
+                self.cache.list(),
                 zephyra_core::filter::BlendMode::SrcOver,
             );
             if trace_enabled() && unimplemented > 0 {
@@ -479,6 +497,9 @@ impl<V: View> HostWindow<V> {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
+            key_events: Vec::new(),
+            scroll: None,
+            pointer_events: std::mem::take(&mut self.pending_pointer_events),
             viewport: (size.0 as f32, size.1 as f32),
             scale: scale as f32,
             dt_ms,
@@ -490,6 +511,11 @@ impl<V: View> HostWindow<V> {
     /// 处理指针移动。返回是否产生了路由事件。
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer_pos = (x, y);
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Move,
+        });
         let theme = self.theme;
         let pos = PointerEvent {
             id: 0,
@@ -507,6 +533,11 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_down(&mut self) -> bool {
         self.pointer = Some(0);
         let (x, y) = self.pointer_pos;
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Down,
+        });
         let theme = self.theme;
         self.route(|router, node, out| {
             router.on_pointer(
@@ -528,6 +559,11 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_up(&mut self) -> bool {
         self.pointer = None;
         let (x, y) = self.pointer_pos;
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Up,
+        });
         let theme = self.theme;
         self.route(|router, node, out| {
             router.on_pointer(

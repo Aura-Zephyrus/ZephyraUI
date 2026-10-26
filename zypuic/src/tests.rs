@@ -51,6 +51,22 @@ fn xml_elements_attrs_self_closing_comments_entities() {
 }
 
 #[test]
+fn render_source_kind_attribute_is_compiled_as_a_host_reference() {
+    let source = "<page name=\"p\"><container key=\"video\" render-source=\"video:main\"/></page>";
+    let raw = parse_ok(source);
+    let bytes = crate::compile(&[("source.zypui", source)]).unwrap();
+    let decoded = decode(&bytes).unwrap();
+    for ui in [&raw, &decoded] {
+        let zypui::ir::Node::El(element) = &ui.pages[0].root[0] else {
+            panic!("render source must remain attached to its element")
+        };
+        assert!(element.attrs.iter().any(|(name, value)| {
+            *name == "render-source" && matches!(value, zypui::expr::Expr::LitS("video:main"))
+        }));
+    }
+}
+
+#[test]
 fn xml_errors_carry_line_numbers() {
     let diags = parse_err("<page name=\"p\">\n  <container key=\"c1\"\n</page>");
     assert!(!diags.is_empty());

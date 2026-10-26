@@ -21,13 +21,27 @@ cargo zephyra dev
 
 | 命令 | 干什么 |
 |---|---|
-| `new <name>` | 生成一个**能编译**的空工程（`--path <dir>`、`--force`） |
+| `new <name>` | 生成一个能运行的交互示例工程，附带关键开发说明（`--path <dir>`、`--force`） |
 | `check <file.zstyle>...` | 查样式表（`--format human\|json`） |
-| `dev` | 开发模式：打开 trace，样式表变了就重启 |
-| `run` / `build` | 转交 cargo |
+| `dev` | 开发模式：打开 trace，样式表或窗口配置变更后重启 |
+| `run` / `build` | 转交 cargo，并将项目窗口配置嵌入应用 |
 | `info` | 版本与工具链状态（含路径） |
 | `props [过滤词]` | 列受支持的属性 |
 | `mcp` | MCP server：AI 直连运行中的界面（见下） |
+
+### `new` — 新建项目
+
+```text
+zephyra new myapp
+zephyra new myapp --path E:\work
+```
+
+会生成可交互的窗口示例（hover / press / click 状态）、项目 `README.md`、
+`.zstyle` 样式表、`zephyra.toml` 和 `ZephyraUI.json` 窗口配置。`zephyra run`、
+`dev` 与 `build` 会把该配置嵌入应用构建；`dev` 也会监视它的变化并重启窗口。
+默认选择 D3D12；Windows 下可用
+`cargo run --no-default-features --features d3d11` 选择 D3D11。
+脚手架 Cargo manifest 中的 ZephyraUI 依赖指向当前源码 checkout，迁移工程时需修改依赖路径。
 
 ### `mcp` — AI 集成
 
@@ -59,15 +73,21 @@ AI 客户端 ──stdio·JSON-RPC── zephyra mcp ──TCP·行协议── 
 
 | 工具 | 干什么 |
 |---|---|
+| `get_layout` | 给模型的纯文本布局上下文：物理像素视口、最近帧统计、节点路径/tag/key/绝对边界/classes；要读完整节点属性用 `get_props` |
 | `get_tree` | 布局树 dump。每行 `path tag key x,y w*h [styles]`；路径列（子下标链）是 `get_props` 的钥匙；坐标是**绝对**像素，与 `hover`/`click` 同一坐标系——从树里抄个坐标就能点 |
 | `get_props {path}` | 单节点属性表（tag/key/矩形/样式分类/全部属性） |
 | `get_stats` | 最近一帧统计（quads / dirty / hovered） |
+| `get_resources` | 进程 CPU%、工作集/私有内存；Windows 驱动提供时还含 GPU 引擎利用率与专用/共享显存 |
 | `get_viewport` | 窗口视口尺寸 |
 | `hover {x,y}` | 注入指针移动——与物理鼠标走**同一条**命中测试路径 |
 | `click {x,y}` | 注入完整点击（move → down → up），本帧生效 |
-| `screenshot {path?}` | 渲一帧读回 BMP 存盘（D3D11 应用支持；后端无读回时返回错误） |
+| `pointer_drag` | 按住主指针按钮拖动后抬起；`mode=segmented` 沿 `points` 折线，`linear` 走 start/end 直线，`easing` 按 linear/ease_in/ease_out/smoothstep 插值；可配置总时长、采样间隔及按下/抬起前停留 |
+| `analyze_performance {duration_seconds}` | 默认关闭，按次选择性采集逐帧 CPU 生成性能；必须声明 1–300 秒，最多 3000 帧，自动停止后直接返回阶段明细与 min/avg/p50/p95/max 统计 |
+| `press_key {key}` | 注入逻辑键按下与抬起；`View::on_input` 收到两个键边沿 |
+| `scroll {x,y,delta_x,delta_y}` | 指定物理像素位置注入滚轮；正 `delta_y` 向上，事件交给 `View::on_input` |
+| `screenshot {path?}` | 渲一帧读回 BMP 存盘（D3D11 / D3D12 支持；文本布局请用 `get_layout`） |
 
-典型闭环：`get_tree`（看到布局）→ `click`（点某个坐标）→ `get_tree` /
+典型闭环：`get_layout`（文本理解布局）→ `click`（点某个坐标）→ `get_layout` /
 `screenshot`（确认变化）。所有工具都是「读-改-读」里的一步，无隐式状态。
 
 **协议注意**：
@@ -86,8 +106,10 @@ zephyra dev [--release] [--styles <dir>] [--no-watch] [--no-trace] [--manifest-p
 
 - 默认开 `ZEPHYRA_TRACE=1`。不打开的话开发期最需要的那些行（视口变化、每帧四边形
   数、重建了没有）全都不打，而它们恰恰是排查「窗口变了但内容没跟上」的唯一判据。
-- 盯 `styles/` 下的 `.zstyle`，变了就**重启进程**（不是运行期热重载：重启更简单、
-  不会残留已解析的旧样式表，而 Rust 侧的增量编译本来就已经把等待压得很小）。
+- 默认盯 `styles/` 下的 `.zstyle`；`zephyra new` 生成的项目把样式放在 `frontend/`，
+  因此使用 `zephyra dev --styles frontend`。样式表或 `ZephyraUI.json` 变化后会**重启进程**
+  （不是运行期热重载：
+  重启更简单、不会残留已解析的旧样式表，而 Rust 侧的增量编译本来就已经把等待压得很小）。
 - 刻意**不**盯 `.rs` —— 那是 cargo 自己的事，两个 watcher 管同一份代码会互相触发。
 
 ## 退出码

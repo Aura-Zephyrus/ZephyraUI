@@ -41,7 +41,7 @@
 #![allow(unsafe_code)]
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -131,6 +131,9 @@ pub struct HostWindow<V: View> {
     router: zephyra_core::input::InputRouter,
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
+    pending_key_events: Vec<zephyra_fx::KeyInput>,
+    pending_scroll: Option<zephyra_fx::ScrollInput>,
+    pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
@@ -153,6 +156,8 @@ pub struct HostWindow<V: View> {
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
     last_stats: String,
+    resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
+    profiler: zephyra_fx::bridge::PerformanceProfiler,
 }
 
 impl<V: View> HostWindow<V> {
@@ -165,8 +170,15 @@ impl<V: View> HostWindow<V> {
     /// 都是同步 API，不像 wgpu 的设备请求那样需要 `block_on` 两个 future
     /// —— 所以本 crate **不再依赖 pollster**。
     pub fn new_lenient(event_loop: &ActiveEventLoop, view: V) -> Self {
-        let attrs = Window::default_attributes().with_title("ZephyraUI");
+        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
+        let attrs = Window::default_attributes()
+            .with_title("ZephyraUI")
+            .with_decorations(!frameless);
         let window = std::sync::Arc::new(event_loop.create_window(attrs).expect("create_window"));
+        eprintln!(
+            "[zephyra] 窗口装饰: {}",
+            if frameless { "frameless" } else { "system" }
+        );
         let size = window.inner_size();
 
         // 文本引擎：core 的 `TextStack` + 本 crate 的 ab_glyph 字形来源。
@@ -226,12 +238,17 @@ impl<V: View> HostWindow<V> {
             router: zephyra_core::input::InputRouter::new(),
             pointer: None,
             pointer_pos: (0.0, 0.0),
+            pending_key_events: Vec::new(),
+            pending_scroll: None,
+            pending_pointer_events: Vec::new(),
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             textures: TextureTable::new(),
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
             last_stats: String::new(),
+            resource_telemetry: None,
+            profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
         }
     }
 
@@ -344,6 +361,9 @@ impl<V: View> HostWindow<V> {
     /// 界面往往静止（`FrameOutcome::Unchanged`），不强制的话没有 present 前的
     /// 读回时机，拿到的就只能是上一帧的残留或全黑。
     fn frame_inner(&mut self, capture: Option<&mut Vec<u8>>) -> Frame {
+        let frame_started = self.profiler.is_running().then(std::time::Instant::now);
+        let update_started = frame_started;
+        self.sync_input();
         let theme = self.theme;
         let size = self.size();
         // 作用域要短：`ctx` 借着 `self.engine`，而下面要可变借用 `self` 去回放。
@@ -353,38 +373,6 @@ impl<V: View> HostWindow<V> {
             // `Command::Path`」链条。理由与 `zephyra-winit-d3d12` 那份一致。
             let ctx =
                 Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
-
-            // 0. 把路由器持有的输入状态推给视图 —— hover 必然晚于上一帧的树（命中
-            //    测试要读已布局的矩形），所以只能从下一帧开始生效。
-            let input = InputState {
-                hovered: None,
-                pressed: self.router.pressed().cloned(),
-                pointers: self.router.pointer_count(),
-                // 与 D3D12 那份同源：视口走 `on_input` 推给视图，断点判定要用。
-                // （这个后端本身不参与响应式，但接口必须一致，否则每加一个后端
-                //   就要为「忘了这个字段」付一次排查成本。）
-                viewport: (size.0 as f32, size.1 as f32),
-                scale: self.scale_factor(),
-                // D3D11 后端同样要有帧间隔：动画时钟的口径只在 InputState 一处，
-                // 这里不填就让"接动画"变成逐个后端补字段。
-                dt_ms: {
-                    let now = std::time::Instant::now();
-                    let dt = self
-                        .last_frame_at
-                        .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
-                        .unwrap_or(0.0);
-                    self.last_frame_at = Some(now);
-                    dt
-                },
-                // 这个后端不接 `zephyra-platform`（它只管 D3D11 画面），所以语言
-                // 偏好给**空表**而不是猜一个。空表在 `Gallery` 里的含义是
-                // "读不到" ⇒ 回落 `SUPPORTED` 第一项，不会把界面钉死。
-                //
-                // ⚠️ 不能省掉这个字段：漏填是编译错误，而"填成英语"是行为变更 ——
-                // 后者要等到有人在这台机器上用中文系统跑起来才会被发现。
-                languages: Vec::new(),
-            };
-            self.view.on_input(&input);
 
             let element = self.view.view(&ctx);
 
@@ -428,17 +416,24 @@ impl<V: View> HostWindow<V> {
                 FrameOutcome::Updated { stats, damage, .. } => (stats, damage, true),
             }
         };
+        let update_us = update_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or_default();
 
         // 2. DisplayList → 像素。ctx 已出作用域，`self` 可变借用恢复。
         //
         // ⚠ `Unchanged` 时**连 present 都不能做**：本项目两个后端都是 flip model，
         // `Present` 之后后缓冲内容未定义。不画就 present 会把未定义的内容推上屏。
         // 什么都不做才是对的 —— 合成器继续显示上一帧。
+        let render_started = frame_started.map(|_| std::time::Instant::now());
         let report = if redrawn || capture.is_some() {
             self.acquire_and_render_inner(true, Damage::Full, capture)
         } else {
             RenderReport::default()
         };
+        let render_submit_us = render_started
+            .map(|started| started.elapsed().as_micros() as u64)
+            .unwrap_or_default();
 
         // 3. 清事件标志。脏标记由 `FrameCache` 内部清（它知道什么时候该清）。
         self.dirty = false;
@@ -455,6 +450,14 @@ impl<V: View> HostWindow<V> {
             self.hovered().unwrap_or_else(|| "-".into()),
         );
 
+        if let Some(started) = frame_started {
+            self.profiler.record(zephyra_fx::bridge::FrameTiming {
+                update_us,
+                render_submit_us,
+                total_us: started.elapsed().as_micros() as u64,
+            });
+        }
+
         Frame {
             diff: stats,
             render: report,
@@ -462,6 +465,29 @@ impl<V: View> HostWindow<V> {
             damage,
             redrawn,
         }
+    }
+
+    fn sync_input(&mut self) {
+        let size = self.size();
+        let now = std::time::Instant::now();
+        let dt_ms = self
+            .last_frame_at
+            .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
+        self.last_frame_at = Some(now);
+        self.view.on_input(&InputState {
+            hovered: self.router.hovered().cloned(),
+            pressed: self.router.pressed().cloned(),
+            pointers: self.router.pointer_count(),
+            key_events: std::mem::take(&mut self.pending_key_events),
+            scroll: self.pending_scroll.take(),
+            pointer_events: std::mem::take(&mut self.pending_pointer_events),
+            viewport: (size.0 as f32, size.1 as f32),
+            scale: self.scale_factor(),
+            dt_ms,
+            // This host has no platform integration crate to query language preferences.
+            languages: Vec::new(),
+        });
     }
 
     /// 取本帧渲染目标并回放 `DisplayList`。
@@ -561,6 +587,11 @@ impl<V: View> HostWindow<V> {
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
         let id = *self.pointer.get_or_insert(0);
         self.pointer_pos = (x, y);
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x,
+            y,
+            phase: zephyra_fx::PointerInputPhase::Move,
+        });
         let Some(node) = self.cache.node() else {
             return false;
         };
@@ -589,6 +620,11 @@ impl<V: View> HostWindow<V> {
     /// 处理一次按下：返回是否产生了路由事件。
     pub fn on_pointer_down(&mut self) -> bool {
         let id = *self.pointer.get_or_insert(0);
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x: self.pointer_pos.0,
+            y: self.pointer_pos.1,
+            phase: zephyra_fx::PointerInputPhase::Down,
+        });
         let Some(node) = self.cache.node() else {
             return false;
         };
@@ -621,6 +657,11 @@ impl<V: View> HostWindow<V> {
     /// 「AI 点了但没反应」这类问题就永远查不清是哪条路的锅。
     pub fn on_pointer_up(&mut self) -> bool {
         let id = self.pointer.unwrap_or(0);
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            x: self.pointer_pos.0,
+            y: self.pointer_pos.1,
+            phase: zephyra_fx::PointerInputPhase::Up,
+        });
         let Some(node) = self.cache.node() else {
             return false;
         };
@@ -644,11 +685,7 @@ impl<V: View> HostWindow<V> {
 
     /// 按路径取节点（子下标链）——桥的 `props` 命令用。
     fn bridge_node(&self, path: &[usize]) -> Option<&zephyra_core::node::Node> {
-        let mut node = self.cache.node()?;
-        for &i in path {
-            node = node.children().get(i)?;
-        }
-        Some(node)
+        zephyra_fx::bridge::node_at_path(self.cache.node()?, path)
     }
 
     /// 诊断：把某一帧的后缓冲写成 BMP（`ZEPHYRA_FRAME_DUMP=<路径>` 时启用）。
@@ -812,17 +849,73 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         }
     }
 
+    fn resources(&mut self) -> Result<String, String> {
+        let telemetry = self
+            .resource_telemetry
+            .get_or_insert_with(zephyra_platform_win::ProcessTelemetry::new);
+        let sample = telemetry.sample()?;
+        Ok(sample.to_text(telemetry.gpu_error()))
+    }
+
     fn inject_hover(&mut self, x: f32, y: f32) {
         self.on_cursor_moved(x, y);
+        self.dirty = true;
     }
 
     fn inject_click(&mut self, x: f32, y: f32) {
-        // move → down → up：与物理点击完全同序。抬起结果并入 dirty 判定。
+        // Keep down and up in separate view updates so pressed-state click handlers
+        // observe both edges even when the bridge polls only once for this command.
         self.on_cursor_moved(x, y);
         self.on_pointer_down();
-        if self.on_pointer_up() {
-            self.dirty = true;
-        }
+        self.sync_input();
+        self.on_pointer_up();
+        self.sync_input();
+        self.dirty = true;
+    }
+
+    fn inject_pointer_down(&mut self) {
+        self.on_pointer_down();
+        self.dirty = true;
+    }
+
+    fn inject_pointer_up(&mut self) {
+        self.on_pointer_up();
+        self.dirty = true;
+    }
+
+    fn profile_start(&mut self, duration_seconds: u64) -> Result<(), String> {
+        self.profiler.start(duration_seconds)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn profile_report(&mut self) -> Result<String, String> {
+        self.profiler.report()
+    }
+
+    fn inject_key(&mut self, key: &str) {
+        self.pending_key_events.extend([
+            zephyra_fx::KeyInput {
+                key: key.to_string(),
+                pressed: true,
+            },
+            zephyra_fx::KeyInput {
+                key: key.to_string(),
+                pressed: false,
+            },
+        ]);
+        self.dirty = true;
+    }
+
+    fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32) {
+        self.on_cursor_moved(x, y);
+        self.pending_scroll = Some(zephyra_fx::ScrollInput {
+            x,
+            y,
+            delta_x,
+            delta_y,
+        });
+        self.dirty = true;
     }
 
     fn screenshot(&mut self) -> Option<Vec<u8>> {
@@ -835,6 +928,14 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         } else {
             Some(buf)
         }
+    }
+}
+
+fn logical_key_name(key: &Key) -> String {
+    match key {
+        Key::Character(text) => text.to_string(),
+        Key::Named(named) => format!("{named:?}"),
+        other => format!("{other:?}"),
     }
 }
 
@@ -863,7 +964,7 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                     b.poll(self);
                     self.bridge = Some(b);
                 }
-                if self.dirty {
+                if self.dirty || self.profiler.is_running() {
                     let f = self.frame();
                     if std::env::var("ZEPHYRA_TRACE").as_deref() == Ok("1") {
                         eprintln!(
@@ -906,8 +1007,12 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.pending_key_events.push(zephyra_fx::KeyInput {
+                    key: logical_key_name(&event.logical_key),
+                    pressed: event.state == ElementState::Pressed,
+                });
                 if event.state == ElementState::Pressed {
-                    match event.logical_key {
+                    match event.logical_key.clone() {
                         Key::Named(NamedKey::Escape) => event_loop.exit(),
                         Key::Character(c) if c.as_str() == "t" => {
                             // 演示「切主题不碰树」：只换一个 &Theme，树完全不动。
@@ -922,6 +1027,19 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         _ => {}
                     }
                 }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (delta_x, delta_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                };
+                self.pending_scroll = Some(zephyra_fx::ScrollInput {
+                    x: self.pointer_pos.0,
+                    y: self.pointer_pos.1,
+                    delta_x,
+                    delta_y,
+                });
+                self.dirty = true;
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let s = self.window.inner_size();

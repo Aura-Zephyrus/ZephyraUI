@@ -40,6 +40,7 @@ description = "ZephyraUI 的 D3D12 渲染后端"
 # 顶点展开、字形图集、纹理名字表、CPU 光栅器来自 `zephyra-fx`。
 zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
+zephyra-app-config = { path = "../zephyra-app-config" }
 # 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
 # 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
 winit = "0.30"

@@ -224,8 +224,33 @@ fn scaffolded_stylesheet_passes_its_own_check() {
         (commands::find("new").unwrap().run)(&a, &mut io).unwrap();
     }
 
-    let sheet = dir.join("app").join("styles").join("app.zstyle");
+    let sheet = dir.join("app").join("frontend").join("app.zstyle");
     assert!(sheet.exists(), "scaffold did not write {}", sheet.display());
+    assert!(
+        dir.join("app").join("frontend").join("app.rs").exists(),
+        "scaffolded frontend source must live under frontend/"
+    );
+    assert!(
+        !dir.join("app").join("styles").exists(),
+        "scaffold should not create a separate styles directory"
+    );
+    let zephyra_config = std::fs::read_to_string(dir.join("app").join("zephyra.toml")).unwrap();
+    assert!(
+        zephyra_config.contains("files = [\"frontend/app.zstyle\"]"),
+        "generated configuration must point at the frontend stylesheet"
+    );
+    assert!(
+        dir.join("app").join("README.md").exists(),
+        "scaffold did not write the project guide"
+    );
+    assert!(
+        dir.join("app").join("src").join("main.rs").exists(),
+        "scaffolded application source must live under src/"
+    );
+    let config_path = dir.join("app").join("ZephyraUI.json");
+    let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap())
+        .expect("generated ZephyraUI.json must be valid JSON");
+    assert_eq!(config["window"]["frameless"], false);
 
     let reports = zstylec::check(&[sheet]).expect("generated stylesheet must be readable");
     assert!(
@@ -321,6 +346,39 @@ fn value_flags_cover_every_option_the_commands_document() {
         );
     }
 }
+
+#[test]
+fn cli_resolves_app_config_from_manifest_directory() {
+    let root = std::env::temp_dir().join(format!(
+        "zephyra-cli-config-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let manifest = root.join("Cargo.toml");
+    let config = root.join("ZephyraUI.json");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(&config, r#"{"window":{"frameless":true}}"#).unwrap();
+
+    let ParseOutcome::Parsed(args) = args::parse(vec![
+        "build".into(),
+        "--manifest-path".into(),
+        manifest.display().to_string(),
+    ]) else {
+        panic!("expected Parsed")
+    };
+    let resolved = commands::app_config_path(&args).unwrap().unwrap();
+    assert_eq!(resolved, config.canonicalize().unwrap());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
 /// 脚手架生成的 `Cargo.toml` 里，**每个**依赖都必须指向真实存在的本地包。
 ///
 /// 实测踩过两轮：模板先写了个根本不存在的 `zephyra` 包（真实名字是 `zephyra-ui`），
@@ -414,12 +472,14 @@ fn scaffold_entry_implements_every_required_trait_method() {
         (commands::find("new").unwrap().run)(&a, &mut io).unwrap();
     }
 
-    let src = std::fs::read_to_string(dir.join("app").join("src").join("main.rs")).unwrap();
+    let root = dir.join("app");
+    let src = std::fs::read_to_string(root.join("src").join("main.rs")).unwrap();
+    let frontend = std::fs::read_to_string(root.join("frontend").join("app.rs")).unwrap();
     // `View` 的两个必需方法
     for m in ["fn on_input", "fn view"] {
         assert!(
-            src.contains(m),
-            "scaffold entry is missing `{m}` (required by `View`)"
+            frontend.contains(m),
+            "scaffold frontend is missing `{m}` (required by `View`)"
         );
     }
     // `ApplicationHandler` 在 winit 0.30 里没有给 `window_event` 默认实现
@@ -431,9 +491,28 @@ fn scaffold_entry_implements_every_required_trait_method() {
     }
     // 文本内容走 `props::TEXT`，不是 `Element::text(..)`（那个不存在）
     assert!(
-        src.contains("props::TEXT"),
-        "scaffold entry should build text through `props::TEXT`"
+        frontend.contains("props::TEXT"),
+        "scaffold frontend should build text through `props::TEXT`"
     );
+    for snippet in [
+        "const BUTTON_KEY",
+        "state.hovered",
+        "state.pressed",
+        "self.clicked = !self.clicked",
+        "with_key(BUTTON_KEY)",
+        "InputState, View",
+    ] {
+        assert!(
+            frontend.contains(snippet),
+            "scaffold frontend is missing key information `{snippet}`"
+        );
+    }
+    for snippet in ["zephyra_winit_d3d12", "zephyra_winit", "fn window_event"] {
+        assert!(
+            src.contains(snippet),
+            "scaffold host entry is missing `{snippet}`"
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }

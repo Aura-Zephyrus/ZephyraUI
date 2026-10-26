@@ -25,6 +25,7 @@ publish = false
 [dependencies]
 zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
+zephyra-app-config = { path = "../zephyra-app-config" }
 zephyra-platform = { path = "../zephyra-platform" }
 zephyra-platform-linux = { path = "../zephyra-platform-linux" }
 winit = "0.30"

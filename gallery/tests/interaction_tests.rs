@@ -154,6 +154,7 @@ impl Harness {
             // `SUPPORTED` 第一项，断言不依赖宿主机器的 Windows 语言设置 ——
             // 否则同一条测试在英文机器与中文机器上会给出不同结果。
             languages: Vec::new(),
+            ..zephyra_fx::InputState::default()
         });
         // 顺序是**契约**：diff → apply → layout → render。
         // apply 必须在 diff **之后** —— 它读的是节点上**刚被 diff 改过**的分类名，

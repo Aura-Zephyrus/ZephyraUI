@@ -32,7 +32,9 @@ use ash::vk;
 use zephyra_core::core::Rect;
 use zephyra_core::filter::BlendMode;
 use zephyra_core::frame::Damage;
-use zephyra_core::paint::{command_content_rect, command_corner_radius, DisplayList};
+use zephyra_core::paint::{
+    command_content_rect, command_corner_radius, Command, DisplayList, RenderSource,
+};
 use zephyra_fx::quad::{self, RenderReport, Scratch, Vertex};
 
 use crate::surface::{Gpu, SurfaceError};
@@ -260,6 +262,8 @@ struct DrawCall {
 enum SegmentPlan {
     /// 普通段：这一段要发的 draw（索引已是全帧绝对值）。
     Plain { draws: Vec<DrawCall> },
+    /// 外部渲染源：record 阶段用原命令下标取回宿主载荷。
+    Custom { index: usize },
     /// 离屏段：计划 + 两趟顶点偏移（模糊趟们 / 合成趟）。
     Offscreen {
         pass: zephyra_fx::offscreen::OffscreenPass,
@@ -419,6 +423,8 @@ pub struct Renderer {
     scratch: Scratch,
     /// 一帧的段计划（prepare 算好，record_frame 回放）。
     segments: Vec<SegmentPlan>,
+    /// 外部渲染源钩子（按 kind 查找；数量由宿主控制）。
+    hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
     /// 单段展开用的暂存（跨段复用 —— 见 `prepare` 里那条「每次调用都清空」的警告）。
     segment_scratch: Scratch,
     /// 当前帧的绘制尺寸（物理像素）—— 视口/裁剪由它算。
@@ -438,6 +444,36 @@ impl std::fmt::Debug for Renderer {
             .field("textures", &self.textures.len())
             .finish()
     }
+}
+
+/// Vulkan 后端的外部渲染源钩子。
+///
+/// 只在主 render pass 内调用。钩子负责绑定自己的管线与所需状态；下一段会重新绑定
+/// 自己的绘制状态。v1 不允许钩子切换 render pass 或 attachment。
+pub trait RenderHook: Send + Sync {
+    /// 把 `source` 的内容绘制到 `bounds`（屏幕像素坐标）覆盖的区域。
+    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+}
+
+/// 传给 [`RenderHook`] 的 Vulkan 录制上下文。
+pub struct HookCtx<'a> {
+    /// 当前帧的活命令缓冲，调用点处于主 render pass 内。
+    pub cmd: vk::CommandBuffer,
+    /// 与该命令缓冲相同设备的 Vulkan 函数表。
+    pub device: &'a ash::Device,
+    /// 当前 render target 的尺寸（宽，高）。
+    pub size: (f32, f32),
+}
+
+fn custom_command(list: &DisplayList, index: usize) -> (Rect, &RenderSource) {
+    let item = list
+        .iter()
+        .nth(index)
+        .expect("Custom 段下标来自当前 DisplayList");
+    let Command::Custom { bounds, source, .. } = &item.command else {
+        unreachable!("Custom 段只由 Command::Custom 产出");
+    };
+    (*bounds, source)
 }
 
 impl Renderer {
@@ -679,11 +715,30 @@ impl Renderer {
             sampler,
             scratch: Scratch::new(),
             segments: Vec::new(),
+            hooks: Vec::new(),
             segment_scratch: Scratch::new(),
             size: (1, 1),
             pad: Vec::new(),
             dumped: false,
         })
+    }
+
+    /// 登记一个外部渲染源钩子（`kind` 相同者覆盖）。
+    pub fn register_hook(
+        &mut self,
+        kind: impl Into<std::borrow::Cow<'static, str>>,
+        hook: Box<dyn RenderHook>,
+    ) {
+        let kind = kind.into();
+        if let Some(slot) = self
+            .hooks
+            .iter_mut()
+            .find(|(registered, _)| *registered == kind)
+        {
+            slot.1 = hook;
+        } else {
+            self.hooks.push((kind, hook));
+        }
     }
 
     /// 当前 MSAA 采样数。
@@ -910,16 +965,21 @@ impl Renderer {
                     }
                 }
                 zephyra_fx::offscreen::Segment::Custom { index } => {
-                    // Vulkan v1 **不支持**外部渲染源：本后端是「记录段建段计划 →
-                    // 提交段执行」两段式，而钩子需要提交段的活命令缓冲——那要给
-                    // SegmentPlan 加一种「调用宿主回调」的段类型，属于真机验证
-                    // 轨道（本机无 WSL，无法端到端验证）之后再做。见
-                    // `Command::Custom` 的契约文档。
-                    //
-                    // 计数走 `unhandled_custom`：症状是"这块区域没画"，
-                    // 与 D3D11/D3D12 侧"没注册钩子"同款降级。
-                    let _ = index;
-                    report.unhandled_custom += 1;
+                    let item = ctx
+                        .display_list
+                        .iter()
+                        .nth(index)
+                        .expect("Custom 段下标来自当前 DisplayList");
+                    let Command::Custom { source, .. } = &item.command else {
+                        unreachable!("Custom 段只由 Command::Custom 产出");
+                    };
+                    if self.hooks.iter().any(|(kind, _)| *kind == source.kind) {
+                        report.custom_passes += 1;
+                        self.segments.push(SegmentPlan::Custom { index });
+                    } else {
+                        report.unhandled_custom += 1;
+                        self.segments.push(SegmentPlan::Custom { index });
+                    }
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,
@@ -1022,7 +1082,7 @@ impl Renderer {
                         *element,
                         *corner_radius,
                     ),
-                    SegmentPlan::Plain { .. } => continue,
+                    SegmentPlan::Plain { .. } | SegmentPlan::Custom { .. } => continue,
                 };
             for step in &blur_steps {
                 let vtx_off = scratch.vertices.len() as u32;
@@ -1091,6 +1151,7 @@ impl Renderer {
         gpu: &Gpu,
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
+        display_list: &DisplayList,
         default_blend: BlendMode,
     ) -> (u32, u32) {
         let mut unimplemented = 0u32;
@@ -1116,18 +1177,40 @@ impl Renderer {
             self.begin_main_pass(cmd, framebuffer, false);
             let segments = std::mem::take(&mut self.segments);
             for seg in &segments {
-                if let SegmentPlan::Plain { draws } = seg {
-                    // 单采样直接画进交换链图：没有 MSAA 可 resolve，PS 变体在此
-                    // 退化为默认混合（由 record_draws 内部计数）。
-                    self.record_draws(
-                        gpu,
-                        cmd,
-                        framebuffer,
-                        None,
-                        draws,
-                        default_blend,
-                        &mut unimplemented,
-                    );
+                match seg {
+                    SegmentPlan::Plain { draws } => {
+                        // 单采样直接画进交换链图：没有 MSAA 可 resolve，PS 变体在此
+                        // 退化为默认混合（由 record_draws 内部计数）。
+                        self.record_draws(
+                            gpu,
+                            cmd,
+                            framebuffer,
+                            None,
+                            draws,
+                            default_blend,
+                            &mut unimplemented,
+                        );
+                    }
+                    SegmentPlan::Custom { index } => {
+                        let (bounds, source) = custom_command(display_list, *index);
+                        if let Some(hook) = self
+                            .hooks
+                            .iter_mut()
+                            .find(|(kind, _)| *kind == source.kind)
+                            .map(|(_, hook)| hook)
+                        {
+                            hook.draw(
+                                HookCtx {
+                                    cmd,
+                                    device: &self.device,
+                                    size: (self.size.0 as f32, self.size.1 as f32),
+                                },
+                                bounds,
+                                source,
+                            );
+                        }
+                    }
+                    SegmentPlan::Offscreen { .. } => {}
                 }
             }
             self.segments = segments;
@@ -1185,6 +1268,27 @@ impl Renderer {
                     }
                     opened = true;
                 }
+                SegmentPlan::Custom { index } => {
+                    let (bounds, source) = custom_command(display_list, *index);
+                    let hook_index = self.hooks.iter().position(|(kind, _)| *kind == source.kind);
+                    self.begin_main_pass(cmd, framebuffer, !opened);
+                    if let Some(hook_index) = hook_index {
+                        self.hooks[hook_index].1.draw(
+                            HookCtx {
+                                cmd,
+                                device: &self.device,
+                                size: (self.size.0 as f32, self.size.1 as f32),
+                            },
+                            bounds,
+                            source,
+                        );
+                    }
+                    unsafe {
+                        self.device.cmd_end_render_pass(cmd);
+                    }
+
+                    opened = true;
+                }
                 SegmentPlan::Offscreen {
                     pass,
                     content,
@@ -1206,6 +1310,7 @@ impl Renderer {
                         unsafe {
                             self.device.cmd_end_render_pass(cmd);
                         }
+
                         opened = true;
                     }
                     self.record_offscreen(
@@ -2040,42 +2145,46 @@ impl Renderer {
                 self.vertex_capacity
             );
         }
-        unsafe {
-            let ptr = device
-                .map_memory(
-                    self.vertex_memory,
-                    0,
-                    vbytes as vk::DeviceSize,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .map_err(|e| SurfaceError::new("map vertex memory", e.to_string()))?;
-            std::ptr::copy_nonoverlapping(
-                scratch.vertices.as_ptr() as *const u8,
-                ptr as *mut u8,
-                vbytes,
-            );
-            device.unmap_memory(self.vertex_memory);
+        if vbytes != 0 {
+            unsafe {
+                let ptr = device
+                    .map_memory(
+                        self.vertex_memory,
+                        0,
+                        vbytes as vk::DeviceSize,
+                        vk::MemoryMapFlags::empty(),
+                    )
+                    .map_err(|e| SurfaceError::new("map vertex memory", e.to_string()))?;
+                std::ptr::copy_nonoverlapping(
+                    scratch.vertices.as_ptr() as *const u8,
+                    ptr as *mut u8,
+                    vbytes,
+                );
+                device.unmap_memory(self.vertex_memory);
+            }
         }
 
         // 索引。
         if ibytes as u64 > self.index_capacity {
             panic!("index buffer overflow: {ibytes} > {}", self.index_capacity);
         }
-        unsafe {
-            let ptr = device
-                .map_memory(
-                    self.index_memory,
-                    0,
-                    ibytes as vk::DeviceSize,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .map_err(|e| SurfaceError::new("map index memory", e.to_string()))?;
-            std::ptr::copy_nonoverlapping(
-                scratch.indices.as_ptr() as *const u8,
-                ptr as *mut u8,
-                ibytes,
-            );
-            device.unmap_memory(self.index_memory);
+        if ibytes != 0 {
+            unsafe {
+                let ptr = device
+                    .map_memory(
+                        self.index_memory,
+                        0,
+                        ibytes as vk::DeviceSize,
+                        vk::MemoryMapFlags::empty(),
+                    )
+                    .map_err(|e| SurfaceError::new("map index memory", e.to_string()))?;
+                std::ptr::copy_nonoverlapping(
+                    scratch.indices.as_ptr() as *const u8,
+                    ptr as *mut u8,
+                    ibytes,
+                );
+                device.unmap_memory(self.index_memory);
+            }
         }
 
         Ok(())

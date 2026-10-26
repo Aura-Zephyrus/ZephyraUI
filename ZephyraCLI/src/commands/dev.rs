@@ -1,4 +1,4 @@
-//! `dev` —— 开发模式：带 trace 跑起来，并在样式表变化时重启。
+//! `dev` —— 开发模式：带 trace 跑起来，并在样式表或窗口配置变化时重启。
 //!
 //! # 和 `run` 的区别
 //!
@@ -7,7 +7,7 @@
 //! 1. **打开 trace**（`ZEPHYRA_TRACE=1`）。不打开的话开发期最需要的那些行
 //!    （视口变化、每帧四边形数、重建了没有）全都不打，而它们恰恰是排查
 //!    「窗口变了但内容没跟上」的唯一判据。
-//! 2. **盯样式表**。`.zstyle` 是**运行期**解析的（见 zstylec 的 lib 入口文档），
+//! 2. **盯样式表与窗口配置**。`.zstyle` 是**运行期**解析的（见 zstylec 的 lib 入口文档），
 //!    所以改样式根本不需要重编译 —— 但我们不打算实现运行期的样式热重载，
 //!    而是**重启进程**：那更简单也更可靠（不会残留已解析的旧样式表），
 //!    而编译增量本来就已经把 Rust 那侧的等待压到很小。
@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::{cargo_path, CliError, Write};
+use super::{app_config_path, cargo_path, CliError, Write};
 use crate::args::Args;
 use crate::ExitCode;
 
@@ -42,6 +42,7 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         .unwrap_or_else(|| PathBuf::from("styles"));
 
     let release = a.has("release");
+    let config_path = app_config_path(a)?;
     let mut cmd: Vec<String> = vec!["run".into()];
     if release {
         cmd.push("--release".into());
@@ -54,14 +55,20 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     w.err_line(&format!("[dev] cargo {}", cmd.join(" ")));
     if !a.has("no-watch") {
         w.err_line(&format!(
-            "[dev] watching {} for changes (Ctrl-C to stop)",
-            style_dir.display()
+            "[dev] watching {}{} for changes (Ctrl-C to stop)",
+            style_dir.display(),
+            if config_path.is_some() {
+                " and ZephyraUI.json"
+            } else {
+                ""
+            }
         ));
     }
 
     let watch = !a.has("no-watch");
+    let mut seen = snapshot(&style_dir, config_path.as_deref());
 
-    let mut child = match std::process::Command::new(&cargo).args(&cmd).spawn() {
+    let mut child = match spawn_cargo(&cargo, &cmd, config_path.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             return Err(CliError::missing(format!(
@@ -71,7 +78,6 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         }
     };
 
-    let mut seen = snapshot(&style_dir);
     let mut last_check = SystemTime::now();
 
     loop {
@@ -103,12 +109,12 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
             .unwrap_or(false)
         {
             last_check = SystemTime::now();
-            let now = snapshot(&style_dir);
+            let now = snapshot(&style_dir, config_path.as_deref());
             if now != seen {
-                w.err_line("[dev] stylesheet changed, restarting");
+                w.err_line("[dev] watched input changed, restarting");
                 let _ = child.kill();
                 let _ = child.wait();
-                child = match std::process::Command::new(&cargo).args(&cmd).spawn() {
+                child = match spawn_cargo(&cargo, &cmd, config_path.as_deref()) {
                     Ok(c) => c,
                     Err(e) => {
                         return Err(CliError::missing(format!("cannot restart: {e}")));
@@ -124,21 +130,38 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     }
 }
 
-/// 目录里所有样式表的 `路径 -> 修改时刻`。**不含内容**：同一次改动多次保存不该
-/// 触发多次重启，而按内容看会；按修改时刻看，编辑器连续写两遍也只算一次
-/// 真正的变化（间隔会被轮询窗口吸收）。
-fn snapshot(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
+/// 目录里所有样式表和可选窗口配置的 `路径 -> 修改时刻`。**不含内容**：同一次改动
+/// 多次保存不该触发多次重启，而按内容看会；按修改时刻看，编辑器连续写两遍也只算
+/// 一次真正的变化（间隔会被轮询窗口吸收）。
+fn spawn_cargo(
+    cargo: &Path,
+    args: &[String],
+    config_path: Option<&Path>,
+) -> std::io::Result<std::process::Child> {
+    let mut command = std::process::Command::new(cargo);
+    command.args(args);
+    if let Some(path) = config_path {
+        command.env("ZEPHYRA_APP_CONFIG_PATH", path);
+    }
+    command.spawn()
+}
+
+fn snapshot(dir: &Path, config_path: Option<&Path>) -> Vec<(PathBuf, SystemTime)> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|s| s.to_str()) != Some("zstyle") {
-            continue;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("zstyle") {
+                continue;
+            }
+            if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+                out.push((p, t));
+            }
         }
-        if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
-            out.push((p, t));
+    }
+    if let Some(path) = config_path {
+        if let Ok(t) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            out.push((path.to_path_buf(), t));
         }
     }
     out.sort();

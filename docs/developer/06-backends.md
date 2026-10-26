@@ -15,15 +15,32 @@
 
 ---
 
-## 现有的三套宿主
+## 现有的三套宿主与呈现组件
 
 | crate | 图形 API | 呈现 |
 |---|---|---|
 | `zephyra-winit` | D3D11 | 窗口交换链 |
 | `zephyra-winit-d3d12` | D3D12 | DComp（`CreateSwapChainForComposition`） |
-| `zephyra-dcomp` | — | DirectComposition 呈现后端（可选子包） |
+| `zephyra-vulkan` | Vulkan | Vulkan surface / swapchain（Linux / Android） |
+| `zephyra-dcomp` | — | DirectComposition 呈现组件（D3D11 可选；D3D12 宿主使用） |
 
 D3D11 与 D3D12 是**两个独立 crate**，互不依赖。换后端不用改核心。
+三者的输入、调试桥与输出能力并未完全对齐，当前缺口见
+[后端能力 TODO](../todo/backend-capability-audit.md)。
+
+### 无标题栏窗口
+
+在**消费 ZephyraUI 的应用项目根目录**创建 `ZephyraUI.json`，并设置：
+
+```json
+{
+  "window": {
+    "frameless": true
+  }
+}
+```
+
+三个宿主（D3D11、D3D12、Vulkan）从应用进程的**当前工作目录**读取该文件，不会去框架仓库或 crate 源码目录查找。省略文件或省略 `window.frameless` 时保留系统默认装饰；无效 JSON 会向 stderr 报告并回退默认窗口配置。该选项只改变 winit 建窗属性，不改变视口、渲染或呈现路径。无系统装饰窗口不会自动获得本仓自绘标题栏、窗口拖动或缩放控件；需要这些交互时由应用自行实现。
 
 ---
 

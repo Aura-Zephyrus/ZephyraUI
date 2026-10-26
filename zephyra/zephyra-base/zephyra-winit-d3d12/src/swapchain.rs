@@ -32,7 +32,7 @@ use windows::Win32::Graphics::Dxgi::{IDXGISwapChain1, IDXGISwapChain3};
 
 use zephyra_dcomp::{create_composition_swapchain, present_one, SwapchainDesc};
 
-use crate::surface::{DescriptorHeap, Gpu, SurfaceError};
+use crate::surface::{create_resource, heap_props, DescriptorHeap, Gpu, Staging, SurfaceError};
 
 /// 问设备到底坏没坏。返回 `Some(reason)` = 坏，`None` = 还活着。
 ///
@@ -362,6 +362,100 @@ impl Swapchain {
     /// `dst`，宿主得先把后缓冲拷进一张可采样纹理 —— 那就需要资源本体。
     pub fn back_buffer(&self) -> Result<ID3D12Resource, SurfaceError> {
         self.buffer(self.back_buffer_index())
+    }
+
+    /// Records a client-area readback of the current back buffer.
+    ///
+    /// The caller must invoke this after any MSAA resolve and before transitioning
+    /// the back buffer to PRESENT, then submit and wait before mapping the staging buffer.
+    pub fn record_readback(
+        &self,
+        device: &ID3D12Device,
+        list: &ID3D12GraphicsCommandList,
+    ) -> Result<Staging, SurfaceError> {
+        let size = self.content_size();
+        if size.0 == 0 || size.1 == 0 {
+            return Err(SurfaceError::new(
+                "截图读回零尺寸客户区",
+                windows::core::Error::new(
+                    windows::Win32::Foundation::E_INVALIDARG,
+                    "zero-sized back-buffer readback",
+                ),
+            ));
+        }
+        let source = self.back_buffer()?;
+        let mut desc = unsafe { source.GetDesc() };
+        desc.Width = size.0 as u64;
+        desc.Height = size.1;
+
+        let mut footprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default();
+        let mut total = 0u64;
+        unsafe {
+            device.GetCopyableFootprints(
+                &desc,
+                0,
+                1,
+                0,
+                Some(&mut footprint),
+                None,
+                None,
+                Some(&mut total),
+            );
+        }
+        let buffer = create_resource(
+            device,
+            &heap_props(D3D12_HEAP_TYPE_READBACK),
+            &crate::renderer::buffer_desc(total),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+        )?;
+        let staging = Staging {
+            buffer,
+            row_pitch: footprint.Footprint.RowPitch,
+            byte_width: total,
+        };
+
+        Gpu::barrier(
+            list,
+            &source,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+        );
+        unsafe {
+            list.CopyTextureRegion(
+                &D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(staging.buffer.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        PlacedFootprint: footprint,
+                    },
+                },
+                0,
+                0,
+                0,
+                &D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(source.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        SubresourceIndex: 0,
+                    },
+                },
+                Some(&D3D12_BOX {
+                    left: 0,
+                    top: 0,
+                    front: 0,
+                    right: size.0,
+                    bottom: size.1,
+                    back: 1,
+                }),
+            );
+        }
+        Gpu::barrier(
+            list,
+            &source,
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+        );
+        Ok(staging)
     }
 
     pub fn samples(&self) -> u32 {

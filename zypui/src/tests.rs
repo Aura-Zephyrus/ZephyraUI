@@ -18,6 +18,7 @@ struct MockHost {
     bindings: Vec<(&'static str, Val)>,
     hovered: Vec<&'static str>,
     pressed: Vec<&'static str>,
+    sources: Vec<zephyra_core::paint::RenderSource>,
 }
 
 impl Host for MockHost {
@@ -37,6 +38,12 @@ impl Host for MockHost {
     fn holds(&self, key: &str) -> bool {
         self.pressed.contains(&key)
     }
+    fn render_source(&self, kind: &str) -> Option<zephyra_core::paint::RenderSource> {
+        self.sources
+            .iter()
+            .find(|source| source.kind == kind)
+            .cloned()
+    }
 }
 
 fn host(bindings: Vec<(&'static str, Val)>) -> MockHost {
@@ -44,7 +51,76 @@ fn host(bindings: Vec<(&'static str, Val)>) -> MockHost {
         bindings,
         hovered: vec![],
         pressed: vec![],
+        sources: vec![],
     }
+}
+
+fn ui_with_render_source(kind: &'static str) -> Ui {
+    Ui::new(RawUi {
+        components: vec![],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::El(ElementNode {
+                tag: NodeTag::Container,
+                key: Some(Expr::LitS("video")),
+                classes: vec![],
+                attrs: vec![("render-source", Expr::LitS(kind))],
+                children: vec![],
+            })],
+        }],
+    })
+    .unwrap()
+}
+
+#[test]
+fn render_source_kind_resolves_host_owned_payload() {
+    use zephyra_core::paint::RenderSource;
+    let source = RenderSource::new("video:main", 42_u32);
+    let h = MockHost {
+        sources: vec![source.clone()],
+        ..host(vec![])
+    };
+    let ui = ui_with_render_source("video:main");
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    let actual = els[0]
+        .props()
+        .lookup(&props::RENDER_SOURCE)
+        .unwrap()
+        .0
+        .get::<RenderSource>()
+        .unwrap();
+    assert_eq!(actual.kind, "video:main");
+    assert_eq!(actual.payload::<u32>(), Some(&42));
+    assert_eq!(actual, source, "宿主源保持相同 Arc 载荷，稳态 diff 不抖");
+}
+
+#[test]
+fn render_source_kind_must_exist_in_host_registry() {
+    let ui = ui_with_render_source("video:missing");
+    let mut it = Interner::new();
+    let err = match ui.build("p", &host(vec![]), &mut it) {
+        Ok(_) => panic!("missing render source kind must fail"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("没有注册"));
+}
+
+#[test]
+fn render_source_kind_must_match_host_result() {
+    use zephyra_core::paint::RenderSource;
+
+    let ui = ui_with_render_source("video:main");
+    let h = MockHost {
+        sources: vec![RenderSource::new("video:other", ())],
+        ..host(vec![])
+    };
+    let mut it = Interner::new();
+    let err = match ui.build("p", &h, &mut it) {
+        Ok(_) => panic!("a different host render source kind must fail"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("kind"));
 }
 
 // ============================== eval ==============================

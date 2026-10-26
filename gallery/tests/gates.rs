@@ -21,7 +21,7 @@ use zephyra_ui::tokens::ALL as TOKENS;
 // ---------------------------------------------------------------- 公共帮手
 
 /// 合并全部样式表 —— **直接用 [`zephyra_gallery::styles::all`]**，
-/// 与 `bin/main.rs::build_sheet` 同一份输入。
+/// 与 `src/bin/main.rs::build_sheet` 同一份输入。
 ///
 /// # 为什么不再 `read_dir`
 ///
@@ -1255,7 +1255,7 @@ fn the_app_always_asks_for_the_mica_look() {
 /// # 为什么这两张表并存（而不是合并成一张）
 ///
 /// 它们分工不同：`ROUTES` 给导航栏与 `resolve_route`（只需要 id / 标题 / 图标），
-/// `PAGES` 是**全部**页面清单（含 Settings）。页面的结构住在 `ui/shell.zypui`
+/// `PAGES` 是**全部**页面清单（含 Settings）。页面的结构住在 `frontend/shell.zypui`
 /// —— 两份表漂了就是「点得进去、进去是首页」：地址栏那一瞬变了，随后一切
 /// 正常，所以肉眼与截图都发现不了。
 #[test]
@@ -1518,10 +1518,10 @@ fn every_tr_key_used_in_source_exists_in_every_language() {
     // - `.zypui` 模板：`tr('key')`。
     // 两处都扫 —— 键集合与写法无关，漏翻不分语言。
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let frontend = Path::new(env!("CARGO_MANIFEST_DIR")).join("frontend");
     let mut files = Vec::new();
     collect_sources(&root, &mut files);
-    collect_sources(&ui, &mut files);
+    collect_sources(&frontend, &mut files);
 
     // **跳过注释行**：这条门禁扫的是源码文本，而注释里写「源码里每个
     // `g.tr("…")`」这类句子是正当的 —— 不跳过的话，门禁会把注释里的
@@ -1630,6 +1630,7 @@ fn a_manual_language_choice_survives_the_system_negotiation() {
             scale: 1.0,
             dt_ms: 16.0,
             languages: broken_system_langs.clone(),
+            ..InputState::default()
         }
     };
 
@@ -1684,6 +1685,7 @@ fn the_system_language_is_negotiated_at_most_once() {
         scale: 1.0,
         dt_ms: 16.0,
         languages: langs,
+        ..InputState::default()
     };
 
     // ⚠️ 用**真机形状**：`GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)`

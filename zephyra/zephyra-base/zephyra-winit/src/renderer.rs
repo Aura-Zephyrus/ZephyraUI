@@ -613,10 +613,10 @@ fn command_blend_mode(cmd: &Command) -> Option<usize> {
 ///
 /// # 状态纪律
 ///
-/// 调用时：目标 / 视口 / scissor 已由 [`Renderer::bind_target`] 设好（与普通段
+/// 调用时：目标 / 视口 / scissor 已由 `bind_target` 设好（与普通段
 /// 相同的状态）。**混合状态自理**——进钩子时它是上一段留下的值，钩子要什么
 /// 混合就自己 `OMSetBlendState`（命令上的 `blend` 字段对钩子只是提示）。
-/// 其他状态同理不用兜底：下一段的 [`Renderer::draw_range`] 会重设目标 / 视口 /
+/// 其他状态同理不用兜底：下一段的 `draw_range` 会重设目标 / 视口 /
 /// scissor（"每段自给自足"），图元批次也会重绑自己的管线。唯一要体贴的是：
 /// 别把设备弄成错误态。
 pub trait RenderHook: Send + Sync {

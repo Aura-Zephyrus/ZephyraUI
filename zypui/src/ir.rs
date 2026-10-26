@@ -18,8 +18,7 @@
 //! Node = El(元素) | If(条件) | For(迭代) | Use(组件引用)
 //! ```
 //!
-//! [`crate::expand`] 在**加载期一次**把 Use 全部展开成纯 `El/If/For` 树；
-//! 每帧的 [`crate::instantiate`] 只面对展开后的树。
+//! [`crate::instantiate`] 在每帧实例化时展开 `Use`，并求值模板中的表达式。
 //!
 //! # 字符串与身份
 //!
@@ -163,7 +162,8 @@ pub struct UseNode {
 /// | `filter` | [`zephyra_core::props::FILTER`] | 滤镜链（结构值，唯
 ///   [`crate::Val::Raw`] 一路 —— 表达式语言没有它的字面量） |
 /// | `blend` | [`zephyra_core::props::BLEND_MODE`] | 混合模式（同上，结构值） |
-/// | `url` | [`Host::prop_key`] 解析的键 | 字符串（hyperlink 的去向：数据）。
+/// | `render-source` | [`zephyra_core::props::RENDER_SOURCE`] | 宿主注册的只读 `kind` 名称 |
+/// | `url` | `Host::prop_key` 解析的键 | 字符串（hyperlink 的去向：数据）。
 pub const BARE_ATTRS: &[&str] = &[
     "text",
     "icon",
@@ -176,4 +176,5 @@ pub const BARE_ATTRS: &[&str] = &[
     "url",
     "filter",
     "blend",
+    "render-source",
 ];
