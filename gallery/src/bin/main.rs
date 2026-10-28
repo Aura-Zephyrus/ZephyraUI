@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use zephyra_core::theme::ThemeVariant;
-use zephyra_gallery::app::{resolve_route, Gallery, REF_FAMILIES, SUPPORTED};
+use zephyra_gallery::app::{resolve_route, Gallery, REF_FAMILIES, ROUTES, SUPPORTED};
 
 // `Styler` 只给 `HostWindow::set_styler` 用，与宿主是哪个后端无关 ——
 // 所以它的 gate 是「有没有窗口路」，而不是「哪个后端」。
@@ -523,11 +523,14 @@ fn bench_resize(probe: bool, light: bool) {
 
 fn dump_cpu(light: bool) {
     let args: Vec<String> = std::env::args().collect();
-    // `--route <id>`：dump 指定页（默认 home）。逐页像素自验用 ——
+    // `--route <id>`：dump 指定页（默认第一条路由）。逐页像素自验用 ——
     // 否则只有第一页能被看到，后面几页的样式错误要等窗口路才暴露。
+    //
+    // 默认值取 `ROUTES[0]` 而不是字面量：路由表改名时（home → guide 那次）
+    // 字面量会静默失效，dump 路直接以「未知路由」退出 —— 出图工具悄悄坏了。
     let route = flag_value(&args, "--route")
         .map(|s| s.to_string())
-        .unwrap_or_else(|| "home".to_string());
+        .unwrap_or_else(|| ROUTES[0].0.to_string());
 
     // 路由解析走 `resolve_route`（应用层唯一真源），**不做白名单 match**。
     //
@@ -773,6 +776,13 @@ impl winit::application::ApplicationHandler for Bootstrap {
             zephyra_gallery::app::shell::CANVAS_W as u32,
             zephyra_gallery::app::shell::CANVAS_H as u32,
         );
+        // 本应用自绘标题栏，故设为无边框。frameless 是一条**通用设置**
+        // （`window.frameless` / `ZEPHYRA_FRAMELESS`），对所有应用、所有后端有效——
+        // 这里只是本应用选择开启它，不是 gallery 专属逻辑。gallery/ZephyraUI.json
+        // 已写 frameless:true，但配置按**工作目录**解析：直接运行
+        // target/debug/gallery.exe 时 cwd 往往不含它，设置被静默丢掉、系统标题栏
+        // 叠回自绘标题栏之上。用通用的运行时 env 覆盖，让无边框与 cwd 无关。
+        std::env::set_var("ZEPHYRA_FRAMELESS", "1");
         let mut app = Host::new_lenient_sized(event_loop, view, (w, h));
 
         // 样式表是第一优先级证明物：「源码里没有样式」要能看到它接上了。

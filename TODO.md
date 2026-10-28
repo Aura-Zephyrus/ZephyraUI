@@ -41,6 +41,12 @@
   连续路径；D3D11 / D3D12 实机 MCP 逐帧报告与资源读数通过；文本布局的绝对坐标
   和 `get_props` 路径也经真实点击闭环验收。细节见
   [MCP 拖动、性能分析与资源遥测](docs/dev-log/2026-10-26-mcp-clicks-resources.md)。
+- ✅ 2026-10-26 MCP 可靠性加固：传输失败丢连接重连重试（应用重启不再废会话）、
+  10 秒读超时（冻结应用不挂死 MCP 进程）、`tools/call` 独立工作线程 +
+  `notifications/cancelled`（排队跳过/在途中止）、`analyze_performance` 默认只回
+  汇总（`include_rows` 取全量）、工具 annotations、`ping` 工具、截图绝对路径回执、
+  桥 `on_bridge_disconnect` 断连补抬指针。细节见
+  [MCP 重连与超时](docs/dev-log/2026-10-26-mcp-reconnect-timeout.md)。
 - ✅ 2026-10-25 外部渲染源拓展接口：`Command::Custom` + `RenderSource`
   （ptr_eq 判等保 diff 静止）+ fx `Segment::Custom` 保序（段数不变量
   2f+2c+1）+ D3D11/D3D12 `RenderHook` 注册表 + 两侧像素级端到端验收

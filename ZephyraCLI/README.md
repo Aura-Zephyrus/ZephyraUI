@@ -79,13 +79,18 @@ AI 客户端 ──stdio·JSON-RPC── zephyra mcp ──TCP·行协议── 
 | `get_stats` | 最近一帧统计（quads / dirty / hovered） |
 | `get_resources` | 进程 CPU%、工作集/私有内存；Windows 驱动提供时还含 GPU 引擎利用率与专用/共享显存 |
 | `get_viewport` | 窗口视口尺寸 |
+| `ping` | 走调试桥探一次应用活性，回 `pong`。与 MCP 协议层的 `ping`（探 server 进程）互补：桥 ping 回不来 = 应用没起/没开桥，server ping 回不来 = MCP 进程死了 |
 | `hover {x,y}` | 注入指针移动——与物理鼠标走**同一条**命中测试路径 |
 | `click {x,y}` | 注入完整点击（move → down → up），本帧生效 |
 | `pointer_drag` | 按住主指针按钮拖动后抬起；`mode=segmented` 沿 `points` 折线，`linear` 走 start/end 直线，`easing` 按 linear/ease_in/ease_out/smoothstep 插值；可配置总时长、采样间隔及按下/抬起前停留 |
-| `analyze_performance {duration_seconds}` | 默认关闭，按次选择性采集逐帧 CPU 生成性能；必须声明 1–300 秒，最多 3000 帧，自动停止后直接返回阶段明细与 min/avg/p50/p95/max 统计 |
+| `analyze_performance {duration_seconds,include_rows?}` | 默认关闭，按次选择性采集逐帧 CPU 生成性能；必须声明 1–300 秒，最多 3000 帧。**默认只回汇总**（min/avg/p50/p95/max）——逐帧行最多 3000 行 ≈ 120KB，不该灌进模型上下文；要逐帧明细传 `include_rows=true` |
 | `press_key {key}` | 注入逻辑键按下与抬起；`View::on_input` 收到两个键边沿 |
 | `scroll {x,y,delta_x,delta_y}` | 指定物理像素位置注入滚轮；正 `delta_y` 向上，事件交给 `View::on_input` |
-| `screenshot {path?}` | 渲一帧读回 BMP 存盘（D3D11 / D3D12 支持；文本布局请用 `get_layout`） |
+| `screenshot {path?}` | 渲一帧读回 BMP 存盘（D3D11 / D3D12 支持；文本布局请用 `get_layout`）。回执里的路径是**绝对**路径——客户端不知道本进程的 cwd，相对路径等于没说 |
+
+每个工具带 MCP `annotations`（`readOnlyHint` / `destructiveHint`）：读类工具
+（`get_*` / `ping`）为只读，输入与采集类（`hover` / `click` / `press_key` /
+`scroll` / `pointer_drag` / `analyze_performance` / `screenshot`）标记为会改状态。
 
 典型闭环：`get_layout`（文本理解布局）→ `click`（点某个坐标）→ `get_layout` /
 `screenshot`（确认变化）。所有工具都是「读-改-读」里的一步，无隐式状态。
@@ -96,7 +101,16 @@ AI 客户端 ──stdio·JSON-RPC── zephyra mcp ──TCP·行协议── 
   传输的硬约束，违反即客户端解析失败；
 - MCP 握手（`initialize` / `tools/list`）**不需要**应用在线；连接在第一次
   `tools/call` 时才建立（重试 3 次 × 500ms），应用后启动是常态；
-- 桥单客户端：第二个连接要等第一个断开（AI 会话即独占使用）。
+- **应用重启不废会话**：传输失败（应用重启留下死连接是 dev 工作流常态）会
+  丢连接、重连、重试一次，下一次 `tools/call` 自动恢复；
+- 每次桥 I/O 有 **10 秒读超时**：冻结的应用最多拖慢一次调用，不会挂死整个
+  MCP 进程；
+- **并发模型**：`tools/call` 投给唯一工作线程串行执行（保 AI「读-改-读」
+  次序），其余消息（握手 / `ping` / 通知）在 stdin 线程就地处理；
+- **取消**：客户端发 `notifications/cancelled` 后，排队中的调用开跑前跳过、
+  在途的 `analyze_performance` 在下一轮轮询间隙中止；被取消的请求按协议不回；
+- 桥单客户端：第二个连接要等第一个断开（AI 会话即独占使用）。MCP server 在
+  按下与抬起之间消失时，应用侧会在察觉断连时补一次指针抬起，不会卡在拖动态。
 
 ### `dev`
 

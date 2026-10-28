@@ -255,7 +255,10 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 - 环境变量：`ZEPHYRA_TRACE=1`（每帧统计，`zephyra dev` 默认开）、`ZEPHYRA_DCOMP`
   （切 DirectComposition 呈现路径）、`ZEPHYRA_FRAME_DUMP=<path>`（把某帧后缓冲写成
   BMP，给「肉眼才看得见」的故障留证据）、`ZEPHYRA_MSAA`、`ZEPHYRA_ADAPTER`、
-  `ZEPHYRA_FONT`（字体覆盖）。`--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`：
+  `ZEPHYRA_FONT`（字体覆盖）、`ZEPHYRA_FRAMELESS=1|0`（强制无边框/带系统标题栏，
+  优先于 `ZephyraUI.json` 的 `window.frameless`；配置按 cwd 解析，直接运行
+  `target/debug/<exe>` 时 cwd 往往不含它——自绘标题栏的应用用这条与 cwd 无关）。
+  `--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`：
   不开窗口、不碰 GPU，出 BMP——**无显示器的环境也能验整条链**。
 - `#![deny(rustdoc::broken_intra_doc_links)]` 只在 12 个 `lib.rs` 里。**bin 目标不受
   门禁保护**（`text_probe.rs` 那 2 条警告就是这么漏过去的）。

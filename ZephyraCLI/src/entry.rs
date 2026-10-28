@@ -19,13 +19,18 @@ pub fn main_entry() -> ProcessExit {
 
     let bin = display_name(std::env::args().next());
 
-    let stdout = std::io::stdout();
-    let stderr = std::io::stderr();
-    let mut out = stdout.lock();
-    let mut err = stderr.lock();
+    // ⚠ 这里拿的是**未加锁**的 stdout/stderr 句柄，不是 `stdout.lock()` 的守卫。
+    // `Stdout`/`Stderr` 的 `Write` 实现在每次 `write` 内部短暂加锁、写完即放，
+    // 单线程命令下与「先锁住整个 dispatch」行为一致。而 MCP 是**长驻多线程**的：
+    // 它的工作线程要直接写 stdout（`write_reply`）与 stderr，若主线程在
+    // dispatch 全程握着那两把锁，工作线程会在第一次 `eprintln!`/`stdout.lock()`
+    // 上永久死锁——实测：`initialize`/`ping`（主线程就地处理，重入锁成功）正常，
+    // 所有 `tools/call`（投工作线程）无应答。所以锁必须在每次调用内自取自放。
+    let mut stdout = std::io::stdout();
+    let mut stderr = std::io::stderr();
     let mut io = Io {
-        out: &mut out,
-        err: &mut err,
+        out: &mut stdout,
+        err: &mut stderr,
     };
 
     ProcessExit::from(dispatch(&bin, argv, &mut io).code())

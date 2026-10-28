@@ -48,3 +48,22 @@ fn uses_embedded_config_when_built_with_one() {
 
     assert_eq!(load_from_current_dir(), expected);
 }
+
+#[test]
+fn frameless_env_override_forces_both_directions_and_ignores_other_values() {
+    let mut config = AppConfig::default();
+    assert!(!config.window.frameless);
+
+    apply_frameless_override(&mut config, Some("1"));
+    assert!(config.window.frameless);
+
+    apply_frameless_override(&mut config, Some("0"));
+    assert!(!config.window.frameless);
+
+    // Other values (and absence) leave the setting untouched.
+    config.window.frameless = true;
+    apply_frameless_override(&mut config, Some("yes"));
+    assert!(config.window.frameless);
+    apply_frameless_override(&mut config, None);
+    assert!(config.window.frameless);
+}

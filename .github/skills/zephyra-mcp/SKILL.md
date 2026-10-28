@@ -69,7 +69,7 @@ zephyra mcp [--port 7878] [--host 127.0.0.1]
 
 `--port` 必须与应用 `ZEPHYRA_DEBUG_PORT` 一致；`--host` 默认 `127.0.0.1`。若应用使用其他端口，两侧都显式配置相同端口。
 
-MCP `initialize` 与 `tools/list` 不要求应用已经启动；首次执行工具时才连接应用。若 MCP server 已就绪但调用报告连接失败，先启动目标应用并确认端口一致。桥为单客户端连接：另一个连接通常需等现有客户端断开。
+MCP `initialize` 与 `tools/list` 不要求应用已经启动；首次执行工具时才连接应用。若 MCP server 已就绪但调用报告连接失败，先启动目标应用并确认端口一致。应用重启不会废掉会话：传输失败时 CLI 会丢弃死连接、重连并重试一次，下一次调用自动恢复；要主动区分「server 活着」与「应用在线」，调用 `ping` 工具（走桥）而不是只依赖 MCP 协议层 `ping`（只探 server 进程）。桥为单客户端连接：另一个连接通常需等现有客户端断开。
 
 ## 标准操作流程
 
@@ -132,7 +132,7 @@ MCP `initialize` 与 `tools/list` 不要求应用已经启动；首次执行工�
 
 ### E. 逐帧性能分析
 
-只在明确需要诊断 UI 帧 CPU 生成耗时时开启。`analyze_performance` 必须提供 `duration_seconds`，范围为 1–300 秒；宿主到时自动停止，且最多记录 3000 帧。该次调用会等待采集结束，再返回逐帧行与 `min / avg / p50 / p95 / max` 汇总。
+只在明确需要诊断 UI 帧 CPU 生成耗时时开启。`analyze_performance` 必须提供 `duration_seconds`，范围为 1–300 秒；宿主到时自动停止，且最多记录 3000 帧。该次调用会等待采集结束。**默认只返回 `min / avg / p50 / p95 / max` 汇总**——逐帧行最多 3000 行（约 120KB），整段进入上下文是纯负担；确需逐帧明细时传 `include_rows: true`。若客户端支持取消（`notifications/cancelled`），在途采集会在下一轮轮询间隙中止，不需要等满声明时长。
 
 报告字段：
 
@@ -169,19 +169,21 @@ MCP `initialize` 与 `tools/list` 不要求应用已经启动；首次执行工�
 | `get_stats` | 无 | 获取最近一帧统计 |
 | `get_viewport` | 无 | 获取视口物理像素尺寸 |
 | `get_resources` | 无 | 获取 CPU、进程内存和可用的 Windows GPU 遥测 |
+| `ping` | 无 | 走调试桥探应用活性；区分「MCP server 就绪」与「应用在线」 |
 | `hover` | `x`, `y` | 移动指针 |
 | `click` | `x`, `y` | 执行一次完整点击 |
 | `press_key` | `key` | 注入单个逻辑键按下/抬起 |
 | `scroll` | `x`, `y`, `delta_x`, `delta_y` | 注入定位滚轮增量 |
 | `pointer_drag` | 见上文 | 保持按下状态的连续指针移动 |
-| `screenshot` | 可选 `path` | 输出 24bpp BMP（D3D11 / D3D12） |
-| `analyze_performance` | `duration_seconds` | 有界、按需逐帧 CPU 性能报告 |
+| `screenshot` | 可选 `path` | 输出 24bpp BMP（D3D11 / D3D12）；回执路径为绝对路径 |
+| `analyze_performance` | `duration_seconds`，可选 `include_rows` | 有界、按需逐帧 CPU 性能报告；默认只回汇总 |
 
 ## 故障排查
 
 | 现象 | 检查与处理 |
 |---|---|
 | MCP 握手成功，但首次工具调用提示无法连接 | 确认目标 ZephyraUI 应用已启动、`ZEPHYRA_DEBUG_PORT` 与 CLI `--port` 相同、MCP CLI 指向 `127.0.0.1`。MCP server 就绪本身不表示应用在线。 |
+| 应用重启后工具调用报「重连重试仍失败」 | 应用重启后桥端口重新监听前有间隙：等应用窗口出现后重试一次即可，会话本身不需要重建。若持续失败，确认重启后的应用仍带 `ZEPHYRA_DEBUG_PORT` 启动。 |
 | 端口已占用或连接像是连到另一应用 | 检查调试端口的占用者，确认连接到用户指定的 ZephyraUI 实例；必要时为应用和 CLI 一起更换端口。不要尝试连接未知服务。 |
 | 第二个客户端无法访问桥 | 桥按单客户端使用；关闭旧 MCP 会话后重试。 |
 | 节点没有响应点击或坐标看起来偏移 | 重新取 `get_layout`；使用它给出的绝对物理像素坐标。不要累加父级偏移，不要将截图缩放坐标直接传入。确认目标矩形可见、非零，并点击矩形内部后用 `get_props` / `get_layout` 核验。 |

@@ -76,6 +76,10 @@ pub struct HostWindow<V: View> {
     cache: FrameCache,
     router: InputRouter,
     pointer: Option<u32>,
+    /// 桥注入的「主指针按住」状态。断连收尾靠它判断要不要补一次抬起
+    /// （见 [`BridgeHost::on_bridge_disconnect`]）——`pointer` 是路由层的
+    /// 指针 id，与「按钮按没按住」是两回事，不能拿它当判据。
+    bridge_pointer_pressed: bool,
     pointer_pos: (f32, f32),
     pending_key_events: Vec<zephyra_fx::KeyInput>,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
@@ -351,6 +355,7 @@ impl<V: View> HostWindow<V> {
             cache: FrameCache::new(),
             router: InputRouter::new(),
             pointer: None,
+            bridge_pointer_pressed: false,
             pointer_pos: (0.0, 0.0),
             pending_key_events: Vec::new(),
             pending_scroll: None,
@@ -1613,14 +1618,27 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
 
     fn inject_pointer_down(&mut self) {
         self.on_pointer_down();
+        self.bridge_pointer_pressed = true;
         self.dirty = true;
         self.sync_input();
     }
 
     fn inject_pointer_up(&mut self) {
         self.on_pointer_up();
+        self.bridge_pointer_pressed = false;
         self.dirty = true;
         self.sync_input();
+    }
+
+    /// MCP server 在按下与抬起之间消失（超时/崩溃/会话取消）：补一次抬起，
+    /// 否则应用永远卡在拖动态，后续所有真实输入都被当成拖动的一部分。
+    fn on_bridge_disconnect(&mut self) {
+        if self.bridge_pointer_pressed {
+            self.on_pointer_up();
+            self.bridge_pointer_pressed = false;
+            self.dirty = true;
+            self.sync_input();
+        }
     }
 
     fn profile_start(&mut self, duration_seconds: u64) -> Result<(), String> {

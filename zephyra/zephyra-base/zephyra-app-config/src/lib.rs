@@ -50,7 +50,37 @@ pub fn load_from_project_root(root: &Path) -> Result<AppConfig, String> {
 ///
 /// A missing file uses defaults. An unreadable or invalid file is reported to stderr
 /// and also uses defaults so window creation can proceed.
+///
+/// `ZEPHYRA_FRAMELESS` (`1`/`0`) overrides [`WindowConfig::frameless`] at runtime,
+/// taking priority over any file. `window.frameless` is a general setting; this
+/// override exists so apps that draw their own titlebar (where frameless is required,
+/// not optional) can pin it independent of cwd — the file is resolved relative to the
+/// working directory, so running `target/debug/<exe>` from anywhere but the project
+/// root silently drops the setting and the OS titlebar reappears on top of the app's
+/// own. All three window backends read frameless through this function, so one
+/// override covers every backend.
 pub fn load_from_current_dir() -> AppConfig {
+    let mut config = load_resolved();
+    let override_value = std::env::var("ZEPHYRA_FRAMELESS").ok();
+    apply_frameless_override(&mut config, override_value.as_deref());
+    config
+}
+
+/// Apply a `ZEPHYRA_FRAMELESS` override: `Some("1")` forces frameless, `Some("0")`
+/// forces decorated, anything else leaves the config untouched.
+///
+/// Split out so the override logic is testable without mutating process-global
+/// environment — env-var tests race when the harness runs tests in parallel.
+fn apply_frameless_override(config: &mut AppConfig, value: Option<&str>) {
+    match value {
+        Some("1") => config.window.frameless = true,
+        Some("0") => config.window.frameless = false,
+        _ => {}
+    }
+}
+
+/// Resolve the embedded or working-directory config file (no env override).
+fn load_resolved() -> AppConfig {
     if let Some((contents, source)) = EMBEDDED_CONFIG {
         return match parse_config(contents, source) {
             Ok(config) => config,

@@ -300,6 +300,16 @@ pub trait BridgeHost {
     /// 「立即」的含义：不能等下一帧——AI 发 `shot` 时界面往往静止
     /// （`dirty == false`），等帧循环自己跑就永远等不到。
     fn screenshot(&mut self) -> Option<Vec<u8>>;
+
+    /// 桥客户端**消失之后**的一次性收尾。
+    ///
+    /// 为什么需要它：AI 在 `pointer_drag` 的按下与抬起之间把 MCP server 杀掉
+    /// （超时/崩溃/会话取消都是常态），应用会永远卡在「指针按住」的状态——
+    /// 后续真实用户的输入全部被当成拖动的一部分。桥检测到连接消失时调用
+    /// 一次（下一帧起就不再调），宿主应当在此补一次抬起并标脏。
+    ///
+    /// 默认空实现：没有按下态概念的宿主什么都不用做。
+    fn on_bridge_disconnect(&mut self) {}
 }
 
 /// 调试桥。`from_env` 开启；每帧 [`Self::poll`]。
@@ -357,6 +367,18 @@ impl DebugBridge {
     /// 全程**非阻塞**：没有连接、没有数据、对端半行，都直接返回，
     /// 帧循环一微秒都不多等。
     pub fn poll(&mut self, host: &mut dyn BridgeHost) {
+        let had_client = self.conn.is_some();
+        self.poll_inner(host);
+        // 客户端刚消失：给宿主一次收尾机会（补抬指针之类）。判据是
+        // 「上一帧还有、这一帧没了」——所以只在消失的那一帧调一次。
+        if had_client && self.conn.is_none() {
+            host.on_bridge_disconnect();
+        }
+    }
+
+    /// `poll` 的实现体。拆出来只为让外层能在返回后统一判断连接是否消失
+    /// （体内有多个 `return`，在体内加钩子必然漏分支）。
+    fn poll_inner(&mut self, host: &mut dyn BridgeHost) {
         // 只有一个连接槽：已有客户端在位时不 accept（新连接立即被关——
         // 但 v1 干脆不 accept，让它悬在 backlog 里等旧连接断开更省事）。
         if self.conn.is_none() {
@@ -1260,6 +1282,90 @@ mod tests {
         let _c2 = TcpStream::connect(("127.0.0.1", port)).unwrap();
         bridge.poll(&mut host);
         assert!(bridge.conn.is_some(), "新客户端应当能接上");
+    }
+
+    /// 断连钩子：连接消失的那一帧通知宿主一次，之后不再打扰。
+    ///
+    /// 它是「拖动中途 MCP 被杀」的唯一防线——宿主靠它补抬指针。
+    #[test]
+    fn disconnect_notifies_host_once_and_then_stays_quiet() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingHost {
+            inner: MockHost,
+            disconnects: std::sync::Arc<AtomicUsize>,
+        }
+        impl BridgeHost for CountingHost {
+            fn viewport(&self) -> (f32, f32) {
+                self.inner.viewport()
+            }
+            fn tree_dump(&self) -> String {
+                self.inner.tree_dump()
+            }
+            fn props_dump(&self, path: &[usize]) -> Option<String> {
+                self.inner.props_dump(path)
+            }
+            fn stats(&self) -> String {
+                self.inner.stats()
+            }
+            fn inject_hover(&mut self, x: f32, y: f32) {
+                self.inner.inject_hover(x, y);
+            }
+            fn inject_click(&mut self, x: f32, y: f32) {
+                self.inner.inject_click(x, y);
+            }
+            fn inject_pointer_down(&mut self) {
+                self.inner.inject_pointer_down();
+            }
+            fn inject_pointer_up(&mut self) {
+                self.inner.inject_pointer_up();
+            }
+            fn inject_key(&mut self, key: &str) {
+                self.inner.inject_key(key);
+            }
+            fn inject_scroll(&mut self, x: f32, y: f32, dx: f32, dy: f32) {
+                self.inner.inject_scroll(x, y, dx, dy);
+            }
+            fn screenshot(&mut self) -> Option<Vec<u8>> {
+                self.inner.screenshot()
+            }
+            fn on_bridge_disconnect(&mut self) {
+                self.disconnects.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+
+        let (mut bridge, port) = bridge_on_ephemeral_port();
+        let mut host = CountingHost {
+            inner: MockHost::new(),
+            disconnects: std::sync::Arc::new(AtomicUsize::new(0)),
+        };
+        {
+            let c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_nonblocking(false).unwrap();
+            bridge.poll(&mut host);
+            assert!(bridge.conn.is_some());
+            drop(c);
+        }
+        // 断连被察觉的那一帧：钩子调用一次。
+        bridge.poll(&mut host);
+        assert_eq!(host.disconnects.load(Ordering::Acquire), 1);
+        // 之后的空 poll 不再打扰宿主（否则宿主每帧都在做无用收尾）。
+        bridge.poll(&mut host);
+        bridge.poll(&mut host);
+        assert_eq!(
+            host.disconnects.load(Ordering::Acquire),
+            1,
+            "钩子只该在连接消失的那一帧调用"
+        );
+        // 新客户端连上又断开：再通知一次（每次断连都算数）。
+        {
+            let c2 = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            bridge.poll(&mut host);
+            assert!(bridge.conn.is_some());
+            drop(c2);
+        }
+        bridge.poll(&mut host);
+        assert_eq!(host.disconnects.load(Ordering::Acquire), 2);
     }
 }
 
