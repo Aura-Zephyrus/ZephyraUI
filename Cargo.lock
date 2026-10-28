@@ -2449,9 +2449,6 @@ name = "zephyra-ui"
 version = "0.1.0"
 dependencies = [
  "zephyra-core",
- "zephyra-style",
- "zypui",
- "zypuic",
 ]
 
 [[package]]

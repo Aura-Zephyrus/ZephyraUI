@@ -11,8 +11,6 @@
 //! 那份给 Rust 代码用，这份给样式表用。**新增角色的唯一入口是 core 的
 //! `theme.rs`** —— 这里只做镜像，防止两份漂移。
 
-#![allow(dead_code)]
-
 use zephyra_core::theme::roles;
 
 // ---- 语义层（core 原有） ----
@@ -58,9 +56,14 @@ pub const CAUTION_BG: &str = roles::CAUTION_BG;
 pub const CRITICAL_BG: &str = roles::CRITICAL_BG;
 
 /// 全部令牌。门禁遍历它逐个对 `Theme::role()`。
+///
+/// ⚠ 这张表曾经漏过 `SURFACE_ALT_TRANSLUCENT`：常量定义了、`ALL` 里没有，
+/// 于是门禁遍历 `ALL` 时静默跳过它 —— 正是本文件开头说的那种「安静地失效」。
+/// 下面的单测按**本文件的全部 `pub` 常量**逐个查 `ALL`，漏一个就红。
 pub const ALL: &[&str] = &[
     SURFACE,
     SURFACE_ALT,
+    SURFACE_ALT_TRANSLUCENT,
     CONTENT,
     CONTENT_SECONDARY,
     CONTENT_DISABLED,
@@ -89,3 +92,7 @@ pub const ALL: &[&str] = &[
     CAUTION_BG,
     CRITICAL_BG,
 ];
+
+#[cfg(test)]
+#[path = "tests/tokens_tests.rs"]
+mod tests;

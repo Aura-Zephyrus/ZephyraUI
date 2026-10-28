@@ -1,6 +1,8 @@
 # ZephyraUI 控件能力缺口与重写清单
 
-> 盘点范围：`ZephyraUI` 控件库当前公开组件、Rust 构造器、声明式模板与 Gallery 的消费方式。
+> 盘点范围：`ZephyraUI` 控件库当前公开组件、声明式模板与 Gallery 的消费方式。
+> （本文件初版还盘点了同名 Rust 构造器，那一批已于 2026-10-28 删除，见下文
+> 「结构整理风险」。）
 > 目的：为后续重写标出**组件名称暗示的行为尚未实现或明确降级**之处；本文件不表示这些控件已删除，也不把所有声明式控件都判为无效。
 
 ## 结论先读
@@ -57,12 +59,16 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 
 ## 结构整理风险
 
-当前同一控件结构存在两种来源：
+~~当前同一控件结构存在两种来源。~~ **已于 2026-10-28 收口**（两步提交
+`b95b46e` + 本轮）：
 
-1. `ui/controls.zypui` 是 `build.rs` 编译并供运行时加载的声明式组件来源。
-2. `src/controls/*.rs` 仍导出同名 Rust 构造器，并被 `tests/zypui_parity.rs` 用来和 `.zypui` 做结构 parity。
+1. ✅ `src/controls/*.rs` 的 59 个 Rust 构造器**已删**（全仓除 parity 测试外零消费者）。
+2. ✅ `ui/controls.zypui` 是**唯一**结构真相，由应用的 `build.rs` 直接读文件编译
+   （`gallery/build.rs:15`），crate 不再有同名 Rust API。
+3. ✅ parity 测试与 `ui/parity.zypui` 一并删除；逐控件对照换成 gallery 的**整树**
+   门禁 + zypuic 编译期报错。判据从「与脚手架全等」变成「gallery 真用的那棵树是对的」。
 
-这会形成双份结构维护面。新增或重写控件前，应先决定唯一权威来源；推荐保留 `.zypui` 作为组件树来源，把 Rust 层限制在有必要的状态/数据适配。确认 parity 迁移完成后，再逐项移除重复的 Rust 构造器与无调用的样式，避免先删 API 后才发现它仍是测试或使用者的入口。
+详见 [2026-10-28-zephyra-ui-single-source](../dev-log/2026-10-28-zephyra-ui-single-source.md)。
 
 ## 后续重写顺序建议
 
@@ -74,6 +80,6 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 ## 对照源码
 
 - [控件 README](../../ZephyraUI/README.md)
-- [Rust 控件模块](../../ZephyraUI/src/controls/)
-- [声明式控件模板](../../ZephyraUI/ui/controls.zypui)
+- [声明式控件模板（唯一结构真相）](../../ZephyraUI/ui/controls.zypui)
 - [控件样式表](../../ZephyraUI/controls-base.zstyle)
+- [控件如何被应用编译消费](../../gallery/build.rs)
