@@ -339,6 +339,19 @@ impl Node {
         self.flag(&crate::props::INTERACTIVE, ctx)
     }
 
+    /// 是否可聚焦（进入 Tab 顺序，能获得键盘焦点）。
+    ///
+    /// 与 [`Self::is_interactive`] 刻意分开：按钮可交互但不可聚焦（Tab 不该停在
+    /// 按钮上），文本框可聚焦但命中测试靠它自己的 `INTERACTIVE` 子节点。
+    pub fn is_focusable(&self, ctx: Context<'_>) -> bool {
+        self.flag(&crate::props::FOCUSABLE, ctx)
+    }
+
+    /// 当前是否拥有键盘焦点（由 `zephyra_core::input::focus::FocusState` 写入）。
+    pub fn is_focused(&self, ctx: Context<'_>) -> bool {
+        self.flag(&crate::props::FOCUSED, ctx)
+    }
+
     /// 读一个颜色属性，解析其中的资源键。
     pub(crate) fn color(
         &self,

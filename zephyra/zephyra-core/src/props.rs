@@ -278,6 +278,23 @@ pub static SELECTED: PropertyKey = PropertyKey::new("Selected", PropertyValue::b
 /// 是否禁用（禁用态的文字与填充取 `content_disabled` / 更低的填充层）。
 pub static DISABLED: PropertyKey = PropertyKey::new("Disabled", PropertyValue::bool(false));
 
+/// 是否可聚焦（进入 Tab 顺序，能获得键盘焦点）。
+///
+/// 与 [`INTERACTIVE`] **刻意分开**：按钮可交互但**不可聚焦**（Tab 不该停在
+/// 按钮上），文本框可聚焦但命中测试靠它自己的 `INTERACTIVE` 子节点。两个属性
+/// 回答两个问题——「能被鼠标点到吗」与「该进键盘顺序吗」。
+pub static FOCUSABLE: PropertyKey = PropertyKey::new("Focusable", PropertyValue::bool(false));
+
+/// 当前是否拥有键盘焦点。
+///
+/// 每棵树**至多一个**节点为真，由 `zephyra_core::input::focus::FocusState` 维护
+/// 并写进这里。之所以是**属性**而不是节点内部字段：焦点是**跨节点**的全局事实，
+/// 只有写成属性，`.zstyle` 才能按它给控件换焦点边框（`focus_ring` /
+/// `focus_inner` 令牌），否则焦点样式就得退回源码里写死颜色。
+///
+/// 控件层读它决定"要不要显示光标 / 焦点环"，`view()` 时查自己的 key 即可。
+pub static FOCUSED: PropertyKey = PropertyKey::new("Focused", PropertyValue::bool(false));
+
 /// 未使用的占位，避免 `CornerRadius` 导入被判定为 dead code。
 ///
 /// `CornerRadius` 目前只作为文档语义出现（绘制命令用的是裸 `f32` 半径），

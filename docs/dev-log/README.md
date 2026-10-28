@@ -25,6 +25,7 @@
 
 | 日期 | 条目 | 状态 |
 |---|---|---|
+| 2026-10-28 | [焦点状态机：Tab 顺序 / 圈闭 / FOCUSED 属性](2026-10-28-input-focus.md) | 已接；core 新建 `input::focus`（`FocusState`），props 加 `FOCUSABLE` / `FOCUSED`；Tab 按树深度优先移动、末端圈闭；FOCUSED 走 Local 层属性（`set_prop`），`.zstyle` 可按它给焦点环；宿主尚未接入（下一步） |
 | 2026-10-28 | [键盘 / 字符 / IME 事件契约与三后端接线](2026-10-28-input-keyboard-ime.md) | 已接；core 定 `TextEvent`（`Key` / `Char` / `Ime` 三通道，`KeyInput` 带语义键+键名+重复+修饰键），新建 `zephyra-winit-input` 一份翻译供三宿主共用；Vulkan 补上键盘/滚轮/IME（此前 `key_events` 与 `scroll` 写死空值）；MCP `press_key` 改走同一套词汇。控件层尚未消费 |
 | 2026-10-26 | [无标题栏窗口模式](2026-10-26-frameless-window.md) | 已接入 D3D11 / D3D12 / Vulkan 宿主；各消费项目根目录的 `ZephyraUI.json` 用 `window.frameless` 控制系统装饰；Gallery D3D12 实机确认客户区顶边与窗口顶边齐平。 |
 | 2026-10-26 | [MCP 拖动、性能分析与资源遥测](2026-10-26-mcp-clicks-resources.md) | `pointer_drag` 按住左键支持折线路径/直线/easing；一次性 profile 必填时长，自动停止并返回逐帧 CPU 阶段耗时与统计；`get_resources` 提供进程 CPU/内存和可用时的 GPU 引擎/显存遥测；D3D11/D3D12 真机闭环覆盖拖动、profile、资源及布局坐标点击。 |

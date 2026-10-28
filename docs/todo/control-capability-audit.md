@@ -76,7 +76,9 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
    - ✅ **键盘 / 字符 / IME 事件契约已完成**（2026-10-28）：core 定
      `TextEvent`（`Key` / `Char` / `Ime` 三通道），三宿主共用
      `zephyra-winit-input` 翻译。控件层**尚未消费**它 —— 那是下一步。
-   - ⬜ 焦点系统（`Focused` / `TabIndex` / 焦点圈闭与恢复）仍是空白。
+   - ✅ **焦点状态机已完成**（2026-10-28）：core 新建 `input::focus`
+     （`FocusState`），props 加 `FOCUSABLE` / `FOCUSED`，Tab 按深度优先移动并圈闭。
+     **宿主尚未接入**（三个 `host.rs` 还没持有它，控件层还没消费 FOCUSED）。
    - ⬜ Overlay / Popup 管理仍是空白（`Layer::Popup` 零生产者）。
 2. **再补滚动与裁剪**：Scroll、Clip/Mask 与手势。随后重写列表、文本区、日期/时间选择器和 SwipeView。
 3. **最后补专用呈现**：弧线/进度环、动画时钟、系统 Acrylic 或明确的静态降级命名。
