@@ -135,7 +135,11 @@ pub struct HostWindow<V: View> {
     /// 本后端的 `on_pointer_up` 不清 `pointer`，更不能拿它当判据。
     bridge_pointer_pressed: bool,
     pointer_pos: (f32, f32),
-    pending_key_events: Vec<zephyra_fx::KeyInput>,
+    pending_text_events: Vec<zephyra_core::input::TextEvent>,
+    /// winit 按键 → core 文本事件的翻译器（修饰键状态也住在这里）。
+    ///
+    /// 与 D3D12 / Vulkan 宿主共用 `zephyra-winit-input` 里的同一份实现。
+    translator: zephyra_winit_input::Translator,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
@@ -179,6 +183,13 @@ impl<V: View> HostWindow<V> {
             .with_title("ZephyraUI")
             .with_decorations(!frameless);
         let window = std::sync::Arc::new(event_loop.create_window(attrs).expect("create_window"));
+        // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
+        // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
+        //
+        // ⚠ 真实应用应当「文本框获得焦点时才开」：组字期间 winit 不送
+        // `KeyboardInput`，于是组字中的快捷键本来也不生效。焦点系统还没建，
+        // 所以先全局打开；有了焦点系统后改成随焦点开关。
+        window.set_ime_allowed(true);
         eprintln!(
             "[zephyra] 窗口装饰: {}",
             if frameless { "frameless" } else { "system" }
@@ -243,7 +254,8 @@ impl<V: View> HostWindow<V> {
             pointer: None,
             bridge_pointer_pressed: false,
             pointer_pos: (0.0, 0.0),
-            pending_key_events: Vec::new(),
+            pending_text_events: Vec::new(),
+            translator: zephyra_winit_input::Translator::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
             dirty: true,
@@ -484,7 +496,7 @@ impl<V: View> HostWindow<V> {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
-            key_events: std::mem::take(&mut self.pending_key_events),
+            text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
             pointer_events: std::mem::take(&mut self.pending_pointer_events),
             viewport: (size.0 as f32, size.1 as f32),
@@ -911,16 +923,9 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     }
 
     fn inject_key(&mut self, key: &str) {
-        self.pending_key_events.extend([
-            zephyra_fx::KeyInput {
-                key: key.to_string(),
-                pressed: true,
-            },
-            zephyra_fx::KeyInput {
-                key: key.to_string(),
-                pressed: false,
-            },
-        ]);
+        // 名字 → 事件那一步在共用 crate 里：三后端注入的按键行为必须一致。
+        self.pending_text_events
+            .extend(zephyra_winit_input::injected_events(key));
         self.dirty = true;
     }
 
@@ -945,14 +950,6 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         } else {
             Some(buf)
         }
-    }
-}
-
-fn logical_key_name(key: &Key) -> String {
-    match key {
-        Key::Character(text) => text.to_string(),
-        Key::Named(named) => format!("{named:?}"),
-        other => format!("{other:?}"),
     }
 }
 
@@ -1023,11 +1020,12 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                     self.dirty = true;
                 }
             }
+            WindowEvent::ModifiersChanged(m) => {
+                self.translator.on_modifiers(m.state());
+            }
             WindowEvent::KeyboardInput { event, .. } => {
-                self.pending_key_events.push(zephyra_fx::KeyInput {
-                    key: logical_key_name(&event.logical_key),
-                    pressed: event.state == ElementState::Pressed,
-                });
+                self.translator
+                    .key_events(&event, &mut self.pending_text_events);
                 if event.state == ElementState::Pressed {
                     match event.logical_key.clone() {
                         Key::Named(NamedKey::Escape) => event_loop.exit(),
@@ -1044,6 +1042,13 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         _ => {}
                     }
                 }
+            }
+            WindowEvent::Ime(ime) => {
+                // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，于是用
+                // 最近一次指针位置当代理（用户点进输入框就在那）。
+                self.translator
+                    .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
+                self.dirty = true;
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (delta_x, delta_y) = match delta {

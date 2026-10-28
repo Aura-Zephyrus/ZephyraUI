@@ -76,6 +76,8 @@ base 不依赖 `zephyra-controls`（将来若有）。它只依赖核心，或�
 | `zephyra-app-config` | 读取消费项目根目录的 `ZephyraUI.json` | 全平台 | 否 |
 | `zephyra-winit` | 窗口 + 事件循环 + D3D11 设备 + `DisplayList` 回放 | 全平台 | 本 crate 内无 unsafe 块 |
 | `zephyra-winit-d3d12` | 窗口 + D3D12 后端（与 D3D11 **互不依赖**） | Windows | 需要 |
+| `zephyra-vulkan` | 窗口 + 裸 Vulkan（ash）后端（与两个 Windows 后端互不依赖） | Linux | 需要 |
+| `zephyra-winit-input` | winit 事件 → core `TextEvent` 的翻译，三宿主**共用一份** | 全平台 | 否 |
 | `zephyra-dcomp` | DirectComposition 呈现：device/target/visual 树 + composition swapchain | Windows | 需要 |
 
 `zephyra-dcomp` 是**可选子包**：在 workspace `members` 里但**不在**

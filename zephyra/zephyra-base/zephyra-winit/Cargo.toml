@@ -48,6 +48,8 @@ rust-version.workspace = true
 zephyra-core = { path = "../../zephyra-core" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
+# winit 事件 → core 文本事件的翻译。三后端共用这一份（见该 crate 的模块文档）。
+zephyra-winit-input = { path = "../zephyra-winit-input" }
 winit = "0.30"
 # 顶点结构用 bytemuck 的 Pod/Zeroable derive，省掉手写字段校验。
 bytemuck = { version = "1", features = ["derive"] }

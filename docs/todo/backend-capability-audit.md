@@ -7,7 +7,7 @@
 ## 结论摘要
 
 1. **触控尚未接入任何宿主。** 三个 `window_event` 都处理 `CursorMoved` 和左键 `MouseInput`，但没有处理 `WindowEvent::Touch`。核心有 `PointerSource::Touch` 和触摸手势逻辑，宿主到核心的输入链却没有把触点送进去。Windows 的触摸不会可靠地转成鼠标事件，不能把鼠标路径当触控支持。
-2. **输入能力不一致。** D3D11、D3D12 有键盘和滚轮事件；Vulkan `InputState` 同步时固定提供空键盘事件与空滚轮。三者的应用行为不能假定一致。
+2. **输入能力不一致。** ~~D3D11、D3D12 有键盘和滚轮事件；Vulkan `InputState` 同步时固定提供空键盘事件与空滚轮。~~ **已于 2026-10-28 收口**：三个宿主共用 `zephyra-winit-input` 的同一份翻译，Vulkan 补上了键盘、滚轮与 IME 分支。见 [2026-10-28-input-keyboard-ime](../dev-log/2026-10-28-input-keyboard-ime.md)。
 3. **帧输出与截图能力不一致。** D3D11、D3D12 都有调试桥的按需截图；Vulkan 只有首次上屏时可选的 `ZEPHYRA_FRAME_DUMP` 诊断读回，没有 MCP `BridgeHost` 截图路径。
 4. **自绘扩展已接入三后端，但不是跨后端的统一 GPU 插件 API。** `Command::Custom` 与 payload/kind 身份跨后端共用；`RenderHook`、GPU 上下文和资源管理按后端分别实现。自绘源的非默认滤镜没有可用的离屏执行，Vulkan hook 也不能更换 render pass 或 attachment。
 5. **文档存在过时或不完整的能力描述。** `migration-seam.md` 描述了窗口系统替换时应接入的 Touch 事件，并不代表现有宿主已经接通；触控尺寸文档里“只在触摸路径放大”目前没有可用的宿主触摸路径。D3D12 宿主关于截图未接线的注释则与当前实现及 2026-10-26 真机验收记录相矛盾。
@@ -18,8 +18,10 @@
 |---|---|---|---|---|
 | 鼠标移动 / 左键按下抬起 | 已接 | 已接 | 已接 | 三宿主用 `CursorMoved` / `MouseInput`，以 `PointerSource::Mouse` 路由 |
 | 原生触点 Down / Move / Up | **未接** | **未接** | **未接** | 三个宿主均无 `WindowEvent::Touch` 分支；触摸屏上无法保证产生鼠标事件 |
-| 键盘逻辑键事件 | 已接 | 已接 | **未接** | Vulkan 每轮 `InputState` 都写入 `key_events: Vec::new()`，事件循环也没有 `KeyboardInput` |
-| 滚轮 / 触控板滚动 | 已接 | 已接 | **未接** | Vulkan 每轮 `InputState` 固定 `scroll: None`，事件循环无 `MouseWheel` |
+| 键盘逻辑键事件 | 已接 | 已接 | 已接（2026-10-28） | 三宿主都过 `zephyra_winit_input::Translator`，产出 core 的 `TextEvent::Key`（语义键 + 键名 + 重复 + 修饰键） |
+| 可打印字符 | 已接 | 已接 | 已接（2026-10-28） | 同一翻译器产出 `TextEvent::Char`；Ctrl/Alt/Super 与控制的字符被挡掉 |
+| IME（组字 / 提交 / 取消） | 已接 | 已接 | 已接（2026-10-28） | 同一翻译器产出 `TextEvent::Ime`；`Ime::Start` 的插入点暂用最近指针位置代理（焦点系统未建） |
+| 滚轮 / 触控板滚动 | 已接 | 已接 | 已接（2026-10-28） | Vulkan 补上了 `MouseWheel` 分支，`scroll` 不再写死 `None` |
 | 多指身份到应用输入状态 | **未接** | **未接** | **未接** | core `PointerEvent` 有 id/source，但 fx 的 `PointerInput` 只有坐标和相位；当前宿主队列无法将 id、触点来源交给 `View::on_input` |
 
 核心与宿主的边界需要特别注意：

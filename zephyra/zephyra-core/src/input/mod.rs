@@ -16,6 +16,7 @@
 //! # 模块
 //!
 //! - [`mod@pointer`]：事件词汇表 + 固定容量指针表
+//! - [`mod@text`]：键盘 / 字符 / 输入法（IME）事件词汇表
 //! - [`pinch`]：两指捏合（增量语义 + 平方域容差）
 //! - [`recognizer`]：单入口手势状态机
 //! - [`viewport`]：屏幕 ↔ 内容坐标变换（缩放钳位的唯一来源）
@@ -32,6 +33,7 @@ pub mod pinch;
 pub mod pointer;
 pub mod recognizer;
 pub mod router;
+pub mod text;
 pub mod viewport;
 
 pub use momentum::Momentum;
@@ -39,4 +41,5 @@ pub use pinch::PinchDelta;
 pub use pointer::{PointerEvent, PointerPhase, PointerSource};
 pub use recognizer::{Gesture, Recognizer};
 pub use router::{InputRouter, RoutedEvent, RoutedEvents};
+pub use text::{Ime, Key, KeyInput, Modifiers, TextEvent};
 pub use viewport::Viewport;

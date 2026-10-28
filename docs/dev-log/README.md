@@ -25,6 +25,7 @@
 
 | 日期 | 条目 | 状态 |
 |---|---|---|
+| 2026-10-28 | [键盘 / 字符 / IME 事件契约与三后端接线](2026-10-28-input-keyboard-ime.md) | 已接；core 定 `TextEvent`（`Key` / `Char` / `Ime` 三通道，`KeyInput` 带语义键+键名+重复+修饰键），新建 `zephyra-winit-input` 一份翻译供三宿主共用；Vulkan 补上键盘/滚轮/IME（此前 `key_events` 与 `scroll` 写死空值）；MCP `press_key` 改走同一套词汇。控件层尚未消费 |
 | 2026-10-26 | [无标题栏窗口模式](2026-10-26-frameless-window.md) | 已接入 D3D11 / D3D12 / Vulkan 宿主；各消费项目根目录的 `ZephyraUI.json` 用 `window.frameless` 控制系统装饰；Gallery D3D12 实机确认客户区顶边与窗口顶边齐平。 |
 | 2026-10-26 | [MCP 拖动、性能分析与资源遥测](2026-10-26-mcp-clicks-resources.md) | `pointer_drag` 按住左键支持折线路径/直线/easing；一次性 profile 必填时长，自动停止并返回逐帧 CPU 阶段耗时与统计；`get_resources` 提供进程 CPU/内存和可用时的 GPU 引擎/显存遥测；D3D11/D3D12 真机闭环覆盖拖动、profile、资源及布局坐标点击。 |
 | 2026-10-26 | [MCP 输入、布局与 D3D12 截图](2026-10-26-mcp-input-layout-d3d12-capture.md) | 已接；`get_layout` 暴露文本布局树，`press_key` / `scroll` 走原生输入状态；D3D12 后缓冲经 readback heap 读回，截图强制完整重绘；`.zypui render-source` 只保留宿主 kind 查找，不携带 GPU payload。D3D11 / D3D12 真机 MCP 各验键盘、滚动、点击后布局变化和 BMP；修复大响应非阻塞续传，以及 WSL 慢 loopback 下单次 poll 假设 |

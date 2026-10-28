@@ -28,6 +28,10 @@ members = [
     "ZephyraCLI",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
+    # winit → core 的输入翻译，三个后端共用一份（winit 类型住这里，core 装不下）。
+    # 不进 default-members：与其它 base crate 一致 —— 默认构建不该拉 winit 的
+    # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
+    "zephyra/zephyra-base/zephyra-winit-input",
     "zephyra/zephyra-base/extra/zephyra-camera",
     "zephyra/zephyra-base/zephyra-dcomp",
     # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**

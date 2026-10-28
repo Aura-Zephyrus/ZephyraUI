@@ -96,6 +96,7 @@ use zephyra_core::diff::DiffStats;
 use zephyra_core::element::Element;
 use zephyra_core::frame::Damage;
 use zephyra_core::id::ElementKey;
+use zephyra_core::input::TextEvent;
 
 /// 当前输入状态 —— 由 [`zephyra_core::input::InputRouter`] 产出。
 ///
@@ -109,9 +110,16 @@ pub struct InputState {
     pub pressed: Option<ElementKey>,
     /// 当前活跃指针数。
     pub pointers: usize,
-    /// 本次同步收到的键盘边沿事件。一次 MCP `press_key` 会在同一轮同步中带入
-    /// Pressed 与 Released；应用可按逻辑键名处理快捷键或文本编辑命令。
-    pub key_events: Vec<KeyInput>,
+    /// 本次同步收到的**文本输入**事件，按接收顺序排列。
+    ///
+    /// 三种事件（键盘边沿 / 可打印字符 / 输入法）在
+    /// [`zephyra_core::input::TextEvent`] 里分开定义 —— 物理键与文本插入是
+    /// 两件事，控件按需消费其一或两者。
+    ///
+    /// 一次 MCP `press_key` 会在同一轮同步中带入按下与抬起两条边沿；
+    /// 应用按 [`zephyra_core::input::KeyInput::name`] 处理快捷键、按
+    /// [`zephyra_core::input::TextEvent::Char`] 处理文本插入。
+    pub text_events: Vec<TextEvent>,
     /// 本次同步收到的滚轮增量与当前鼠标位置。正 `delta_y` 表示向上滚动；
     /// 单位沿用 winit（物理像素或行数），应用按具体设备语义解释。
     pub scroll: Option<ScrollInput>,
@@ -157,14 +165,6 @@ pub struct InputState {
     /// 放在这里而不是另开一个 trait 方法：它与视口 / 缩放比同属
     /// 「宿主每帧开头把外部事实推给视图」那一批，多一条路径只会更容易漏。
     pub languages: Vec<String>,
-}
-
-/// 一个逻辑键的按下/抬起边沿。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyInput {
-    /// winit 逻辑键名：字符键为其文本，命名键为 `Enter` / `ArrowDown` 等。
-    pub key: String,
-    pub pressed: bool,
 }
 
 /// 一次滚轮输入。

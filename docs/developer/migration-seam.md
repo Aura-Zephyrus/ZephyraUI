@@ -62,13 +62,19 @@ zephyra v0.1.0
 | 事件循环 | `winit::EventLoop` + `ApplicationHandler` | 平台消息循环 |
 | 指针 | `WindowEvent::CursorMoved` / `MouseInput` / `MouseWheel` | 平台事件 |
 | 触摸 | `WindowEvent::Touch` | 平台触摸事件 |
-| 键盘 | `WindowEvent::KeyboardInput` | 平台键盘事件 |
+| 键盘 / IME | `WindowEvent::KeyboardInput` / `ModifiersChanged` / `Ime` → `zephyra_winit_input::Translator` | 平台键盘与输入法事件，翻译成 core 的 `TextEvent` |
 | 缩放因子 | `Window::scale_factor()` | 平台 DPI |
 | 关闭 | `WindowEvent::CloseRequested` | 平台关闭事件 |
 
 **不可省略的一条**：winit 把 `WM_POINTER*` 转成 `WindowEvent::Touch`。**不能**假设触控
 会被提升成鼠标事件——窗口已 `RegisterTouchWindow`，Windows 不做这种提升。所以事件
 路由（`zephyra::input`）必须在 touch 与 pointer 两条路径上都接，缺一条就等于没有触控。
+
+**键盘这一行的形状值得单独看**：winit 类型**只**住在
+`zephyra/zephyra-base/zephyra-winit-input` 里，三宿主共用它。换窗口系统时要换的只有
+那一个 crate 的三层映射（语义键 / 可打印字符 / IME），core 的 `TextEvent` 与控件层
+一动不动。翻译如果散在各宿主里，换窗口系统就得改三遍 —— 而实测三份拷贝已经漂移过
+（Vulkan 那份根本没写）。
 
 `ApplicationHandler` 的类型是两个后端**共用**的，所以 `winit` 的版本号（0.30）在两个
 crate 里必须一致——否则应用层代码没法同时对上两个后端。

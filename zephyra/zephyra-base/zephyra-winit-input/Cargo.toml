@@ -1,0 +1,29 @@
+[package]
+name = "zephyra-winit-input"
+description = "winit -> zephyra-core input translation shared by all three host backends"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+publish = false
+
+# # 为什么单独一个 crate
+#
+# 这份翻译必须同时被 `zephyra-winit`（D3D11）、`zephyra-winit-d3d12`、
+# `zephyra-vulkan` 使用，而三个后端**互不依赖**（见 AGENTS.md 第 4 条边界）。
+# 所以它既不能住在任何一家的 src 里，也不能塞进：
+#
+# - `zephyra-core`：零依赖，装不下 winit。
+# - `zephyra-fx`：`cpu_only::CpuHost` 不开窗口，装上 winit 会把 CPU 光栅路径
+#   一起拖进窗口依赖。
+# - `zephyra-platform`：同样是零依赖，「能力」的定义处，不写平台代码。
+#
+# 实测这个坑已经踩过：`logical_key_name` 在 D3D11 与 D3D12 宿主各存一份，
+# Vulkan 宿主则直接把 key_events 写死成空值 —— 键盘与滚轮在那条链路上从未接通。
+# 翻译只有一份，是让「三个后端行为一致」变成结构事实而不是纪律要求的唯一办法。
+[dependencies]
+zephyra-core = { path = "../../zephyra-core" }
+winit = "0.30"
+
+[lints.rust]
+unsafe_code = "forbid"

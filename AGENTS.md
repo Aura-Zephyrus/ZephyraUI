@@ -49,7 +49,7 @@ cargo run -p zstylec -- check <file.zstyle>  # 也可用 zephyra check（同一�
 unsafe 与设备代码）：`zstylec`、`zephyra-style`、`zephyra-cli`、
 `zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
 `zephyra-platform-win`、`zephyra-platform-linux`、`zephyra-winit-d3d12`、
-`zephyra-vulkan`、`zephyra-ui`，以及两个 `extra/` 下的全部包
+`zephyra-vulkan`、`zephyra-winit-input`、`zephyra-ui`，以及两个 `extra/` 下的全部包
 （`zephyra-core/extra/zephyra-bezier`、`zephyra-base/extra/zephyra-camera`）。
 要跑要编就 `-p` 点名。
 

@@ -39,6 +39,13 @@ pub struct HostWindow<V: View> {
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
+    pending_text_events: Vec<zephyra_core::input::TextEvent>,
+    /// winit 按键 → core 文本事件的翻译器（修饰键状态也住在这里）。
+    ///
+    /// 本后端曾经把 `key_events` / `scroll` 写死成空值 —— 键盘与滚轮在这条
+    /// 链路上从未接通过。现在与两个 Windows 后端共用同一份翻译。
+    translator: zephyra_winit_input::Translator,
+    pending_scroll: Option<zephyra_fx::ScrollInput>,
     dirty: bool,
     engine: std::cell::RefCell<TextEngine>,
     atlas_revision_uploaded: u64,
@@ -89,6 +96,13 @@ impl<V: View> HostWindow<V> {
             "[zephyra] 窗口装饰: {}",
             if frameless { "frameless" } else { "system" }
         );
+        // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
+        // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
+        //
+        // ⚠ 真实应用应当「文本框获得焦点时才开」：组字期间 winit 不送
+        // `KeyboardInput`，于是组字中的快捷键本来也不生效。焦点系统还没建，
+        // 所以先全局打开；有了焦点系统后改成随焦点开关。
+        window.set_ime_allowed(true);
 
         let gpu = match Gpu::new(&window) {
             Ok(g) => g,
@@ -145,6 +159,9 @@ impl<V: View> HostWindow<V> {
             pointer: None,
             pointer_pos: (0.0, 0.0),
             pending_pointer_events: Vec::new(),
+            pending_text_events: Vec::new(),
+            translator: zephyra_winit_input::Translator::new(),
+            pending_scroll: None,
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: u64::MAX,
@@ -497,8 +514,8 @@ impl<V: View> HostWindow<V> {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
-            key_events: Vec::new(),
-            scroll: None,
+            text_events: std::mem::take(&mut self.pending_text_events),
+            scroll: self.pending_scroll.take(),
             pointer_events: std::mem::take(&mut self.pending_pointer_events),
             viewport: (size.0 as f32, size.1 as f32),
             scale: scale as f32,
@@ -675,6 +692,35 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 }
                 _ => {}
             },
+            WindowEvent::ModifiersChanged(m) => {
+                self.translator.on_modifiers(m.state());
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.translator
+                    .key_events(&event, &mut self.pending_text_events);
+                self.dirty = true;
+            }
+            WindowEvent::Ime(ime) => {
+                // 插入点：焦点系统还没建，用最近一次指针位置当代理（用户点进
+                // 输入框就在那）。`Ime::Start` 的坐标本来就是「贴在哪儿」的提示。
+                self.translator
+                    .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
+                self.dirty = true;
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                use winit::event::MouseScrollDelta;
+                let (delta_x, delta_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                };
+                self.pending_scroll = Some(zephyra_fx::ScrollInput {
+                    x: self.pointer_pos.0,
+                    y: self.pointer_pos.1,
+                    delta_x,
+                    delta_y,
+                });
+                self.dirty = true;
+            }
             _ => {}
         }
     }

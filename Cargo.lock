@@ -2464,6 +2464,7 @@ dependencies = [
  "zephyra-fx",
  "zephyra-platform",
  "zephyra-platform-linux",
+ "zephyra-winit-input",
 ]
 
 [[package]]
@@ -2481,6 +2482,7 @@ dependencies = [
  "zephyra-fx",
  "zephyra-platform-win",
  "zephyra-winit-d3d12",
+ "zephyra-winit-input",
 ]
 
 [[package]]
@@ -2497,6 +2499,15 @@ dependencies = [
  "zephyra-fx",
  "zephyra-platform",
  "zephyra-platform-win",
+ "zephyra-winit-input",
+]
+
+[[package]]
+name = "zephyra-winit-input"
+version = "0.1.0"
+dependencies = [
+ "winit",
+ "zephyra-core",
 ]
 
 [[package]]

@@ -81,7 +81,12 @@ pub struct HostWindow<V: View> {
     /// 指针 id，与「按钮按没按住」是两回事，不能拿它当判据。
     bridge_pointer_pressed: bool,
     pointer_pos: (f32, f32),
-    pending_key_events: Vec<zephyra_fx::KeyInput>,
+    pending_text_events: Vec<zephyra_core::input::TextEvent>,
+    /// winit 按键 → core 文本事件的翻译器（修饰键状态也住在这里）。
+    ///
+    /// 三后端共用 `zephyra-winit-input` 里的同一份实现 —— 曾经每个宿主各抄一份
+    /// `logical_key_name`，而 Vulkan 那份干脆不存在。
+    translator: zephyra_winit_input::Translator,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 图集变化）。
@@ -264,6 +269,13 @@ impl<V: View> HostWindow<V> {
                 .create_window(attrs)
                 .expect("create_window（D3D12 后端）"),
         );
+        // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
+        // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
+        //
+        // ⚠ 真实应用应当「文本框获得焦点时才开」：组字期间 winit 不送
+        // `KeyboardInput`，于是组字中的快捷键本来也不生效。焦点系统还没建，
+        // 所以先全局打开；有了焦点系统后改成随焦点开关。
+        window.set_ime_allowed(true);
         eprintln!(
             "[zephyra-d3d12] 窗口装饰: {}",
             if frameless { "frameless" } else { "system" }
@@ -357,7 +369,8 @@ impl<V: View> HostWindow<V> {
             pointer: None,
             bridge_pointer_pressed: false,
             pointer_pos: (0.0, 0.0),
-            pending_key_events: Vec::new(),
+            pending_text_events: Vec::new(),
+            translator: zephyra_winit_input::Translator::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
             dirty: true,
@@ -1356,7 +1369,7 @@ impl<V: View> HostWindow<V> {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
-            key_events: std::mem::take(&mut self.pending_key_events),
+            text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
             pointer_events: std::mem::take(&mut self.pending_pointer_events),
             viewport: (size.0 as f32, size.1 as f32),
@@ -1650,16 +1663,9 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     }
 
     fn inject_key(&mut self, key: &str) {
-        self.pending_key_events.extend([
-            zephyra_fx::KeyInput {
-                key: key.to_string(),
-                pressed: true,
-            },
-            zephyra_fx::KeyInput {
-                key: key.to_string(),
-                pressed: false,
-            },
-        ]);
+        // 名字 → 事件那一步在共用 crate 里：三后端注入的按键行为必须一致。
+        self.pending_text_events
+            .extend(zephyra_winit_input::injected_events(key));
         self.dirty = true;
         self.sync_input();
     }
@@ -1682,14 +1688,6 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
             self.present();
         }
         screenshot
-    }
-}
-
-fn logical_key_name(key: &winit::keyboard::Key) -> String {
-    match key {
-        winit::keyboard::Key::Character(text) => text.to_string(),
-        winit::keyboard::Key::Named(named) => format!("{named:?}"),
-        other => format!("{other:?}"),
     }
 }
 
@@ -1732,11 +1730,21 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
                     self.on_pointer_up();
                 }
             },
+            WEvent::ModifiersChanged(m) => {
+                self.translator.on_modifiers(m.state());
+            }
             WEvent::KeyboardInput { event, .. } => {
-                self.pending_key_events.push(zephyra_fx::KeyInput {
-                    key: logical_key_name(&event.logical_key),
-                    pressed: event.state == ElementState::Pressed,
-                });
+                self.translator
+                    .key_events(&event, &mut self.pending_text_events);
+                self.dirty = true;
+            }
+            WEvent::Ime(ime) => {
+                // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，
+                // 于是用**最近一次指针位置**当代理（用户点进输入框就是在那）。
+                // 有了焦点系统之后这里改成向控件要 caret rect —— 那之前不要
+                // 假装知道，`Ime::Start` 的坐标本来就是「贴在哪儿」的提示。
+                self.translator
+                    .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
                 self.dirty = true;
             }
             WEvent::MouseWheel { delta, .. } => {

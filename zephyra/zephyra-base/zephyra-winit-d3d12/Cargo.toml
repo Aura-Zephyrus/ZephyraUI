@@ -41,6 +41,9 @@ description = "ZephyraUI 的 D3D12 渲染后端"
 zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
+# winit 事件 → core 文本事件的翻译。三后端共用这一份 —— 每个宿主各抄一份
+# `logical_key_name` 的日子已经结束（Vulkan 那份从来没写，键盘在那条链路上是死的）。
+zephyra-winit-input = { path = "../zephyra-winit-input" }
 # 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
 # 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
 winit = "0.30"
