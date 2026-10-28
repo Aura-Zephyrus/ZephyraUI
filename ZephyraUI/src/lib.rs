@@ -1,34 +1,37 @@
 #![forbid(unsafe_code)]
-//! ZephyraUI —— 控件层。
+//! ZephyraUI —— 控件层：样式表、令牌、控件结构声明。
 //!
 //! # 这个 crate 的边界
 //!
-//! 一句话：**产出 `Element`，不决定画在哪、也不决定画什么内容。**
-//!
 //! | 在这里 | 不在这里 |
 //! |---|---|
-//! | Button / CheckBox / Card / Dialog… 的**结构** | 路由、页面、应用状态 |
-//! | 控件的**分类名**（`.button` / `.checked` / `.hovered`） | 文案（"确定" vs "OK"） |
-//! | 控件自己的 `.zstyle`（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
-//! | 排布所需的断点 / 触控判据（转发 `zephyra_core::responsive`） | 任何渲染后端 |
+//! | 控件的 `.zstyle` 样式表（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
+//! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
+//! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
 //!
-//! # 三条不能碰的规矩
+//! # 结构的真相只有一份：`.zypui`
+//!
+//! 控件结构住在 [`ui/controls.zypui`](ui/controls.zypui)（声明式组件模板），
+//! 由**应用**在自己的 `build.rs` 里与页面模板一起编译成二进制 —— 见
+//! `gallery/build.rs`：它直接读本目录下的这份文件，所以结构真相全仓只有
+//! 一份，gallery 不复制它。
+//!
+//! ⚠ 本 crate 曾同时导出 59 个同名 Rust 构造器，与 `.zypui` 逐字节 parity。
+//! 那一层已经完成使命（证明翻译无误）并删除：全仓除 parity 测试外**无人消费**，
+//! 却让每个控件改一次要改两处。
+//!
+//! # 两条不能碰的规矩
 //!
 //! 1. **外观不进源码。** 控件只发 `NodeTag` / `ElementKey` / 分类名 / 内容，
-//!    颜色与尺寸全在 `.zstyle`。门禁 `tests/gates.rs` 按**整棵树**判。
+//!    颜色与尺寸全在 `.zstyle`。门禁按**整棵树 × 全部页面 × 全部交互态**判
+//!    （`gallery/tests/gates.rs`）。
 //!
 //! 2. **本 crate 不依赖渲染后端。** 控件库的用户不该被迫引入 D3D12。
 //!    后端由应用（`gallery/`）用 feature 选。
-//!
-//! 3. **字符串全是 `&'static str`。** 元素树可以每帧重建（见
-//!    `zephyra_core::frame::FrameCache`），任何运行期拼出来的字符串都会
-//!    变成泄漏。所以控件函数不接受 `String`，也不 `format!`。
 
-pub mod controls;
 pub mod styles;
 pub mod tokens;
 pub mod ui;
 
-pub use controls::*;
 pub use styles::{stylesheet, STYLESHEETS};
 pub use tokens as token_names;
