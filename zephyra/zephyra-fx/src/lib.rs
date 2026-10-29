@@ -108,6 +108,13 @@ pub struct InputState {
     pub hovered: Option<ElementKey>,
     /// 按下时被捕获的节点（指针移出该节点后仍归它所有，直到抬起）。
     pub pressed: Option<ElementKey>,
+    /// 当前拥有键盘焦点的节点。
+    ///
+    /// 由宿主在 `window_event` 里经 `FocusState` 维护（点击 / Tab / 失焦），
+    /// 这里只**报告**——应用在 `view()` 里据此决定"这个控件要不要画光标 / 焦点环"。
+    /// 样式层要按焦点换色时，读的是树里 [`zephyra_core::props::FOCUSED`] 属性（写在
+    /// `set_prop`），不是这个字段。
+    pub focused: Option<ElementKey>,
     /// 当前活跃指针数。
     pub pointers: usize,
     /// 本次同步收到的**文本输入**事件，按接收顺序排列。

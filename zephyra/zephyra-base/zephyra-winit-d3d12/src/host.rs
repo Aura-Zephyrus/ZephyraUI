@@ -37,7 +37,9 @@ use zephyra_core::context::Context;
 use zephyra_core::diff::DiffStats;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
 use zephyra_core::id::ElementKey;
-use zephyra_core::input::{InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvents};
+use zephyra_core::input::{
+    InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents,
+};
 use zephyra_core::node::Node;
 use zephyra_core::theme::Theme;
 
@@ -87,6 +89,8 @@ pub struct HostWindow<V: View> {
     /// 三后端共用 `zephyra-winit-input` 里的同一份实现 —— 曾经每个宿主各抄一份
     /// `logical_key_name`，而 Vulkan 那份干脆不存在。
     translator: zephyra_winit_input::Translator,
+    /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
+    focus: zephyra_core::input::FocusState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 图集变化）。
@@ -371,6 +375,7 @@ impl<V: View> HostWindow<V> {
             pointer_pos: (0.0, 0.0),
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
+            focus: zephyra_core::input::FocusState::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
             dirty: true,
@@ -1368,6 +1373,7 @@ impl<V: View> HostWindow<V> {
         let state = InputState {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
+            focused: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -1409,6 +1415,7 @@ impl<V: View> HostWindow<V> {
                 out,
             );
         })
+        .0
     }
 
     /// 处理一次按下。返回是否产生了路由事件。
@@ -1435,6 +1442,7 @@ impl<V: View> HostWindow<V> {
                 out,
             );
         })
+        .0
     }
 
     /// 处理一次抬起。返回是否产生了路由事件。
@@ -1447,7 +1455,7 @@ impl<V: View> HostWindow<V> {
             phase: zephyra_fx::PointerInputPhase::Up,
         });
         let theme = self.theme;
-        self.route(|router, node, out| {
+        let (changed, out) = self.route(|router, node, out| {
             router.on_pointer(
                 node,
                 PointerEvent {
@@ -1460,16 +1468,34 @@ impl<V: View> HostWindow<V> {
                 Context::new(theme),
                 out,
             );
-        })
+        });
+        // 点击设焦点：`RoutedEvent::Click` 是「按下 + 抬起在同一节点」。
+        // 焦点设给被点到的那个 key —— 文本框点进去获得键盘焦点。
+        // `route` 内部拿 `&Node`，焦点要 `&mut Node`，所以借用结束后在这里做。
+        if let Some(target) = out.iter().find_map(|e| match e {
+            RoutedEvent::Click(key) => Some(key.clone()),
+            _ => None,
+        }) {
+            if let Some(node) = self.cache.node_mut() {
+                if self.focus.focus(node, Some(&target), Context::new(theme)) {
+                    self.dirty = true;
+                }
+            }
+        }
+        changed
     }
 
     /// 统一的「跑一次路由器 + 置脏」包装。
-    fn route<F>(&mut self, f: F) -> bool
+    ///
+    /// 返回 `(是否变化, 路由结果)`。`out` 交出来让调用方消费（如 Click → 焦点），
+    /// 因为 `route` 内部拿的是 `&Node`（`router.on_pointer` 要只读树），而焦点
+    /// 需要 `&mut Node` —— 那必须等 route 的借用结束后、由调用方拿 `node_mut` 做。
+    fn route<F>(&mut self, f: F) -> (bool, RoutedEvents)
     where
         F: FnOnce(&mut InputRouter, &Node, &mut RoutedEvents),
     {
         let Some(node) = self.cache.node() else {
-            return false;
+            return (false, RoutedEvents::new());
         };
         let before = self.router.revision();
         let mut out = RoutedEvents::new();
@@ -1488,7 +1514,7 @@ impl<V: View> HostWindow<V> {
                 self.router.hovered()
             );
         }
-        changed
+        (changed, out)
     }
 }
 
@@ -1736,7 +1762,29 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
             WEvent::KeyboardInput { event, .. } => {
                 self.translator
                     .key_events(&event, &mut self.pending_text_events);
+                // Tab 移焦点是**当帧**就该生效的（不像字符要等下一帧 sync_input）：
+                // 用户按 Tab 期望立刻看到焦点环跳到下一个控件。
+                if event.state == ElementState::Pressed {
+                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Tab) =
+                        event.logical_key
+                    {
+                        let shift = self.translator.modifiers().shift();
+                        if let Some(node) = self.cache.node_mut() {
+                            if self.focus.tab(node, shift, Context::new(self.theme)) {
+                                self.dirty = true;
+                            }
+                        }
+                    }
+                }
                 self.dirty = true;
+            }
+            WEvent::Focused(false) => {
+                // 窗口失焦：焦点必须清空（否则回来后旧焦点还亮着，且按键全落到
+                // 一个看不见的节点上）。`clear` 会写回 FOCUSED=false 到旧节点。
+                if let Some(node) = self.cache.node_mut() {
+                    self.focus.clear(Some(node));
+                    self.dirty = true;
+                }
             }
             WEvent::Ime(ime) => {
                 // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，

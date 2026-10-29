@@ -51,7 +51,7 @@ use zephyra_core::diff::DiffStats;
 use zephyra_core::element::Element;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
 use zephyra_core::id::NodeTag;
-use zephyra_core::input::{PointerEvent, PointerPhase, PointerSource, RoutedEvents};
+use zephyra_core::input::{PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents};
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_core::theme::Theme;
@@ -140,6 +140,8 @@ pub struct HostWindow<V: View> {
     ///
     /// 与 D3D12 / Vulkan 宿主共用 `zephyra-winit-input` 里的同一份实现。
     translator: zephyra_winit_input::Translator,
+    /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
+    focus: zephyra_core::input::FocusState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
@@ -256,6 +258,7 @@ impl<V: View> HostWindow<V> {
             pointer_pos: (0.0, 0.0),
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
+            focus: zephyra_core::input::FocusState::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
             dirty: true,
@@ -495,6 +498,7 @@ impl<V: View> HostWindow<V> {
         self.view.on_input(&InputState {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
+            focused: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -697,6 +701,18 @@ impl<V: View> HostWindow<V> {
             Context::new(theme),
             &mut out,
         );
+        // 点击设焦点：`RoutedEvent::Click` 是「按下 + 抬起在同一节点」。
+        // 焦点设给被点到的那个 key —— 文本框点进去获得键盘焦点。
+        let click_target: Option<zephyra_core::id::ElementKey> = out.iter().find_map(|e| match e {
+            RoutedEvent::Click(key) => Some(key.clone()),
+            _ => None,
+        });
+        if let Some(target) = click_target {
+            if let Some(node) = self.cache.node_mut() {
+                self.focus.focus(node, Some(&target), Context::new(theme));
+                self.dirty = true;
+            }
+        }
         !out.is_empty()
     }
 
@@ -1027,6 +1043,17 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 self.translator
                     .key_events(&event, &mut self.pending_text_events);
                 if event.state == ElementState::Pressed {
+                    // Tab 移焦点是**当帧**就该生效的（不像字符/命令要等下一帧
+                    // sync_input 才进 InputState）：用户按 Tab 期望立刻看到焦点环
+                    // 跳到下一个控件。
+                    if let Key::Named(NamedKey::Tab) = event.logical_key {
+                        let shift = self.translator.modifiers().shift();
+                        if let Some(node) = self.cache.node_mut() {
+                            let theme = self.theme;
+                            self.focus.tab(node, shift, Context::new(theme));
+                            self.dirty = true;
+                        }
+                    }
                     match event.logical_key.clone() {
                         Key::Named(NamedKey::Escape) => event_loop.exit(),
                         Key::Character(c) if c.as_str() == "t" => {
@@ -1049,6 +1076,14 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 self.translator
                     .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
                 self.dirty = true;
+            }
+            WindowEvent::Focused(false) => {
+                // 窗口失焦：焦点必须清空（否则回来后旧焦点还亮着，且按键全落到
+                // 一个看不见的节点上）。`clear` 会写回 FOCUSED=false 到旧节点。
+                if let Some(node) = self.cache.node_mut() {
+                    self.focus.clear(Some(node));
+                    self.dirty = true;
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (delta_x, delta_y) = match delta {
