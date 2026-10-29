@@ -109,7 +109,7 @@ fn second_pass_over_same_tree_is_unchanged() {
 /// ⚠ 这条防的是「门控关死」：如果第一次 `Unchanged` 之后缓存被永久卡住，表现是
 /// **画面再也不更新且所有计数器正常** —— 那是最难查的一类故障。
 #[test]
-fn unchanged_之后改动会恢复() {
+fn change_after_unchanged_resumes() {
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
@@ -207,7 +207,7 @@ fn structural_change_repaints() {
 /// 这是 `Unchanged` 的**逃生门**：宿主某帧没能 present（resize 中途、device
 /// removed）时必须能打断，否则窗口永远停在空白而计数器全对。
 #[test]
-fn invalidate_能强制重绘() {
+fn invalidate_forces_repaint() {
     let mut cache = FrameCache::new();
     let el = two_nodes();
 
@@ -222,7 +222,7 @@ fn invalidate_能强制重绘() {
 
 /// `invalidate()` 只影响**下一帧**，不永久关掉门控。
 #[test]
-fn invalidate_只影响下一帧() {
+fn invalidate_affects_next_frame_only() {
     let mut cache = FrameCache::new();
     let el = two_nodes();
 
@@ -417,7 +417,7 @@ fn viewport_change_falls_back_to_full_damage() {
 ///
 /// 这条是「返回类型本身在表达这件事」的判据：想要脏区就必须先有更新。
 #[test]
-fn unchanged_不产出脏区() {
+fn unchanged_produces_no_damage() {
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();

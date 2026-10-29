@@ -86,7 +86,7 @@ fn device_and_context() -> Option<(ID3D11Device, ID3D11DeviceContext)> {
 #[test]
 #[ignore = "本测试按设计会在某些档位上崩进程（见模块文档）—— 结论已记录在文件里，\
              默认测试不该被它带着一起挂掉"]
-fn update_subresource_单次探测() {
+fn update_subresource_single_probe() {
     let Some((device, ctx)) = device_and_context() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -219,7 +219,7 @@ fn update_subresource_单次探测() {
 /// 而 `DYNAMIC` + `Map(WRITE_DISCARD)` 在 2^12..2^21 **全过**、各跑 8 次零崩溃 ——
 /// 这就是渲染器的缓冲现在走这条路的原因，也是本测试能钉住的东西。
 #[test]
-fn update_subresource_扫尺寸() {
+fn update_subresource_sweep_sizes() {
     let Some((device, ctx)) = device_and_context() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -258,7 +258,7 @@ fn update_subresource_扫尺寸() {
         eprintln!("  → bytes={bytes} (2^{k}) usage=DYNAMIC bind={}", bind.0);
 
         // 只走 `Map`。`UpdateSubresource` 那条路在本机会**随机**打死进程，
-        // 逐档结论得靠 `update_subresource_单次探测` 配合外部环境变量跑。
+        // 逐档结论得靠 `update_subresource_single_probe` 配合外部环境变量跑。
         let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
         match unsafe {
             ctx.Map(

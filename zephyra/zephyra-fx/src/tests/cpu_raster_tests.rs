@@ -153,7 +153,7 @@ fn square_corner_image_applies_no_mask() {
 ///
 /// `d` 的定义就是「到边界的带符号距离」，所以覆盖率只能由它决定。
 #[test]
-fn sdf_覆盖率随到边界的距离单调下降() {
+fn sdf_coverage_monotonic_in_distance() {
     let half = [10.0, 10.0]; // 20×20 的四边形
                              // 边界在 local.x = 20，从内往外每 0.25 走一步。
     let samples: [([f32; 2], f32); 5] = [
@@ -189,7 +189,7 @@ fn sdf_覆盖率随到边界的距离单调下降() {
 ///
 /// 所以这里换两种尺寸、停在同样的距边界 0.25 像素处，覆盖率必须逐位相同。
 #[test]
-fn sdf_覆盖率只取决于到边界的距离_与四边形尺寸无关() {
+fn sdf_coverage_depends_on_distance_not_quad_size() {
     // 20×20，边界在 x=20，往里 0.25 → x=19.75
     let small = sdf_coverage([19.75, 10.0], [10.0, 10.0], [0.0, 0.0]);
     // 100×100，边界在 x=100，往里 0.25 → x=99.75
@@ -203,7 +203,7 @@ fn sdf_覆盖率只取决于到边界的距离_与四边形尺寸无关() {
 
 /// 中心必须**满**。旧实现里中心的 `d` 恒为 0 → alpha 恒为 0.5，整块半透明。
 #[test]
-fn sdf_中心是满的_且_圆角半径_必须真正切掉角() {
+fn sdf_center_full_and_radius_actually_cuts_corner() {
     for (name, half) in [("20×20", [10.0f32, 10.0]), ("100×100", [50.0, 50.0])] {
         let center = sdf_coverage(half, half, [0.0, 0.0]);
         assert!(
@@ -233,7 +233,7 @@ fn sdf_中心是满的_且_圆角半径_必须真正切掉角() {
 ///
 /// 这条测试钉住 `1.0 - smoothstep` 那个多余的反相。
 #[test]
-fn sdf_描边只画环带() {
+fn sdf_stroke_draws_only_ring() {
     let half = [10.0, 10.0];
     let stroke = [0.0, 2.0]; // 无圆角，描边 2 像素
     assert!(

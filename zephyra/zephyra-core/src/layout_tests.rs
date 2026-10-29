@@ -1043,7 +1043,7 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
 
 /// `position: absolute` 的 `left` / `top` 是**中心**窗口坐标。
 #[test]
-fn absolute_子项的矩形直接采用窗口坐标() {
+fn absolute_child_uses_window_coords() {
     let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
         .with(
             &props::POSITION,
@@ -1072,7 +1072,7 @@ fn absolute_子项的矩形直接采用窗口坐标() {
 
 /// 绝对定位子项**不占正常流**：后继兄弟紧贴前一个，不因它下移。
 #[test]
-fn absolute_子项不把兄弟挤下去() {
+fn absolute_child_does_not_push_siblings() {
     let root = Element::new(NodeTag::Container)
         .with(
             &props::DIRECTION,
@@ -1100,7 +1100,7 @@ fn absolute_子项不把兄弟挤下去() {
 
 /// 未设 `left` / `top` 的绝对子项落在窗口左上角（0, 0）。
 #[test]
-fn absolute_未设偏移时落在窗口左上角() {
+fn absolute_without_offsets_falls_back_to_flow() {
     let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
         .with(
             &props::POSITION,
@@ -1116,7 +1116,7 @@ fn absolute_未设偏移时落在窗口左上角() {
 
 /// 默认 `position` 是 `static`：`is_absolute` 为假。
 #[test]
-fn 默认定位是_static() {
+fn default_position_is_static() {
     let mut node = Node::from_element(&Element::new(NodeTag::Container));
     assert!(!node.is_absolute(ctx()));
     node.set_prop(
@@ -1128,7 +1128,7 @@ fn 默认定位是_static() {
 
 /// 绝对定位的子项仍然进绘制列表，且画在它的窗口坐标上。
 #[test]
-fn absolute_子项仍然绘制在其窗口坐标() {
+fn absolute_child_draws_at_window_coords() {
     let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Control)
         .with(
             &props::POSITION,
@@ -1165,7 +1165,7 @@ fn absolute_子项仍然绘制在其窗口坐标() {
 
 /// 按 key 深搜元素并读它的**窗口矩形**——这就是「可定位元素、窗口相对位置」。
 #[test]
-fn find_rect_按_key_查元素的窗口矩形() {
+fn find_rect_by_key_returns_window_rect() {
     let root = Element::new(NodeTag::Container)
         .with(&props::PADDING, PropertyValue::float(10.0))
         .with_children([Element::new(NodeTag::Control)
@@ -1189,7 +1189,7 @@ fn find_rect_按_key_查元素的窗口矩形() {
 
 /// 只设 `left` 时，X 直接赋值、Y 沿用正常流位置（逐轴独立）。
 #[test]
-fn absolute_只设_x_时_y_沿用正常流位置() {
+fn absolute_x_only_keeps_flow_y() {
     let root = Element::new(NodeTag::Container)
         .with(
             &props::DIRECTION,
@@ -1223,7 +1223,7 @@ fn absolute_只设_x_时_y_沿用正常流位置() {
 
 /// 只设 `top` 时，Y 直接赋值、X 沿用正常流位置（逐轴独立）。
 #[test]
-fn absolute_只设_y_时_x_沿用正常流位置() {
+fn absolute_y_only_keeps_flow_x() {
     let root = Element::new(NodeTag::Container).with_children([
         Element::new(NodeTag::Container).with(&props::WIDTH, PropertyValue::float(50.0)),
         Element::new(NodeTag::Container)
@@ -1255,7 +1255,7 @@ fn absolute_只设_y_时_x_沿用正常流位置() {
 /// 这条直接对应「DComp 时所有元素坐标转为窗口绝对坐标」：视觉树若按父-子相对
 /// 偏移叠加，嵌套一深就会偏；本仓把 `left` / `top` 当作窗口坐标直接落位。
 #[test]
-fn absolute_在嵌套容器里仍是窗口坐标() {
+fn absolute_in_nested_container_is_window_coords() {
     let inner = Element::new(NodeTag::Container)
         .with(&props::PADDING, PropertyValue::float(30.0))
         .with_children([Element::new(NodeTag::Container)

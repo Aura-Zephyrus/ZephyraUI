@@ -54,7 +54,7 @@ fn never_draws_when_device_is_dead() {
 /// 这条是「闪 / 内容被拉伸」的直接来源：照旧画 + present 的话，DComp 把旧尺寸
 /// 的内容拉进新窗口。
 #[test]
-fn resize失败时不画() {
+fn resize_failure_skips_draw() {
     assert!(
         !zephyra_winit_d3d12::should_draw_frame(SwapState::Failed, false),
         "resize 失败时不该画 —— 否则旧尺寸内容被拉进新窗口"

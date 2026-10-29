@@ -739,7 +739,7 @@ fn oversized_glyph_returns_none_when_eviction_cannot_fit() {
 }
 
 #[test]
-fn with_size_决定边长与缓冲大小() {
+fn with_size_sets_edge_and_buffer_size() {
     let atlas = GlyphAtlas::with_size(32);
     assert_eq!(atlas.size(), 32);
     assert_eq!(atlas.pixels().len(), 32 * 32 * RGBA);

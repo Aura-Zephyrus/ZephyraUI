@@ -1140,7 +1140,7 @@ mod effect_contract {
 
     /// `props::FILTER` 真的进了 `Command::Quad`。
     #[test]
-    fn filter_从属性走到命令() {
+    fn filter_property_reaches_command() {
         let list = render_of(&blurred_rect(2.0));
         let filters: Vec<FilterChain> = list
             .iter()
@@ -1332,7 +1332,7 @@ mod effect_contract {
 
     /// `props::BLEND_MODE` 真的进了 `Command`，且被 `has_non_default_blend` 报出。
     #[test]
-    fn blend_mode_从属性走到命令() {
+    fn blend_mode_property_reaches_command() {
         let list = render_of(
             &Element::new(NodeTag::Container)
                 .with(

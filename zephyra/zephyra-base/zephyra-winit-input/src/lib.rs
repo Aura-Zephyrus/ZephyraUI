@@ -229,7 +229,7 @@ impl Translator {
 ///
 /// # 四道闸
 ///
-/// 1. **必须按下** —— 抬起不插字符，否则每次输入都变成两个。
+/// 1. **必须按下** —— release_inserts_no_char，否则每次输入都变成两个。
 /// 2. **不带 Ctrl / Alt / Super** —— Ctrl+C 复制出 'c' 是文本控件最经典的
 ///    bug。winit 的 `text` 通常已经为空，但这里再挡一道：不同平台的 IME 与
 ///    输入法组合会给出不一致的 `text`。Shift 不挡（Shift+A 就是 'A'）。

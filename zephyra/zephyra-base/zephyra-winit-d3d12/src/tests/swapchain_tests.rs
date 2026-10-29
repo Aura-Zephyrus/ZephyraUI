@@ -55,7 +55,7 @@ fn msaa_sample_count_is_four() {
 /// 要真 GPU 与 DComp，所以默认 `#[ignore]`。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn msaa_目标建得出来且采样数如实上报() {
+fn msaa_target_builds_and_reports_sample_count() {
     let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };

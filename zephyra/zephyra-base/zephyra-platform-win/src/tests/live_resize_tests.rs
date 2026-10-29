@@ -112,7 +112,7 @@ fn make_window() -> Option<isize> {
 /// 这条是整个模块的主判据 —— 它证明「拖动时同步重绘」这件事在窗口过程
 /// 层面成立，而不需要真的去拖一个窗口。
 #[test]
-fn wm_size_同步调渲染回调() {
+fn wm_size_calls_render_callback_synchronously() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     COUNT.store(0, Ordering::Relaxed);
     set_render_hook(std::sync::Arc::new(|| {

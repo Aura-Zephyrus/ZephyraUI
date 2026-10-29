@@ -170,7 +170,7 @@ fn both_back_buffers_are_drawable() {
 /// 不重建的症状是「窗口变一块固定颜色」或直接崩，**没有任何 HRESULT**。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn resize_之后仍然能画() {
+fn resize_still_draws() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -219,7 +219,7 @@ fn resize_之后仍然能画() {
 /// 3. 猜「分配器攥着引用」→ 改成双槽 + `allocator.Reset` → 没用
 /// 4. 猜「要连对象一起销毁」→ `recreate_command_slots` → **还是没用**
 ///
-/// 最后靠**隔离实验**定案（`probe2_resize_buffers_矩阵`，保留在本文件里）：
+/// 最后靠**隔离实验**定案（`probe2_resize_buffers_matrix`，保留在本文件里）：
 ///
 /// | 一帧里做了什么 | `ResizeBuffers` |
 /// |---|---|
@@ -236,7 +236,7 @@ fn resize_之后仍然能画() {
 /// 见 `Swapchain::resize` 的文档（含本机实测矩阵与 Chromium 对照）。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn resize_buffers_在画过之后失败_并按设计重建() {
+fn resize_buffers_fails_after_draw_and_rebuilds() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -412,7 +412,7 @@ fn rebuilds_with_headroom_when_capacity_insufficient() {
 
 #[test]
 #[ignore = "诊断用。手动跑：--ignored --nocapture"]
-fn probe2_resize_buffers_矩阵() {
+fn probe2_resize_buffers_matrix() {
     // (标签, 采样数, 模式 0=只转屏障 1=画 2=画+读回)
     let cases: [(&str, u32, u8); 8] = [
         ("s4 不开帧      ", 4, 9),
@@ -542,7 +542,7 @@ fn probe2_resize_buffers_矩阵() {
 /// 卡点不在我们自己的队列，而在 **DXGI 那一侧尚未完成的 present**。
 #[test]
 #[ignore = "诊断用。手动跑：--ignored --nocapture"]
-fn probe_resize_buffers_被哪一步卡住() {
+fn probe_resize_buffers_which_step_blocks() {
     for (label, do_draw, do_present) in [
         ("A 不画不 present", false, false),
         ("B 画+提交，不 present", true, false),

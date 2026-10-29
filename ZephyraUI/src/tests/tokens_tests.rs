@@ -14,7 +14,7 @@ use super::ALL;
 /// 深浅两套主题都要能查到：令牌是主题无关的语义名，只在一套主题里成立
 /// 说明那份实现漏了分支。
 #[test]
-fn all_列出的每个令牌在两套主题里都查得到颜色() {
+fn every_token_in_all_resolves_in_both_themes() {
     let dark = Theme::builtin(ThemeVariant::Dark);
     let light = Theme::builtin(ThemeVariant::Light);
     for t in ALL {
@@ -30,7 +30,7 @@ fn all_列出的每个令牌在两套主题里都查得到颜色() {
 }
 
 #[test]
-fn all_里没有重复项() {
+fn all_has_no_duplicates() {
     for (i, a) in ALL.iter().enumerate() {
         for b in &ALL[i + 1..] {
             assert_ne!(a, b, "令牌 `{a}` 在 ALL 里出现了两次");
@@ -44,7 +44,7 @@ fn all_里没有重复项() {
 /// 手列的代价换来的是判据方向正确：判的是「core 有、名单没有」，而那正是
 /// 2026-10-28 漏掉 `surface_alt_translucent` 的形状。
 #[test]
-fn core_的每个角色都出现在名单里() {
+fn every_core_role_appears_in_list() {
     use zephyra_core::theme::roles;
 
     const CORE_ROLES: &[&str] = &[
@@ -98,7 +98,7 @@ fn core_的每个角色都出现在名单里() {
 /// 值漂移在编译期就不可能（常量就是 core 常量的别名），这条测的是别名关系
 /// 本身没被改写成字面量 —— 一旦有人写死 `"surface"`，core 改名时就不再报错。
 #[test]
-fn 镜像常量仍然指向_core_的角色常量() {
+fn mirror_constants_still_point_to_core_roles() {
     use zephyra_core::theme::roles;
 
     const PAIRS: &[(&str, &str)] = &[

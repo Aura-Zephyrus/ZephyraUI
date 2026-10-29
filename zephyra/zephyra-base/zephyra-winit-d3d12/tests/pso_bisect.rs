@@ -127,7 +127,7 @@ fn step(
 
 #[test]
 #[ignore = "诊断用：二分 PSO 描述符。结论已记录在 src/lib.rs —— 本机最小 PSO 也失败"]
-fn d3d12_管线状态描述符逐字段二分() {
+fn d3d12_pso_descriptor_bisect_by_field() {
     let gpu = Gpu::new().expect("建设备");
     println!("设备移除原因 = {:#X}", gpu.removed_reason().0);
 

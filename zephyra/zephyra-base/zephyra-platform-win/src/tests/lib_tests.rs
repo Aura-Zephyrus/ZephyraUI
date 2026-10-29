@@ -12,7 +12,7 @@ fn version_is_readable_and_major_at_least_ten() {
 }
 
 #[test]
-fn build_号与版本号是同一个值() {
+fn build_number_and_version_agree() {
     assert_eq!(build_number(), Windows.version().unwrap().2);
 }
 

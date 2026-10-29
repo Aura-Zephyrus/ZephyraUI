@@ -10,7 +10,7 @@ use super::*;
 /// 这条穷举了编辑控件会解释的全部按键 —— 漏一个的症状是「方向键不移动光标」，
 /// 而那种 bug 在编译期完全看不出来。
 #[test]
-fn 编辑键逐个映射到语义键() {
+fn edit_keys_map_to_semantic_keys() {
     const PAIRS: &[(NamedKey, Key)] = &[
         (NamedKey::Backspace, Key::Backspace),
         (NamedKey::Delete, Key::Delete),
@@ -37,21 +37,21 @@ fn 编辑键逐个映射到语义键() {
 }
 
 #[test]
-fn 编辑键的数量与_键名表一致() {
+fn edit_key_count_matches_name_table() {
     // 13 = `Key` 里除 `Other` 之外的变体数。少一个说明映射表漏了。
     assert_eq!(Key::PageDown.as_str(), "PageDown");
     assert_eq!(Key::Backspace.as_str(), "Backspace");
 }
 
 #[test]
-fn 非编辑键落进_other_但名字保留() {
+fn non_edit_keys_fall_into_other_keeping_name() {
     let f5 = WKey::Named(NamedKey::F5);
     assert_eq!(key_from_logical(&f5), Key::Other);
     assert_eq!(key_name(&f5), "F5", "身份不能丢 —— 快捷键表靠它匹配");
 }
 
 #[test]
-fn 字符键的语义是_other_名字是字符本身() {
+fn char_key_semantic_is_other_name_is_char() {
     let a = WKey::Character("a".into());
     assert_eq!(
         key_from_logical(&a),
@@ -62,7 +62,7 @@ fn 字符键的语义是_other_名字是字符本身() {
 }
 
 #[test]
-fn 死键与未识别键不会panic() {
+fn dead_and_unknown_keys_do_not_panic() {
     // 换输入法、键盘布局切换时会出现这两种；翻译层必须原样兜住。
     let dead = WKey::Dead(Some('´'));
     let unknown = WKey::Unidentified(winit::keyboard::NativeKey::Unidentified);
@@ -77,7 +77,7 @@ fn 死键与未识别键不会panic() {
 ///
 /// 判据方向是「core 的键 → winit 有没有对应」，与上面那条形成双向闭合。
 #[test]
-fn core_的每个语义键都有_winit_来源() {
+fn every_core_semantic_key_has_winit_source() {
     const REACHABLE: &[Key] = &[
         Key::Backspace,
         Key::Delete,
@@ -105,7 +105,7 @@ fn core_的每个语义键都有_winit_来源() {
 // ────────────────────────────── 修饰键状态 ──────────────────────────────
 
 #[test]
-fn 修饰键逐个如实上报() {
+fn modifiers_reported_one_by_one() {
     // 逐个设、逐个断言：顺带证明每次 `on_modifiers` 是**覆盖**而不是累加。
     let mut t = Translator::new();
 
@@ -127,7 +127,7 @@ fn 修饰键逐个如实上报() {
 }
 
 #[test]
-fn 修饰键状态是覆盖而不是累加() {
+fn modifier_state_overwrites_not_accumulates() {
     // 松开 Ctrl 必须把它清掉。若写成 `|=`，Ctrl 会永远粘住，
     // 之后每一次输入都变成快捷键。
     let mut t = Translator::new();
@@ -138,7 +138,7 @@ fn 修饰键状态是覆盖而不是累加() {
 }
 
 #[test]
-fn 默认没有修饰键() {
+fn no_modifiers_by_default() {
     let t = Translator::new();
     let m = t.modifiers();
     assert!(!m.ctrl() && !m.shift() && !m.alt() && !m.super_key());
@@ -153,18 +153,18 @@ const ALT: Modifiers = Modifiers::new(false, false, true, false);
 const SUPER: Modifiers = Modifiers::new(false, false, false, true);
 
 #[test]
-fn 普通按下插入一个字符() {
+fn normal_press_inserts_one_char() {
     assert_eq!(printable(Some("a"), true, NONE), Some('a'));
 }
 
 #[test]
-fn 抬起不插字符() {
+fn release_inserts_no_char() {
     // 每次输入都插两个字符的经典成因。宿主可能对同一次按键送 Pressed 与 Released。
     assert_eq!(printable(Some("a"), false, NONE), None);
 }
 
 #[test]
-fn 带_ctrl_alt_super_的按下不插字符() {
+fn ctrl_alt_super_press_inserts_no_char() {
     for m in [CTRL, ALT, SUPER] {
         assert_eq!(
             printable(Some("c"), true, m),
@@ -176,25 +176,25 @@ fn 带_ctrl_alt_super_的按下不插字符() {
 }
 
 #[test]
-fn shift_不挡字符() {
+fn shift_does_not_block_char() {
     // Shift+A 就是 'A'：winit 已经把 shift 作用于 text 了。
     assert_eq!(printable(Some("A"), true, SHIFT), Some('A'));
 }
 
 #[test]
-fn 没有_text_就不插字符() {
+fn no_text_means_no_char() {
     assert_eq!(printable(None, true, NONE), None);
 }
 
 #[test]
-fn 多字符整串丢弃而不是取首字符() {
+fn multi_char_string_dropped_not_truncated() {
     // 死键组合与某些 IME 的快速输入会给出多字符 text。
     assert_eq!(printable(Some("ab"), true, NONE), None);
     assert_eq!(printable(Some("中文"), true, NONE), None);
 }
 
 #[test]
-fn 控制字符不走_char_通道() {
+fn control_chars_skip_char_channel() {
     // Enter / Tab 由控件按 `Key` 自己判；再从 Char 走一遍会让「按 Enter
     // 插两个换行」这种 bug 出现。
     assert_eq!(printable(Some("\n"), true, NONE), None);
@@ -203,12 +203,12 @@ fn 控制字符不走_char_通道() {
 }
 
 #[test]
-fn 空串不插字符() {
+fn empty_string_inserts_no_char() {
     assert_eq!(printable(Some(""), true, NONE), None);
 }
 
 #[test]
-fn 宽字符与emoji都能过() {
+fn wide_chars_and_emoji_pass() {
     assert_eq!(printable(Some("中"), true, NONE), Some('中'));
     assert_eq!(printable(Some("😀"), true, NONE), Some('😀'));
 }
@@ -216,7 +216,7 @@ fn 宽字符与emoji都能过() {
 // ───────────────────────── translate：顺序与内容 ─────────────────────────
 
 #[test]
-fn 边沿永远在字符之前() {
+fn edges_always_precede_chars() {
     // 控件靠这个顺序实现「按键已处理就吞掉字符」。
     let t = Translator::new();
     let logical = WKey::Character("a".into());
@@ -229,7 +229,7 @@ fn 边沿永远在字符之前() {
 }
 
 #[test]
-fn 抬起只产出边沿() {
+fn release_produces_only_edge() {
     let t = Translator::new();
     let logical = WKey::Character("a".into());
     let mut out = Vec::new();
@@ -246,7 +246,7 @@ fn 抬起只产出边沿() {
 }
 
 #[test]
-fn 功能键只产出边沿() {
+fn function_key_produces_only_edge() {
     let t = Translator::new();
     let logical = WKey::Named(NamedKey::F5);
     let mut out = Vec::new();
@@ -264,7 +264,7 @@ fn 功能键只产出边沿() {
 }
 
 #[test]
-fn 方向键的语义与名字同时正确() {
+fn arrow_keys_semantic_and_name_agree() {
     let t = Translator::new();
     let logical = WKey::Named(NamedKey::ArrowLeft);
     let mut out = Vec::new();
@@ -280,7 +280,7 @@ fn 方向键的语义与名字同时正确() {
 }
 
 #[test]
-fn 修饰键快照进每一次边沿() {
+fn modifier_snapshot_in_every_edge() {
     let mut t = Translator::new();
     t.on_modifiers(ModifiersState::CONTROL);
     let logical = WKey::Character("s".into());
@@ -300,7 +300,7 @@ fn 修饰键快照进每一次边沿() {
 }
 
 #[test]
-fn 自动重复标志原样透传() {
+fn auto_repeat_flag_passes_through() {
     let t = Translator::new();
     let logical = WKey::Character("a".into());
     let parts = KeyParts {
@@ -322,7 +322,7 @@ fn 自动重复标志原样透传() {
 // ───────────────────────────────── IME ─────────────────────────────────
 
 #[test]
-fn ime_enabled_带上宿主给的插入点() {
+fn ime_enabled_carries_host_caret() {
     let t = Translator::new();
     let mut out = Vec::new();
     t.ime(&WIme::Enabled, (120.5, 64.0), &mut out);
@@ -337,7 +337,7 @@ fn ime_enabled_带上宿主给的插入点() {
 }
 
 #[test]
-fn ime_preedit_带上字节光标对() {
+fn ime_preedit_carries_byte_cursor_pair() {
     let t = Translator::new();
     let mut out = Vec::new();
     t.ime(
@@ -356,7 +356,7 @@ fn ime_preedit_带上字节光标对() {
 }
 
 #[test]
-fn 空_preedit_不被吞掉() {
+fn empty_preedit_is_not_swallowed() {
     // winit 在 Commit 之前会发空 Preedit 清场。控件靠它清下划线 ——
     // 吞掉就会留下一条永远不消失的线。
     let t = Translator::new();
@@ -370,7 +370,7 @@ fn 空_preedit_不被吞掉() {
 }
 
 #[test]
-fn ime_commit_进入文档() {
+fn ime_commit_enters_document() {
     let t = Translator::new();
     let mut out = Vec::new();
     t.ime(&WIme::Commit("你好".into()), (0.0, 0.0), &mut out);
@@ -382,7 +382,7 @@ fn ime_commit_进入文档() {
 }
 
 #[test]
-fn ime_disabled_是取消而不是提交() {
+fn ime_disabled_cancels_not_commits() {
     // 把 Disabled 错翻成 Commit 会让「切输入法」把半截拼音插进文档。
     let t = Translator::new();
     let mut out = Vec::new();
@@ -392,7 +392,7 @@ fn ime_disabled_是取消而不是提交() {
 }
 
 #[test]
-fn 一次组字全流程的顺序() {
+fn composition_full_sequence_order() {
     let t = Translator::new();
     let mut out = Vec::new();
     t.ime(&WIme::Enabled, (10.0, 20.0), &mut out);
@@ -414,7 +414,7 @@ fn 一次组字全流程的顺序() {
 // ──────────────────────── MCP press_key 的注入路径 ────────────────────────
 
 #[test]
-fn 注入单个字符会插文本() {
+fn inject_single_char_inserts_text() {
     let events = injected_events("a");
     assert_eq!(events.len(), 3, "按下 → 字符 → 抬起");
     assert!(matches!(&events[0], TextEvent::Key(k) if k.pressed));
@@ -423,7 +423,7 @@ fn 注入单个字符会插文本() {
 }
 
 #[test]
-fn 注入编辑键不插文本() {
+fn inject_edit_key_inserts_no_text() {
     // 按 Enter 换行由控件按 `Key::Enter` 执行；再从字符通道走一遍会变成两个换行。
     for name in ["Enter", "Backspace", "ArrowDown", "Tab", "Escape"] {
         let events = injected_events(name);
@@ -433,7 +433,7 @@ fn 注入编辑键不插文本() {
 }
 
 #[test]
-fn 注入编辑键的语义键正确() {
+fn inject_edit_key_semantic_correct() {
     let cases = [
         ("Enter", Key::Enter),
         ("Backspace", Key::Backspace),
@@ -452,13 +452,13 @@ fn 注入编辑键的语义键正确() {
 }
 
 #[test]
-fn 注入宽字符也能插文本() {
+fn inject_wide_char_inserts_text() {
     let events = injected_events("中");
     assert_eq!(events[1], TextEvent::Char('中'));
 }
 
 #[test]
-fn 注入未知功能键只保留身份() {
+fn inject_unknown_function_key_keeps_identity() {
     // F5 在 core 里没有语义键，但名字必须原样带给快捷键表 —— 否则 AI 按 F5
     // 在应用侧看起来和按了任何未识别键一样。
     let events = injected_events("F5");
@@ -473,7 +473,7 @@ fn 注入未知功能键只保留身份() {
 }
 
 #[test]
-fn 注入多字符名字不插文本() {
+fn inject_multi_char_name_inserts_no_text() {
     // 与 `printable` 同一条判据：多字符整串丢弃，不要取首字符。
     let events = injected_events("ab");
     assert_eq!(events.len(), 2);
@@ -481,7 +481,7 @@ fn 注入多字符名字不插文本() {
 }
 
 #[test]
-fn 注入的控制字符不插文本() {
+fn inject_control_char_inserts_no_text() {
     // `bridge.rs` 的解析器已经挡掉控制字符，这里再挡一道 —— 注入路径不该
     // 依赖上游校验。
     let events = injected_events("\n");
@@ -490,7 +490,7 @@ fn 注入的控制字符不插文本() {
 }
 
 #[test]
-fn 注入不带修饰键() {
+fn inject_has_no_modifiers() {
     for name in ["a", "Enter", "F5"] {
         for e in injected_events(name) {
             if let TextEvent::Key(k) = e {

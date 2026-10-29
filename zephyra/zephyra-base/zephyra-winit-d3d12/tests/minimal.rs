@@ -15,7 +15,7 @@
 //! | 1 | 枚举全部适配器，逐个 `D3D12CreateDevice` + `GetDeviceRemovedReason`（`列出所有适配器并逐个探测`） | 4 块适配器全部成功、设备全部健康 | 适配器选错、设备被移除 |
 //! | 2 | 同一块设备上建 64×64 纹理（`列出所有适配器并逐个探测`） | 4 块**全部** `E_INVALIDARG` | 与适配器无关 |
 //! | 3 | 逐字段变换描述符（`Alignment`/`NodeMask`/`Buffer`/`Layout`/…，见 `tests/desc_probe.rs` 的历史） | 全部 `E_INVALIDARG` | 某个字段写错 |
-//! | 4 | **上传堆 64 字节缓冲**（`d3d12_最小资源能不能建出来`）—— 字段**零歧义**的那种调用 | 4 块**全部** `E_INVALIDARG` | 「参数还能再调调」 |
+//! | 4 | **上传堆 64 字节缓冲**（`d3d12_minimal_resources_build`）—— 字段**零歧义**的那种调用 | 4 块**全部** `E_INVALIDARG` | 「参数还能再调调」 |
 //! | 5 | 手写 C 原始签名直调 vtable 槽（`裸签名调用能不能建出资源`） | `0x80070057`，与绑定层**完全一致** | `windows-rs` 0.62 的 ABI 缺陷 |
 //! | 6 | 调 `D3D12GetDebugInterface` 拿调试层 | **拿不到** | —（所以 API 不会告诉我们原因） |
 //! | 7 | `zephyra-winit/tests/d3d11_draw.rs`：DX11 建纹理 + 清屏 + 读回像素 | **成功** | GPU 本身是好的 |
@@ -45,8 +45,8 @@
 //! cargo test -p zephyra-winit-d3d12 -- --ignored --nocapture
 //! ```
 //!
-//! 一台正常的机器上，`d3d12_最小资源能不能建出来` 与
-//! `d3d12_能把四边形画到像素上` 应当**都通过**。若第一个通过而第二个不通过，
+//! 一台正常的机器上，`d3d12_minimal_resources_build` 与
+//! `d3d12_quad_reaches_pixels` 应当**都通过**。若第一个通过而第二个不通过，
 //! 那才是这个 crate 的问题，可以从第二个测试的失败信息继续查。
 
 #![cfg(windows)]
@@ -132,7 +132,7 @@ fn minimal_upload_buffer(device: &ID3D12Device) -> Result<(), u32> {
 
 #[test]
 #[ignore = "**已通过**（4/4 适配器）。保留 --ignore 是因为它现在只是个回归哨兵，不是阻塞项"]
-fn d3d12_最小资源能不能建出来() {
+fn d3d12_minimal_resources_build() {
     let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
         unsafe { CreateDXGIFactory1() }.expect("建 DXGI 工厂");
 

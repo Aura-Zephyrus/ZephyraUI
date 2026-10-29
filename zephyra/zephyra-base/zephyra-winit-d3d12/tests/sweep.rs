@@ -470,7 +470,7 @@ const TRIV_PS: &[u8] = include_bytes!("triv.ps.bin");
 
 #[test]
 #[ignore = "诊断用：本机 D3D12 的真实边界。看完结果后决定是否去掉 --ignored"]
-fn d3d12_资源创建_逐字段扫描() {
+fn d3d12_resource_creation_field_sweep() {
     let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
         unsafe { CreateDXGIFactory1() }.expect("DXGI 工厂");
     for i in 0..8u32 {

@@ -306,7 +306,7 @@ fn no_filter_creates_no_offscreen_requirement() {
 
 /// blur 的 RT 尺寸 = 内容 + 两侧 3σ。
 #[test]
-fn blur_离屏矩形外扩三倍标准差() {
+fn blur_offscreen_rect_outsets_three_sigma() {
     let l = list_of(vec![quad(
         blur(2.0),
         BlendMode::default(),

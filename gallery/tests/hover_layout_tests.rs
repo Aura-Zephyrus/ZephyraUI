@@ -75,7 +75,7 @@ fn inner_x(root: &Node) -> f32 {
 }
 
 #[test]
-fn hover_改尺寸要重排而不只是重绘() {
+fn hover_resize_relayouts_not_just_repaints() {
     let mut cache = cache_with("hover-layout.zstyle");
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);

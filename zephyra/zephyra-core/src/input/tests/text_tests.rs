@@ -9,7 +9,7 @@ use super::*;
 /// 每个键 `from_name(as_str(k)) == k`。漏一个分支就会得到 `Other`——
 /// 而 `Other` 在控件层只会让快捷键失效，不会报错。
 #[test]
-fn 每个命名键的规范名都能反查回自己() {
+fn every_named_key_roundtrips_from_canonical_name() {
     const NAMED: &[Key] = &[
         Key::Backspace,
         Key::Delete,
@@ -38,7 +38,7 @@ fn 每个命名键的规范名都能反查回自己() {
 /// 这一条是上一条的补集判据 —— 上一条遍历的是**写死的键**，漏掉的是
 /// `as_str` 有分支而 `NAMED` 没列出的键。
 #[test]
-fn as_str_产出的名字全在反查表里() {
+fn as_str_names_all_in_reverse_table() {
     const ALL: &[Key] = &[
         Key::Backspace,
         Key::Delete,
@@ -68,13 +68,13 @@ fn as_str_产出的名字全在反查表里() {
 }
 
 #[test]
-fn 小键盘回车与小键盘的其它名字也能进_enter() {
+fn keypad_enter_and_other_keypad_names_map_to_enter() {
     assert_eq!(Key::from_name("NumpadEnter"), Key::Enter);
     assert_eq!(Key::Enter.as_str(), "Enter");
 }
 
 #[test]
-fn 不认识的名字落进_other_而不是报错() {
+fn unknown_names_fall_into_other_not_panic() {
     assert_eq!(Key::from_name("F5"), Key::Other);
     assert_eq!(Key::from_name(""), Key::Other);
     // 大小写敏感是**有意的**：这张表与 MCP 的 press_key 共用，宽进会让
@@ -83,7 +83,7 @@ fn 不认识的名字落进_other_而不是报错() {
 }
 
 #[test]
-fn 快捷键身份住在_name_而不是枚举上() {
+fn shortcut_identity_lives_in_name_not_enum() {
     // `Key::Other` 的 `as_str()` 是 "Other" —— 它只说明「不在这 13 个里」。
     // 真正的身份（"F5"）在 `KeyInput::name`，由宿主填写。
     let f5 = KeyInput {
@@ -98,7 +98,7 @@ fn 快捷键身份住在_name_而不是枚举上() {
 }
 
 #[test]
-fn 命名键的_name_与_as_str_一致() {
+fn named_key_name_matches_as_str() {
     // 便捷构造器让两者同源；宿主翻译侧也有同样的一条门禁（zephyra-winit-input）。
     for &k in &[Key::Enter, Key::Left, Key::PageDown] {
         let input = KeyInput::press(k);
@@ -107,7 +107,7 @@ fn 命名键的_name_与_as_str_一致() {
 }
 
 #[test]
-fn display_与_as_str_一致() {
+fn display_matches_as_str() {
     use std::fmt::Write;
 
     for &k in &[Key::Tab, Key::Left, Key::PageDown, Key::Other] {
@@ -120,7 +120,7 @@ fn display_与_as_str_一致() {
 // ───────────────────────── 修饰键：语义方法不是位运算 ─────────────────────────
 
 #[test]
-fn 修饰键快照逐位如实上报() {
+fn modifier_snapshot_reports_each_bit() {
     let all = Modifiers::new(true, true, true, true);
     assert!(all.ctrl());
     assert!(all.shift());
@@ -137,7 +137,7 @@ fn 修饰键快照逐位如实上报() {
 /// 构造函数的参数顺序是 `(ctrl, shift, alt, super)`。写错顺序不会报错，
 /// 只会让 Ctrl 变成 Shift —— 这条把顺序钉住。
 #[test]
-fn 构造函数参数顺序是_ctrl_shift_alt_super() {
+fn constructor_arg_order_is_ctrl_shift_alt_super() {
     let only_ctrl = Modifiers::new(true, false, false, false);
     assert!(only_ctrl.ctrl());
     assert!(!only_ctrl.shift());
@@ -150,7 +150,7 @@ fn 构造函数参数顺序是_ctrl_shift_alt_super() {
 // ─────────────────────────── KeyInput：边沿 + 重复 + 修饰 ───────────────────────────
 
 #[test]
-fn press_与_release_的默认快照无修饰且非重复() {
+fn press_and_release_defaults_have_no_modifiers_or_repeat() {
     let p = KeyInput::press(Key::Backspace);
     assert!(p.pressed);
     assert!(!p.repeat);
@@ -163,7 +163,7 @@ fn press_与_release_的默认快照无修饰且非重复() {
 }
 
 #[test]
-fn 自动重复与手动按下可区分() {
+fn auto_repeat_distinguishable_from_manual_press() {
     let held = KeyInput {
         repeat: true,
         ..KeyInput::press(Key::Delete)
@@ -176,7 +176,7 @@ fn 自动重复与手动按下可区分() {
 }
 
 #[test]
-fn 修饰键随按键快照一起送达() {
+fn modifiers_sent_with_key_snapshot() {
     let save = KeyInput {
         key: Key::Other,
         name: "S".to_string(),
@@ -191,7 +191,7 @@ fn 修饰键随按键快照一起送达() {
 // ─────────────────────────────── Ime：三个阶段 ───────────────────────────────
 
 #[test]
-fn ime_start_带插入点坐标() {
+fn ime_start_carries_caret() {
     let start = Ime::Start { x: 120.5, y: 64.0 };
     match start {
         Ime::Start { x, y } => {
@@ -203,7 +203,7 @@ fn ime_start_带插入点坐标() {
 }
 
 #[test]
-fn ime_update_的_cursor_是字节下标对() {
+fn ime_update_cursor_is_byte_index_pair() {
     // "中文" = 2 个字符 / 6 个字节。`Some((3, 3))` 表示光标在两个汉字之间。
     let update = Ime::Update {
         text: "中文".to_string(),
@@ -222,7 +222,7 @@ fn ime_update_的_cursor_是字节下标对() {
 }
 
 #[test]
-fn ime_update_可以不带光标() {
+fn ime_update_without_cursor() {
     // winit 的 `Preedit(text, None)` = 组字中但隐藏光标。
     let update = Ime::Update {
         text: "a".to_string(),
@@ -232,7 +232,7 @@ fn ime_update_可以不带光标() {
 }
 
 #[test]
-fn ime_文本能装下任意长度且不要求_static() {
+fn ime_text_holds_any_length_without_static() {
     // 这条测的是**类型形状**而不是数值：`Ime` 的文本字段必须是 `String`。
     // 若哪天有人改回 `&'static str`，这个函数编译不过 —— 而改动者会看见
     // 模块文档里「输入事件是瞬态，不构成泄漏」的理由。
@@ -245,7 +245,7 @@ fn ime_文本能装下任意长度且不要求_static() {
 }
 
 #[test]
-fn ime_cancel_不带载荷() {
+fn ime_cancel_has_no_payload() {
     assert_eq!(Ime::Cancel, Ime::Cancel);
     assert_ne!(
         Ime::Cancel,
@@ -258,7 +258,7 @@ fn ime_cancel_不带载荷() {
 // ────────────────────────────── TextEvent：三者正交 ──────────────────────────────
 
 #[test]
-fn key_与_char_是正交的两条通道() {
+fn key_and_char_are_orthogonal_channels() {
     let edge = TextEvent::key(KeyInput {
         modifiers: Modifiers::new(true, false, false, false),
         ..KeyInput::press(Key::Other)
@@ -274,7 +274,7 @@ fn key_与_char_是正交的两条通道() {
 }
 
 #[test]
-fn 不可打印字符也能走_char_通道() {
+fn non_printable_chars_also_use_char_channel() {
     // 宿主负责按修饰键筛：Ctrl+C 不会送 Char('c')。但换行/制表符这类
     // 控制字符在某些 IME 组合下会从字符通道过来，词汇层不做二次过滤。
     assert_eq!(TextEvent::ch('\n'), TextEvent::Char('\n'));
@@ -282,7 +282,7 @@ fn 不可打印字符也能走_char_通道() {
 }
 
 #[test]
-fn ime_事件能塞进同一张表() {
+fn ime_events_fit_same_table() {
     // 这张表就是 `InputState::text_events` 的形状：三种事件共用一个队列。
     // 用 `Vec::from(数组)` 而不是 `vec![]` —— 后者在 clippy 眼里是「没必要的
     // Vec」，而这里**要的就是** Vec（队列类型本身是被测对象）。
@@ -300,7 +300,7 @@ fn ime_事件能塞进同一张表() {
 }
 
 #[test]
-fn clone_是深拷贝而不是共用缓冲() {
+fn clone_is_deep_copy_not_shared_buffer() {
     let a = TextEvent::Ime(Ime::Commit {
         text: "原文".into(),
     });

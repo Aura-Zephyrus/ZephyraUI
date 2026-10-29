@@ -24,7 +24,7 @@
 //! cargo test -p zephyra-winit-d3d12 -- --ignored --nocapture
 //! ```
 //!
-//! 若 `tests/minimal.rs` 里的 `d3d12_最小资源能不能建出来` 通过、而本测试不通过，
+//! 若 `tests/minimal.rs` 里的 `d3d12_minimal_resources_build` 通过、而本测试不通过，
 //! 那才是这个 crate 的问题，可以从本测试的失败信息继续查。
 //!
 //! # 判据：清黑、数非黑
@@ -114,7 +114,7 @@ const ATLAS_SIZE: u32 = 64;
 /// **教训**：扫描能告诉你「哪些组合能过」，给不出「为什么」。正确顺序是**先让调试层
 /// 能说话，再问驱动**。
 #[test]
-fn d3d12_能把四边形画到像素上() {
+fn d3d12_quad_reaches_pixels() {
     // ---- 1. 设备 ----
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备 —— 第 1 步就断了，后面的断言都无从谈起");

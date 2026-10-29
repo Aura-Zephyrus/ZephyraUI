@@ -84,7 +84,7 @@ fn register_and_query() {
 /// 它取 `&self` 而不是 `&mut self`，所以「更新一个不存在的纹理」在类型上就是
 /// 可能的 —— 忘了判空的话症状是「视频帧偶尔不刷新」，且不报错。
 #[test]
-fn update_未登记的名字_返回_false() {
+fn update_unregistered_name_returns_false() {
     let Some((device, context)) = test_device() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -99,7 +99,7 @@ fn update_未登记的名字_返回_false() {
 
 /// `update` 像素不足时必须返回 `false`，而不是写一半。
 #[test]
-fn update_像素不足_返回_false() {
+fn update_insufficient_pixels_returns_false() {
     let Some((device, context)) = test_device() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;

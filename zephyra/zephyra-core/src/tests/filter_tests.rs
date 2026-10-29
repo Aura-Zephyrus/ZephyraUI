@@ -130,7 +130,7 @@ fn filter_boundaries_match_skia() {
 
 /// blur 的外扩是 `3σ`，且各向异性。
 #[test]
-fn blur_外扩三倍标准差() {
+fn blur_outsets_three_sigma() {
     let o = Filter::Blur {
         sigma_x: 2.0,
         sigma_y: 5.0,

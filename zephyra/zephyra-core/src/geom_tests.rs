@@ -573,7 +573,7 @@ fn round_join_outset_limited_to_half_stroke_width() {
 // ----------------------------------------------------------------变换
 
 #[test]
-fn viewbox等比缩放并居中() {
+fn viewbox_scales_uniformly_and_centers() {
     // viewBox 24×24 映射到 48×48：线性放大 2 倍
     let segs = vec![
         Segment::MoveTo(0.0, 0.0),
@@ -591,7 +591,7 @@ fn viewbox等比缩放并居中() {
 }
 
 #[test]
-fn viewbox偏移被正确扣除() {
+fn viewbox_offset_deducted() {
     // viewBox 从 (10,10) 起：内容应落在 dst 内的对应位置
     let segs = vec![Segment::MoveTo(10.0, 10.0), Segment::LineTo(20.0, 10.0)];
     let dst = Rect::new(0.0, 0.0, 10.0, 10.0);

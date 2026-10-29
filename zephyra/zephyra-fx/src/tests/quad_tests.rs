@@ -218,7 +218,7 @@ fn vertex_field_offsets_match_the_input_layout_description() {
 /// 透视校正之类），这里会立刻失败，而不是变成一个「某些矩形圆角是歪的」
 /// 且无任何报错的现象。
 #[test]
-fn half_size_是整个四边形的常量() {
+fn half_size_is_constant_of_whole_quad() {
     let r = Rect::new(3.0, 7.0, 40.0, 24.0);
     let vs = Vertex::from_rect(r, (3.0, 7.0), [1.0; 4], [6.0, 0.0]);
     // SDF 类别的四边形按 AA_BAND 外扩，所以 half_size 是**扩后**尺寸的一半。
@@ -598,7 +598,7 @@ fn consecutive_same_texture_images_merge_into_one_batch() {
 /// 合并是正确的。真正需要拆的是**同一段内混合模式不同**的情形 —— 合成器会照
 /// `runs` 逐段设混合状态，跨过去合并会让中间那一段套上错误的方程。
 #[test]
-fn runs_不跨过其它段合并() {
+fn runs_do_not_merge_across_segments() {
     use zephyra_core::filter::BlendMode;
     let l = list_of(vec![
         quad_with_blend(Rect::new(0.0, 0.0, 10.0, 10.0), BlendMode::Multiply),

@@ -1910,7 +1910,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 // # 怎么区分「我们错了」与「环境不行」
 //
 // 只有一条路，换一台机器跑。判据现成 ——
-// zephyra-winit-d3d12/tests/minimal.rs 的 `d3d12_最小资源能不能建出来`，
+// zephyra-winit-d3d12/tests/minimal.rs 的 `d3d12_minimal_resources_build`，
 // 在一台正常机器上应当通过。
 // ---------------------------------------------------------------------------
 //  E4.4 / E4.5 / E4.6：离屏 pass 的**像素**判据

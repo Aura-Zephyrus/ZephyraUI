@@ -737,7 +737,7 @@ impl Swapchain {
     /// # 这就是「拖动窗口时逐帧跟随」的全部机制
     ///
     /// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功 —— 实测矩阵（可复跑，
-    /// 见 `tests/swapchain_draw.rs::probe2_resize_buffers_矩阵`）：
+    /// 见 `tests/swapchain_draw.rs::probe2_resize_buffers_matrix`）：
     ///
     /// | 一帧里做了什么 | `ResizeBuffers` |
     /// |---|---|

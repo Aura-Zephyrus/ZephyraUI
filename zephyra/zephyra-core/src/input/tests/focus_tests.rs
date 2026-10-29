@@ -63,7 +63,7 @@ fn focused_key<'a>(root: &'a Node, c: Context<'_>) -> Option<&'a str> {
 // ─────────────────────────── Tab 顺序（深度优先） ───────────────────────────
 
 #[test]
-fn 深度优先收集可聚焦节点() {
+fn collects_focusable_nodes_depth_first() {
     let root = tree();
     let c = ctx();
     let order = collect_focusable(&root, c);
@@ -82,7 +82,7 @@ fn 深度优先收集可聚焦节点() {
 }
 
 #[test]
-fn 不可聚焦节点不进入顺序() {
+fn non_focusable_nodes_excluded() {
     let root = tree();
     let c = ctx();
     let order = collect_focusable(&root, c);
@@ -95,7 +95,7 @@ fn 不可聚焦节点不进入顺序() {
 // ─────────────────────────────── 初始聚焦 ───────────────────────────────
 
 #[test]
-fn 没有焦点时_tab_聚焦第一个() {
+fn tab_without_focus_focuses_first() {
     let mut root = tree();
     let mut fs = FocusState::new();
     assert!(fs.tab(&mut root, false, ctx()));
@@ -105,7 +105,7 @@ fn 没有焦点时_tab_聚焦第一个() {
 }
 
 #[test]
-fn 没有焦点时_shift_tab_聚焦最后一个() {
+fn shift_tab_without_focus_focuses_last() {
     let mut root = tree();
     let mut fs = FocusState::new();
     assert!(fs.tab(&mut root, true, ctx()));
@@ -113,7 +113,7 @@ fn 没有焦点时_shift_tab_聚焦最后一个() {
 }
 
 #[test]
-fn tab_只写一个_focused() {
+fn tab_writes_exactly_one_focused() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx());
@@ -140,7 +140,7 @@ fn count_focused(root: &Node, c: Context<'_>) -> usize {
 // ─────────────────────────────── Tab 移动 ───────────────────────────────
 
 #[test]
-fn tab_前进_按文档序移动() {
+fn tab_moves_forward_in_document_order() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx());
@@ -151,7 +151,7 @@ fn tab_前进_按文档序移动() {
 }
 
 #[test]
-fn tab_循环_末端绕回第一个() {
+fn tab_wraps_from_last_to_first() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx());
@@ -163,7 +163,7 @@ fn tab_循环_末端绕回第一个() {
 }
 
 #[test]
-fn shift_tab_反向移动() {
+fn shift_tab_moves_backward() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, true, ctx()); // → d
@@ -175,7 +175,7 @@ fn shift_tab_反向移动() {
 }
 
 #[test]
-fn tab_移动后_旧节点被清掉() {
+fn tab_clears_previous_node() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx()); // a
@@ -192,7 +192,7 @@ fn tab_移动后_旧节点被清掉() {
 // ─────────────────────────────── 手动聚焦 ───────────────────────────────
 
 #[test]
-fn 手动聚焦到存在的可聚焦节点() {
+fn manual_focus_on_focusable_node() {
     let mut root = tree();
     let mut fs = FocusState::new();
     let c = ctx();
@@ -202,7 +202,7 @@ fn 手动聚焦到存在的可聚焦节点() {
 }
 
 #[test]
-fn 手动聚焦到不可聚焦或不存在节点_清空焦点() {
+fn manual_focus_on_unfocusable_or_missing_clears() {
     let mut root = tree();
     let mut fs = FocusState::new();
     // 先聚焦到 a。
@@ -215,7 +215,7 @@ fn 手动聚焦到不可聚焦或不存在节点_清空焦点() {
 }
 
 #[test]
-fn 手动聚焦到不存在的key_清空焦点() {
+fn manual_focus_on_missing_key_clears() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx());
@@ -225,7 +225,7 @@ fn 手动聚焦到不存在的key_清空焦点() {
 }
 
 #[test]
-fn 手动聚焦会清掉旧的_tab_焦点() {
+fn manual_focus_clears_old_tab_focus() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx()); // a
@@ -238,7 +238,7 @@ fn 手动聚焦会清掉旧的_tab_焦点() {
 // ─────────────────────────────── 无焦点树 ───────────────────────────────
 
 #[test]
-fn 没有可聚焦节点时_tab_不做事() {
+fn tab_without_focusable_does_nothing() {
     let el = Element::new(NodeTag::Container)
         .with_key("root")
         .with_children([
@@ -256,7 +256,7 @@ fn 没有可聚焦节点时_tab_不做事() {
 }
 
 #[test]
-fn 单节点树_tab_聚焦它_再_tab_绕回它自己() {
+fn single_node_tab_focuses_and_wraps_to_self() {
     let el = Element::new(NodeTag::Control)
         .with_key("only")
         .with(&FOCUSABLE, PropertyValue::bool(true));
@@ -272,7 +272,7 @@ fn 单节点树_tab_聚焦它_再_tab_绕回它自己() {
 // ─────────────────────────────── 清空 / 复位 ───────────────────────────────
 
 #[test]
-fn clear_清掉焦点并写回_false() {
+fn clear_removes_focus_and_writes_false() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx()); // a
@@ -287,7 +287,7 @@ fn clear_清掉焦点并写回_false() {
 }
 
 #[test]
-fn clear_后重新_tab_从头开始() {
+fn tab_after_clear_starts_over() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx()); // a
@@ -297,7 +297,7 @@ fn clear_后重新_tab_从头开始() {
 }
 
 #[test]
-fn 焦点在子节点_clear_后父树的_focused_也清零() {
+fn clear_also_clears_focused_in_subtree() {
     let mut root = tree();
     let mut fs = FocusState::new();
     fs.tab(&mut root, false, ctx());
@@ -312,7 +312,7 @@ fn 焦点在子节点_clear_后父树的_focused_也清零() {
 // ─────────────────────────────── revision ───────────────────────────────
 
 #[test]
-fn revision_在焦点变化时递增() {
+fn revision_increments_on_focus_change() {
     let mut root = tree();
     let mut fs = FocusState::new();
     let r0 = fs.revision();
@@ -324,7 +324,7 @@ fn revision_在焦点变化时递增() {
 }
 
 #[test]
-fn revision_在无焦点树_tab_时不递增() {
+fn revision_stable_when_tab_finds_nothing() {
     let el = Element::new(NodeTag::Container).with_key("root");
     let mut root = Node::from_element(&el);
     let mut fs = FocusState::new();

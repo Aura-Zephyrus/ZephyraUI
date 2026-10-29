@@ -116,7 +116,7 @@ fn alpha_at(atlas: &GlyphAtlas, x: u32, y: u32) -> u8 {
 
 /// 图集里的每个像素必须与 `coverage` 的对应像素**逐字相同**。
 #[test]
-fn coverage_原样落进图集_不因_offset_而移位() {
+fn coverage_lands_verbatim_offset_does_not_shift() {
     let raster = diag_bitmap();
     let atlas = atlas_of(raster.clone());
 

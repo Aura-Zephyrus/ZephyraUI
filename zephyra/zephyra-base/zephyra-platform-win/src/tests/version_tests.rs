@@ -16,7 +16,7 @@ fn version_looks_like_real_windows() {
 }
 
 #[test]
-fn build_缓存与直接读一致() {
+fn build_cache_matches_direct_read() {
     // 缓存若写死一个值，这条会红 —— 那正是"版本探测写错了"的症状。
     assert_eq!(build_number(), os_version().2);
 }

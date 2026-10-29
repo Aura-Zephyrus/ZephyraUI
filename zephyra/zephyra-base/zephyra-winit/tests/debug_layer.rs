@@ -145,7 +145,7 @@ fn drain(queue: &ID3D11InfoQueue, label: &str) {
 }
 
 #[test]
-fn debug_layer_能不能解释_为什么拒绝动态资源() {
+fn debug_layer_explains_dynamic_resource_rejection() {
     let mut dev = None::<ID3D11Device>;
     let mut ctx = None::<ID3D11DeviceContext>;
     let created = unsafe {

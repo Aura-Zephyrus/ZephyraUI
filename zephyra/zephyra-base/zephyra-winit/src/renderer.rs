@@ -411,7 +411,7 @@ pub struct RenderCtx<'a> {
     ///
     /// 只有一条路：**换一台机器跑**。判据是现成的 ——
     /// `zephyra-winit-d3d12/tests/minimal.rs` 里的
-    /// `d3d12_最小资源能不能建出来`。一台正常机器上它应当通过。
+    /// `d3d12_minimal_resources_build`。一台正常机器上它应当通过。
     pub size: (u32, u32),
     /// 清屏颜色（线性 RGBA）。
     pub clear: Color,
