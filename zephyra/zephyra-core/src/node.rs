@@ -248,6 +248,25 @@ impl Node {
         self.arranged_rect
     }
 
+    /// 按事件身份深搜本子树，返回第一个 key 匹配的节点。
+    ///
+    /// 用**深度优先 + 文档序**：与 [`crate::input::focus::collect_focusable`] 的遍历
+    /// 顺序一致，于是「按 key 查到的元素」与「Tab 到的元素」是同一个。
+    pub fn find(&self, key: &ElementKey) -> Option<&Node> {
+        if self.key() == Some(key) {
+            return Some(self);
+        }
+        self.children.iter().find_map(|c| c.find(key))
+    }
+
+    /// 按事件身份查该元素的**窗口矩形**；不存在时返回 `None`。
+    ///
+    /// 这就是「分别可定位元素，窗口相对位置」的查询入口：拿到某个锚点的矩形后，
+    /// 可以把它的坐标写进 `left` / `top`，让弹层落在锚点上。
+    pub fn find_rect(&self, key: &ElementKey) -> Option<Rect> {
+        self.find(key).map(|n| n.rect())
+    }
+
     /// 设置属性并按影响范围标脏。
     ///
     /// 属性自己声明是否影响布局（见 [`crate::property::PropertyChange::affects_layout`]），

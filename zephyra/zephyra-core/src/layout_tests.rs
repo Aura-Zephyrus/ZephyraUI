@@ -12,6 +12,7 @@ use crate::id::NodeTag;
 use crate::layout::layout;
 use crate::layout::{
     AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+    Position,
 };
 use crate::node::Node;
 use crate::paint::render;
@@ -1036,4 +1037,151 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
         "第三项应在第二行（y=20），实得 {}",
         rects[2].y
     );
+}
+
+// ============================== 绝对定位 ==============================
+
+/// `position: absolute` 的 `left` / `top` 直接是**窗口绝对坐标**。
+#[test]
+fn absolute_子项的矩形直接采用窗口坐标() {
+    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
+        .with(
+            &props::POSITION,
+            PropertyValue::position(Position::Absolute),
+        )
+        .with(&props::LEFT, PropertyValue::float(120.0))
+        .with(&props::TOP, PropertyValue::float(40.0))
+        .with(&props::WIDTH, PropertyValue::float(30.0))
+        .with(&props::HEIGHT, PropertyValue::float(20.0))]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let r = node.children()[0].rect();
+    assert!(
+        (r.x - 120.0).abs() < 1e-3,
+        "left=120 ⇒ 窗口 x=120，实得 {}",
+        r.x
+    );
+    assert!(
+        (r.y - 40.0).abs() < 1e-3,
+        "top=40 ⇒ 窗口 y=40，实得 {}",
+        r.y
+    );
+    assert!((r.width - 30.0).abs() < 1e-3);
+    assert!((r.height - 20.0).abs() < 1e-3);
+}
+
+/// 绝对定位子项**不占正常流**：后继兄弟紧贴前一个，不因它下移。
+#[test]
+fn absolute_子项不把兄弟挤下去() {
+    let root = Element::new(NodeTag::Container)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with_children([
+            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(20.0)),
+            Element::new(NodeTag::Container)
+                .with(
+                    &props::POSITION,
+                    PropertyValue::position(Position::Absolute),
+                )
+                .with(&props::LEFT, PropertyValue::float(200.0))
+                .with(&props::HEIGHT, PropertyValue::float(500.0)),
+            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(20.0)),
+        ]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let third = node.children()[2].rect();
+    assert!(
+        (third.y - 20.0).abs() < 1e-3,
+        "中间的绝对子项不该把第三个挤到 y>20，实得 {}",
+        third.y
+    );
+}
+
+/// 未设 `left` / `top` 的绝对子项落在窗口左上角（0, 0）。
+#[test]
+fn absolute_未设偏移时落在窗口左上角() {
+    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
+        .with(
+            &props::POSITION,
+            PropertyValue::position(Position::Absolute),
+        )
+        .with(&props::WIDTH, PropertyValue::float(10.0))
+        .with(&props::HEIGHT, PropertyValue::float(10.0))]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let r = node.children()[0].rect();
+    assert!((r.x - 0.0).abs() < 1e-3);
+    assert!((r.y - 0.0).abs() < 1e-3);
+}
+
+/// 默认 `position` 是 `static`：`is_absolute` 为假。
+#[test]
+fn 默认定位是_static() {
+    let mut node = Node::from_element(&Element::new(NodeTag::Container));
+    assert!(!node.is_absolute(ctx()));
+    node.set_prop(
+        &props::POSITION,
+        PropertyValue::position(Position::Absolute),
+    );
+    assert!(node.is_absolute(ctx()));
+}
+
+/// 绝对定位的子项仍然进绘制列表，且画在它的窗口坐标上。
+#[test]
+fn absolute_子项仍然绘制在其窗口坐标() {
+    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Control)
+        .with(
+            &props::POSITION,
+            PropertyValue::position(Position::Absolute),
+        )
+        .with(&props::LEFT, PropertyValue::float(50.0))
+        .with(&props::TOP, PropertyValue::float(60.0))
+        .with(&props::WIDTH, PropertyValue::float(10.0))
+        .with(&props::HEIGHT, PropertyValue::float(10.0))
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+        )]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let list = commands(&node);
+    let rect = list
+        .iter()
+        .find_map(|c| match c {
+            Command::Quad { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .expect("绝对子项应产生一条四边形");
+    assert!(
+        (rect.x - 50.0).abs() < 1e-3,
+        "四边形 x 应为 50，实得 {}",
+        rect.x
+    );
+    assert!(
+        (rect.y - 60.0).abs() < 1e-3,
+        "四边形 y 应为 60，实得 {}",
+        rect.y
+    );
+}
+
+/// 按 key 深搜元素并读它的**窗口矩形**——这就是「可定位元素、窗口相对位置」。
+#[test]
+fn find_rect_按_key_查元素的窗口矩形() {
+    let root = Element::new(NodeTag::Container)
+        .with(&props::PADDING, PropertyValue::float(10.0))
+        .with_children([Element::new(NodeTag::Control)
+            .with_key("anchor")
+            .with(&props::WIDTH, PropertyValue::float(40.0))
+            .with(&props::HEIGHT, PropertyValue::float(20.0))]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 200.0, 100.0));
+
+    let key: crate::id::ElementKey = "anchor".into();
+    let r = node.find_rect(&key).expect("anchor 应能被找到");
+    // 根铺满 (0,0,200,100)，内边距 10 ⇒ 子项左上角落在 (10,10)。
+    assert!((r.x - 10.0).abs() < 1e-3, "锚点 x 应为 10，实得 {}", r.x);
+    assert!((r.y - 10.0).abs() < 1e-3, "锚点 y 应为 10，实得 {}", r.y);
+    assert!((r.width - 40.0).abs() < 1e-3);
+    assert!((r.height - 20.0).abs() < 1e-3);
+
+    // 查不到的 key 返回 None，而不是 panic 或默认矩形。
+    let missing: crate::id::ElementKey = "nope".into();
+    assert!(node.find_rect(&missing).is_none());
 }

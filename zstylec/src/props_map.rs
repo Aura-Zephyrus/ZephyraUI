@@ -57,6 +57,19 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "collapsed",
         key: &props::COLLAPSED,
     },
+    // ---- 定位（影响布局）----
+    Prop {
+        css: "position",
+        key: &props::POSITION,
+    },
+    Prop {
+        css: "left",
+        key: &props::LEFT,
+    },
+    Prop {
+        css: "top",
+        key: &props::TOP,
+    },
     // ---- Flexbox 容器（影响布局）----
     //
     // `align-items` / `justify-content` / `gap` 与既有名字是**同一个键的两套 CSS

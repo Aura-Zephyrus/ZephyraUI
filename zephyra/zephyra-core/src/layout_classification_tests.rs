@@ -76,6 +76,15 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
     ),
     (&props::FLEX_BASIS, true, "主轴假设尺寸，测量与分配都要读"),
     (&props::ORDER, true, "决定项的排布顺序（两趟都要按它排）"),
+    // ---- 影响布局：定位 ----
+    // `measure` 把绝对子项排除出内容尺寸、`arrange` 按 left/top 摆位。
+    (
+        &props::POSITION,
+        true,
+        "决定子项是否脱离正常流（`measure`/`arrange` 都读）",
+    ),
+    (&props::LEFT, true, "绝对定位的窗口 x"),
+    (&props::TOP, true, "绝对定位的窗口 y"),
     // ---- 影响布局：文本度量 ----
     // `measure` 走 `node.text_size(ctx)`，它内部取 `text_style()`（字号 + 行高）
     // 与 `text_max_width()`，三者都进 `engine.shape(...)`。
@@ -159,6 +168,9 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "CROSS_ALIGN",
         "MAIN_ALIGN",
         "COLLAPSED",
+        "POSITION",
+        "LEFT",
+        "TOP",
         "FLEX_DIRECTION",
         "FLEX_WRAP",
         "ALIGN_CONTENT",
@@ -208,6 +220,9 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "CrossAlign",
         "MainAlign",
         "Collapsed",
+        "Position",
+        "Left",
+        "Top",
         "FlexDirection",
         "FlexWrap",
         "AlignContent",

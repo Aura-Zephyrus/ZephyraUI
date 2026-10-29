@@ -49,6 +49,23 @@ pub static MAIN_ALIGN: PropertyKey =
 /// 而折叠完全不占——工具栏在图片模式下少一个按钮时，间距必须跟着消失。
 pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyValue::bool(false));
 
+// ============================== 定位 ==============================
+
+/// 定位方式（CSS `position` 的简化子集）。
+///
+/// [`Position::Absolute`](crate::layout::Position::Absolute) 让元素脱离正常流，
+/// 按 [`LEFT`] / [`TOP`] 定位到**窗口坐标**。弹层、悬浮按钮、tooltip 都靠它。
+pub static POSITION: PropertyKey = PropertyKey::layout(
+    "Position",
+    PropertyValue::position(crate::layout::Position::Static),
+);
+
+/// 绝对定位的窗口 x 坐标（DIP）。`NaN` 表示未设置（回落到 0，即窗口左缘）。
+pub static LEFT: PropertyKey = PropertyKey::layout("Left", PropertyValue::float(f32::NAN));
+
+/// 绝对定位的窗口 y 坐标（DIP）。`NaN` 表示未设置（回落到 0，即窗口上缘）。
+pub static TOP: PropertyKey = PropertyKey::layout("Top", PropertyValue::float(f32::NAN));
+
 // ============================== Flexbox ==============================
 //
 // 三个 CSS 名刻意映射到**既有键**而不是另开新键：

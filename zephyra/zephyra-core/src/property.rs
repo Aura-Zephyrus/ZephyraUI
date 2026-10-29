@@ -164,6 +164,8 @@ pub enum PropertyValue {
     FlexDirection(crate::layout::FlexDirection),
     /// 合成层（`paint::Layer`）。
     Layer(crate::paint::Layer),
+    /// 定位方式（`layout::Position`）。
+    Position(crate::layout::Position),
     /// 滤镜链（`filter::FilterChain`）。
     ///
     /// 刻意**不**走 [`PropertyValue::Custom`]：滤镜要进每帧产出的 `Command`，
@@ -255,6 +257,11 @@ impl PropertyValue {
         PropertyValue::Layer(v)
     }
 
+    /// 构造定位方式属性值（`const` 可用）。
+    pub const fn position(v: crate::layout::Position) -> Self {
+        PropertyValue::Position(v)
+    }
+
     /// 构造滤镜链属性值（空链可`const`）。
     pub const fn filter(v: crate::filter::FilterChain) -> Self {
         PropertyValue::Filter(v)
@@ -311,6 +318,7 @@ impl PropertyValue {
             PropertyValue::FlexWrap(v) => v,
             PropertyValue::FlexDirection(v) => v,
             PropertyValue::Layer(v) => v,
+            PropertyValue::Position(v) => v,
             PropertyValue::Filter(v) => v,
             PropertyValue::BlendMode(v) => v,
             PropertyValue::UvRect(v) => v,
@@ -345,6 +353,7 @@ impl PartialEq for PropertyValue {
             (PropertyValue::AlignSelf(a), PropertyValue::AlignSelf(b)) => a == b,
             (PropertyValue::FlexWrap(a), PropertyValue::FlexWrap(b)) => a == b,
             (PropertyValue::FlexDirection(a), PropertyValue::FlexDirection(b)) => a == b,
+            (PropertyValue::Position(a), PropertyValue::Position(b)) => a == b,
             (
                 PropertyValue::Custom { inner: ai, eq },
                 PropertyValue::Custom { inner: bi, eq: eqi },
@@ -374,6 +383,7 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::AlignSelf(v) => write!(f, "{v:?}"),
             PropertyValue::FlexWrap(v) => write!(f, "{v:?}"),
             PropertyValue::FlexDirection(v) => write!(f, "{v:?}"),
+            PropertyValue::Position(v) => write!(f, "{v:?}"),
             PropertyValue::Layer(v) => write!(f, "{v:?}"),
             // 调试输出要能看出"有几个滤镜"，否则属性 diff 失败时无从下手。
             PropertyValue::Filter(v) => write!(f, "Filter({} 项)", v.filters().len()),
@@ -486,6 +496,11 @@ pub fn name_affects_layout(name: &str) -> bool {
             | "FlexShrink"
             | "FlexBasis"
             | "Order"
+            // ---- 定位 ----
+            // `measure` 排除绝对子项、`arrange` 按 left/top 摆位；三者都进布局趟。
+            | "Position"
+            | "Left"
+            | "Top"
     )
 }
 

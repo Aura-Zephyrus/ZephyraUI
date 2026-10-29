@@ -289,9 +289,19 @@ fn filter_by_name(name: &str, args: &mut Parser) -> Option<zephyra_core::filter:
 fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
     use zephyra_core::layout::{
         AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+        Position,
     };
     let eq = |s: &str| s.eq_ignore_ascii_case(word);
 
+    if key.name() == "Position" {
+        if eq("static") {
+            return Some(PropertyValue::position(Position::Static));
+        }
+        if eq("absolute") {
+            return Some(PropertyValue::position(Position::Absolute));
+        }
+        return None;
+    }
     if key.name() == "Direction" {
         if eq("horizontal") {
             return Some(PropertyValue::direction(Direction::Horizontal));

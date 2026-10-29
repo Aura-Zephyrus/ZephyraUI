@@ -118,6 +118,30 @@ fn enum_values_parse_per_property() {
 }
 
 #[test]
+fn position_parses_static_and_absolute_and_rejects_others() {
+    // `position` 只认 static / absolute 两个关键字（本仓的 absolute 等价于
+    // CSS 的 fixed：left/top 直接是窗口坐标）。
+    use zephyra_core::layout::Position;
+    let r = ok("Control { position: absolute; left: 120px; top: 40px; }");
+    let d = &r.sheet.rules()[0].declarations;
+    let get = |name: &str| {
+        d.iter()
+            .find(|x| x.key.name() == name)
+            .unwrap_or_else(|| panic!("少了 {name}"))
+    };
+    assert_eq!(
+        get("Position").value.get::<Position>(),
+        Some(Position::Absolute)
+    );
+    assert_eq!(get("Left").value.get::<f32>(), Some(120.0));
+    assert_eq!(get("Top").value.get::<f32>(), Some(40.0));
+
+    // 关键字是**按属性**认的，拼错要报错而不是静默当 0。
+    let bad = parse("t.zstyle", "Control { position: sticky; }");
+    assert!(!bad.is_ok(), "`sticky` 不在本仓词汇表里，应报错");
+}
+
+#[test]
 fn flexbox_properties_parse_and_map_to_the_core_keys() {
     // 关键字分支按 `key.name()` 认（见 `value::enum_value`）。漏一条分支的症状是
     // 「属性名没错、值报 unknown value」，所以整套 flex 词汇一次写全。

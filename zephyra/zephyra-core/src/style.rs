@@ -21,6 +21,19 @@ impl Node {
         self.flag(&crate::props::COLLAPSED, ctx)
     }
 
+    /// 定位方式。
+    pub fn position(&self, ctx: Context<'_>) -> crate::layout::Position {
+        match self.value(&crate::props::POSITION, ctx).as_deref() {
+            Some(PropertyValue::Position(p)) => *p,
+            _ => crate::layout::Position::Static,
+        }
+    }
+
+    /// 是否绝对定位（脱离正常流）。
+    pub fn is_absolute(&self, ctx: Context<'_>) -> bool {
+        self.position(ctx) == crate::layout::Position::Absolute
+    }
+
     /// 内边距（四边统一值）。
     pub fn padding(&self, ctx: Context<'_>) -> crate::core::Thickness {
         crate::core::Thickness::uniform(self.number(&crate::props::PADDING, ctx))

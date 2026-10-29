@@ -267,6 +267,23 @@ impl FlexDirection {
     }
 }
 
+/// 元素定位方式（CSS `position` 的简化子集）。
+///
+/// - [`Position::Static`] —— 正常流（默认）。
+/// - [`Position::Absolute`] —— 脱离正常流，按 [`crate::props::LEFT`] /
+///   [`crate::props::TOP`] 定位到**窗口坐标**（等价于 CSS 的 `fixed`；
+///   本仓只有一个坐标空间，见 [`crate::frame`]）。
+///
+/// `relative` 暂不实现（`TRANSLATE_X` / `TRANSLATE_Y` 已覆盖其视觉效果，
+/// 且那两个只重绘不重排）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    /// 正常流（默认）。
+    Static,
+    /// 绝对定位：脱离正常流，按 `LEFT` / `TOP` 定位到窗口坐标。
+    Absolute,
+}
+
 /// 一维堆叠布局（WinUI `StackPanel` / CSS flex）。
 ///
 /// 子项在交叉轴上如何摆由**排列时**的 `cross_align` 决定，而不是这里声明——
@@ -961,16 +978,19 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     let origin = Point::new(inner.x, inner.y);
 
     // ---- 第一趟：折叠主轴总长与项数（只读）----
+    // 绝对定位的子项不参与正常流——不占主轴空间、不影响总长。
     let mut main_sum = 0.0f32;
     let mut count = 0usize;
     for c in node.children().iter() {
-        if c.is_collapsed(ctx) {
+        if c.is_collapsed(ctx) || c.is_absolute(ctx) {
             continue;
         }
         main_sum += stack.main_of(cached_size_or_zero(c));
         count += 1;
     }
     if count == 0 {
+        // 正常流没有子项不代表没有事做：绝对子项仍需摆位。
+        arrange_absolute_children(node, ctx);
         return;
     }
     let content_main = main_sum + stack.spacing * (count as f32 - 1.0);
@@ -983,7 +1003,7 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     // ---- 第二趟：算矩形并递归（可变）----
     let mut cursor = start;
     for child in node.children_mut().iter_mut() {
-        if child.is_collapsed(ctx) {
+        if child.is_collapsed(ctx) || child.is_absolute(ctx) {
             continue;
         }
         let size = cached_size_or_zero(child);
@@ -1017,6 +1037,32 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
         arrange(child, rect, ctx);
         cursor += stack.main_of(size) + gap;
     }
+    // 绝对定位子项在正常流之后摆位（CSS 同序：normal flow → out-of-flow）。
+    arrange_absolute_children(node, ctx);
+}
+
+/// 摆放绝对定位的子项：`left` / `top` 是**窗口绝对坐标**。
+///
+/// # 为什么是窗口坐标而不是父容器坐标
+///
+/// 本仓 `Node::rect()` 本来就是窗口绝对坐标（见 [`crate::frame`] 里那段说明），
+/// 整个 UI 只有**一个**坐标空间。于是「绝对定位」在这里的自然语义就是「直接给
+/// 窗口坐标」—— 等价于 CSS 的 `position: fixed`。这也正是真实用法：先查某个
+/// 锚点元素的窗口矩形（`Node::rect()`），再把弹层放到那个坐标上。
+///
+/// 未设 `left` / `top` 时回落到 `0`（窗口左上角）。CSS 的「静态位置」回落依赖
+/// 正常流游标，而绝对子项已脱离正常流，算它要额外维护一份「如果它在流里会在哪」
+/// 的镜像位置 —— 对一个每帧重建的布局趟，不值得。真实用法里两个偏移总是成对出现。
+fn arrange_absolute_children(node: &mut Node, ctx: Context<'_>) {
+    for child in node.children_mut().iter_mut() {
+        if child.is_collapsed(ctx) || !child.is_absolute(ctx) {
+            continue;
+        }
+        let left = child.number_or(&crate::props::LEFT, 0.0, ctx);
+        let top = child.number_or(&crate::props::TOP, 0.0, ctx);
+        let size = cached_size_or_zero(child);
+        arrange(child, Rect::new(left, top, size.width, size.height), ctx);
+    }
 }
 
 /// Stack 快路径的子项测量：主轴一条和 + 交叉轴一条最大边，**不收集中间 `Vec`**。
@@ -1048,7 +1094,13 @@ fn measure_stack(node: &mut Node, deflated: Constraints, ctx: Context<'_>) -> Si
         if node.children()[i].is_collapsed(ctx) {
             continue;
         }
+        // 绝对定位子项**要测**（`arrange` 要读它的缓存尺寸），但**不占**父内容
+        // 尺寸 —— CSS 里 `position: absolute` 不参与父的 normal-flow 尺寸计算。
+        let absolute = node.children()[i].is_absolute(ctx);
         let s = measure(&mut node.children_mut()[i], child_constraints, ctx);
+        if absolute {
+            continue;
+        }
         main_sum += stack.main_of(s);
         cross_max = cross_max.max(match stack.direction {
             Direction::Horizontal => s.height,
@@ -1101,7 +1153,12 @@ fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Cont
         if node.children()[i].is_collapsed(ctx) {
             continue;
         }
+        // 绝对定位子项要测（`arrange` 读缓存尺寸），但不进 flex 项表。
+        let absolute = node.children()[i].is_absolute(ctx);
         let size = measure(&mut node.children_mut()[i], child_constraints, ctx);
+        if absolute {
+            continue;
+        }
         items.push(flex.read_item(i, size, &node.children()[i], ctx));
     }
     if items.is_empty() {
@@ -1163,15 +1220,17 @@ fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Cont
 /// [`arrange`] 开头。
 fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
     // 第一趟（只读）：从测量缓存 + 属性表重建项表。
+    // 绝对定位的子项不进项表——它们不参与 flex 分配。
     let mut items: Vec<FlexItem> = Vec::new();
     for i in 0..node.children().len() {
-        if node.children()[i].is_collapsed(ctx) {
+        if node.children()[i].is_collapsed(ctx) || node.children()[i].is_absolute(ctx) {
             continue;
         }
         let size = cached_size_or_zero(&node.children()[i]);
         items.push(flex.read_item(i, size, &node.children()[i], ctx));
     }
     if items.is_empty() {
+        arrange_absolute_children(node, ctx);
         return;
     }
     items.sort_by_key(|it| it.order);
@@ -1230,6 +1289,8 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
             cursor += main_size + gap;
         }
     }
+    // 绝对定位子项在正常流之后摆位（CSS 同序：normal flow → out-of-flow）。
+    arrange_absolute_children(node, ctx);
 }
 
 /// 测量缓存里的尺寸；缺失时返回**零尺寸占位**。

@@ -839,6 +839,7 @@ pub fn value_to_text(v: &zephyra_core::property::PropertyValue) -> String {
         PropertyValue::AlignSelf(v) => format!("{v:?}"),
         PropertyValue::FlexWrap(v) => format!("{v:?}"),
         PropertyValue::FlexDirection(v) => format!("{v:?}"),
+        PropertyValue::Position(v) => format!("{v:?}"),
         PropertyValue::Layer(v) => format!("{v:?}"),
         PropertyValue::Filter(v) => format!("{v:?}"),
         PropertyValue::BlendMode(v) => format!("{v:?}"),
