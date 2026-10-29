@@ -60,10 +60,10 @@ pub static POSITION: PropertyKey = PropertyKey::layout(
     PropertyValue::position(crate::layout::Position::Static),
 );
 
-/// 绝对定位的窗口 x 坐标（DIP）。`NaN` 表示未设置（回落到 0，即窗口左缘）。
+/// 绝对定位的**中心**窗口 x 坐标（DIP）。`NaN` 表示未设置（回落到正常流本位的中心）。
 pub static LEFT: PropertyKey = PropertyKey::layout("Left", PropertyValue::float(f32::NAN));
 
-/// 绝对定位的窗口 y 坐标（DIP）。`NaN` 表示未设置（回落到 0，即窗口上缘）。
+/// 绝对定位的**中心**窗口 y 坐标（DIP）。`NaN` 表示未设置（回落到正常流本位的中心）。
 pub static TOP: PropertyKey = PropertyKey::layout("Top", PropertyValue::float(f32::NAN));
 
 // ============================== Flexbox ==============================

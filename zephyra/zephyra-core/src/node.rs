@@ -261,10 +261,24 @@ impl Node {
 
     /// 按事件身份查该元素的**窗口矩形**；不存在时返回 `None`。
     ///
-    /// 这就是「分别可定位元素，窗口相对位置」的查询入口：拿到某个锚点的矩形后，
-    /// 可以把它的坐标写进 `left` / `top`，让弹层落在锚点上。
+    /// 要「定位坐标」时更常用 [`Self::find_center`]——`left` / `top` 指的是元素
+    /// **中心**，不是左上角。
     pub fn find_rect(&self, key: &ElementKey) -> Option<Rect> {
         self.find(key).map(|n| n.rect())
+    }
+
+    /// 本元素矩形在窗口里的**中心点**。
+    ///
+    /// 与绝对定位的 `left` / `top` 同一坐标系、同一含义：把某个锚点的中心写进
+    /// 另一个元素的 `left` / `top`，后者就居中叠在锚点上。
+    pub fn center(&self) -> crate::core::Point {
+        let r = self.rect();
+        crate::core::Point::new(r.x + r.width * 0.5, r.y + r.height * 0.5)
+    }
+
+    /// 按事件身份查该元素的**窗口中心坐标**；不存在时返回 `None`。
+    pub fn find_center(&self, key: &ElementKey) -> Option<crate::core::Point> {
+        self.find(key).map(|n| n.center())
     }
 
     /// 设置属性并按影响范围标脏。

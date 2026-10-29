@@ -1041,7 +1041,7 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
 
 // ============================== 绝对定位 ==============================
 
-/// `position: absolute` 的 `left` / `top` 直接是**窗口绝对坐标**。
+/// `position: absolute` 的 `left` / `top` 是**中心**窗口坐标。
 #[test]
 fn absolute_子项的矩形直接采用窗口坐标() {
     let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
@@ -1055,14 +1055,15 @@ fn absolute_子项的矩形直接采用窗口坐标() {
         .with(&props::HEIGHT, PropertyValue::float(20.0))]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
     let r = node.children()[0].rect();
+    // 中心 (120,40) + 30×20 ⇒ 左上角 (105,30)。
     assert!(
-        (r.x - 120.0).abs() < 1e-3,
-        "left=120 ⇒ 窗口 x=120，实得 {}",
+        (r.x - 105.0).abs() < 1e-3,
+        "中心 x=120 ⇒ 左上角 105，实得 {}",
         r.x
     );
     assert!(
-        (r.y - 40.0).abs() < 1e-3,
-        "top=40 ⇒ 窗口 y=40，实得 {}",
+        (r.y - 30.0).abs() < 1e-3,
+        "中心 y=40 ⇒ 左上角 30，实得 {}",
         r.y
     );
     assert!((r.width - 30.0).abs() < 1e-3);
@@ -1151,13 +1152,13 @@ fn absolute_子项仍然绘制在其窗口坐标() {
         })
         .expect("绝对子项应产生一条四边形");
     assert!(
-        (rect.x - 50.0).abs() < 1e-3,
-        "四边形 x 应为 50，实得 {}",
+        (rect.x - 45.0).abs() < 1e-3,
+        "中心 x=50、宽 10 ⇒ 四边形 x=45，实得 {}",
         rect.x
     );
     assert!(
-        (rect.y - 60.0).abs() < 1e-3,
-        "四边形 y 应为 60，实得 {}",
+        (rect.y - 55.0).abs() < 1e-3,
+        "中心 y=60、高 10 ⇒ 四边形 y=55，实得 {}",
         rect.y
     );
 }
@@ -1184,4 +1185,95 @@ fn find_rect_按_key_查元素的窗口矩形() {
     // 查不到的 key 返回 None，而不是 panic 或默认矩形。
     let missing: crate::id::ElementKey = "nope".into();
     assert!(node.find_rect(&missing).is_none());
+}
+
+/// 只设 `left` 时，X 直接赋值、Y 沿用正常流位置（逐轴独立）。
+#[test]
+fn absolute_只设_x_时_y_沿用正常流位置() {
+    let root = Element::new(NodeTag::Container)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with_children([
+            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(70.0)),
+            Element::new(NodeTag::Container)
+                .with(
+                    &props::POSITION,
+                    PropertyValue::position(Position::Absolute),
+                )
+                .with(&props::LEFT, PropertyValue::float(120.0))
+                .with(&props::WIDTH, PropertyValue::float(30.0))
+                .with(&props::HEIGHT, PropertyValue::float(20.0)),
+        ]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let r = node.children()[1].rect();
+    // left=120 是中心 x ⇒ 左上角 120-15=105；Y 未设 ⇒ 沿用正常流位置 70。
+    assert!(
+        (r.x - 105.0).abs() < 1e-3,
+        "中心 X=120 ⇒ 左上角 105，实得 {}",
+        r.x
+    );
+    assert!(
+        (r.y - 70.0).abs() < 1e-3,
+        "Y 未设 ⇒ 沿用正常流位置 70，实得 {}",
+        r.y
+    );
+}
+
+/// 只设 `top` 时，Y 直接赋值、X 沿用正常流位置（逐轴独立）。
+#[test]
+fn absolute_只设_y_时_x_沿用正常流位置() {
+    let root = Element::new(NodeTag::Container).with_children([
+        Element::new(NodeTag::Container).with(&props::WIDTH, PropertyValue::float(50.0)),
+        Element::new(NodeTag::Container)
+            .with(
+                &props::POSITION,
+                PropertyValue::position(Position::Absolute),
+            )
+            .with(&props::TOP, PropertyValue::float(80.0))
+            .with(&props::WIDTH, PropertyValue::float(30.0))
+            .with(&props::HEIGHT, PropertyValue::float(20.0)),
+    ]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let r = node.children()[1].rect();
+    // top=80 是中心 y ⇒ 左上角 80-10=70；X 未设 ⇒ 沿用正常流位置 50。
+    assert!(
+        (r.y - 70.0).abs() < 1e-3,
+        "中心 Y=80 ⇒ 左上角 70，实得 {}",
+        r.y
+    );
+    assert!(
+        (r.x - 50.0).abs() < 1e-3,
+        "X 未设 ⇒ 沿用正常流位置 50，实得 {}",
+        r.x
+    );
+}
+
+/// 绝对定位在**嵌套容器**里仍是窗口坐标，不被父容器的偏移累加。
+///
+/// 这条直接对应「DComp 时所有元素坐标转为窗口绝对坐标」：视觉树若按父-子相对
+/// 偏移叠加，嵌套一深就会偏；本仓把 `left` / `top` 当作窗口坐标直接落位。
+#[test]
+fn absolute_在嵌套容器里仍是窗口坐标() {
+    let inner = Element::new(NodeTag::Container)
+        .with(&props::PADDING, PropertyValue::float(30.0))
+        .with_children([Element::new(NodeTag::Container)
+            .with(
+                &props::POSITION,
+                PropertyValue::position(Position::Absolute),
+            )
+            .with(&props::LEFT, PropertyValue::float(10.0))
+            .with(&props::TOP, PropertyValue::float(10.0))
+            .with(&props::WIDTH, PropertyValue::float(10.0))
+            .with(&props::HEIGHT, PropertyValue::float(10.0))]);
+    let root = Element::new(NodeTag::Container)
+        .with(&props::PADDING, PropertyValue::float(50.0))
+        .with_children([inner]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    // 根 padding 50 ⇒ inner 在 (50,50)；inner padding 30 ⇒ 正常流子项在 (80,80)。
+    // 绝对子项的中心 left/top=10、尺寸 10×10 ⇒ 左上角 (5,5)，不被父偏移叠加。
+    let r = node.children()[0].children()[0].rect();
+    assert!((r.x - 5.0).abs() < 1e-3, "实得 {}", r.x);
+    assert!((r.y - 5.0).abs() < 1e-3, "实得 {}", r.y);
 }

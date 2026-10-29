@@ -989,21 +989,47 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
         count += 1;
     }
     if count == 0 {
-        // 正常流没有子项不代表没有事做：绝对子项仍需摆位。
-        arrange_absolute_children(node, ctx);
+        // 正常流没有子项不代表没有事做：绝对子项仍需摆位。此时「正常流游标」
+        // 就在内容原点，于是未设的轴回落到原点。
+        arrange_flow(node, stack, cross_align, origin, available, 0.0, 0.0, ctx);
         return;
     }
     let content_main = main_sum + stack.spacing * (count as f32 - 1.0);
     let (start, gap) = stack.main_offset_rules(count, content_main, stack.main_of(available));
+
+    // ---- 第二趟：算矩形并递归（可变）----
+    arrange_flow(node, stack, cross_align, origin, available, start, gap, ctx);
+}
+
+/// 第二趟：按正常流游标摆放子项；绝对子项逐轴赋值。
+///
+/// # 逐轴语义（「X、Y 可单独赋值或计算」）
+///
+/// 绝对子项的每个轴独立决定：
+///
+/// - 该轴设了 `left` / `top` ⇒ **直接赋值**该窗口坐标；
+/// - 该轴没设 ⇒ 用它在**正常流里本会落在的位置**（CSS 的 static position）。
+///
+/// 于是 `position: absolute; left: 120px;`（只给 X）会横向钉到 120、
+/// 纵向仍跟着兄弟往下排——这正是 CSS 的行为，也是「X、Y 单独赋值或计算」。
+/// 绝对子项**不推进正常流游标**（它不占位）。
+fn arrange_flow(
+    node: &mut Node,
+    stack: Stack,
+    cross_align: AlignItems,
+    origin: Point,
+    available: Size,
+    start: f32,
+    gap: f32,
+    ctx: Context<'_>,
+) {
     let available_cross = match stack.direction {
         Direction::Horizontal => available.height,
         Direction::Vertical => available.width,
     };
-
-    // ---- 第二趟：算矩形并递归（可变）----
     let mut cursor = start;
     for child in node.children_mut().iter_mut() {
-        if child.is_collapsed(ctx) || child.is_absolute(ctx) {
+        if child.is_collapsed(ctx) {
             continue;
         }
         let size = cached_size_or_zero(child);
@@ -1026,7 +1052,8 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
                 (origin.x + available_cross - size.width, size.width)
             }
         };
-        let rect = match stack.direction {
+        // 这个子项在**正常流里本会落到的矩形**（绝对子项拿它当未设轴的回落）。
+        let flow = match stack.direction {
             Direction::Horizontal => {
                 Rect::new(origin.x + cursor, cross_pos, size.width, cross_extent)
             }
@@ -1034,34 +1061,64 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
                 Rect::new(cross_pos, origin.y + cursor, cross_extent, size.height)
             }
         };
-        arrange(child, rect, ctx);
-        cursor += stack.main_of(size) + gap;
+        if child.is_absolute(ctx) {
+            // 逐轴：设了的轴直接赋值**中心坐标**，没设的轴用 flow 的本位中心。
+            // 注意 `left` / `top` 指的是元素**中心**，不是左上角（见模块文档）。
+            let flow_cx = flow.x + size.width * 0.5;
+            let flow_cy = flow.y + size.height * 0.5;
+            let cx = child.number_or(&crate::props::LEFT, flow_cx, ctx);
+            let cy = child.number_or(&crate::props::TOP, flow_cy, ctx);
+            let rect = Rect::new(
+                cx - size.width * 0.5,
+                cy - size.height * 0.5,
+                size.width,
+                size.height,
+            );
+            arrange(child, rect, ctx);
+            // 绝对子项不推进游标。
+        } else {
+            arrange(child, flow, ctx);
+            cursor += stack.main_of(size) + gap;
+        }
     }
-    // 绝对定位子项在正常流之后摆位（CSS 同序：normal flow → out-of-flow）。
-    arrange_absolute_children(node, ctx);
 }
 
-/// 摆放绝对定位的子项：`left` / `top` 是**窗口绝对坐标**。
+/// 摆放 flex 容器里的绝对定位子项：逐轴赋值，未设的轴回落到容器内容原点。
 ///
 /// # 为什么是窗口坐标而不是父容器坐标
 ///
 /// 本仓 `Node::rect()` 本来就是窗口绝对坐标（见 [`crate::frame`] 里那段说明），
 /// 整个 UI 只有**一个**坐标空间。于是「绝对定位」在这里的自然语义就是「直接给
 /// 窗口坐标」—— 等价于 CSS 的 `position: fixed`。这也正是真实用法：先查某个
-/// 锚点元素的窗口矩形（`Node::rect()`），再把弹层放到那个坐标上。
+/// 锚点元素的窗口矩形（`Node::find_rect`），再把弹层放到那个坐标上。
 ///
-/// 未设 `left` / `top` 时回落到 `0`（窗口左上角）。CSS 的「静态位置」回落依赖
-/// 正常流游标，而绝对子项已脱离正常流，算它要额外维护一份「如果它在流里会在哪」
-/// 的镜像位置 —— 对一个每帧重建的布局趟，不值得。真实用法里两个偏移总是成对出现。
-fn arrange_absolute_children(node: &mut Node, ctx: Context<'_>) {
+/// # 逐轴回落
+///
+/// `left` / `top` 各自独立：设了就直接用，没设就用 `fallback`。flex 里绝对子项
+/// 不参与项表（拿不到「本该在哪一行」），所以未设的轴回落到容器内容原点，
+/// 而不是像栈路径那样回落到正常流游标。
+///
+/// # 坐标是**中心**
+///
+/// `left` / `top` 指元素**中心**，不是左上角，于是落位时要减半个尺寸。
+fn arrange_absolute_children(node: &mut Node, fallback: Point, ctx: Context<'_>) {
     for child in node.children_mut().iter_mut() {
         if child.is_collapsed(ctx) || !child.is_absolute(ctx) {
             continue;
         }
-        let left = child.number_or(&crate::props::LEFT, 0.0, ctx);
-        let top = child.number_or(&crate::props::TOP, 0.0, ctx);
         let size = cached_size_or_zero(child);
-        arrange(child, Rect::new(left, top, size.width, size.height), ctx);
+        // 未设的轴回落到容器内容原点对应的「中心」。
+        let fallback_cx = fallback.x + size.width * 0.5;
+        let fallback_cy = fallback.y + size.height * 0.5;
+        let cx = child.number_or(&crate::props::LEFT, fallback_cx, ctx);
+        let cy = child.number_or(&crate::props::TOP, fallback_cy, ctx);
+        let rect = Rect::new(
+            cx - size.width * 0.5,
+            cy - size.height * 0.5,
+            size.width,
+            size.height,
+        );
+        arrange(child, rect, ctx);
     }
 }
 
@@ -1230,7 +1287,7 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
         items.push(flex.read_item(i, size, &node.children()[i], ctx));
     }
     if items.is_empty() {
-        arrange_absolute_children(node, ctx);
+        arrange_absolute_children(node, Point::new(inner.x, inner.y), ctx);
         return;
     }
     items.sort_by_key(|it| it.order);
@@ -1290,7 +1347,7 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
         }
     }
     // 绝对定位子项在正常流之后摆位（CSS 同序：normal flow → out-of-flow）。
-    arrange_absolute_children(node, ctx);
+    arrange_absolute_children(node, Point::new(inner.x, inner.y), ctx);
 }
 
 /// 测量缓存里的尺寸；缺失时返回**零尺寸占位**。
