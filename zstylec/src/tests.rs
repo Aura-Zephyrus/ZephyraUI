@@ -117,6 +117,48 @@ fn enum_values_parse_per_property() {
     let _ = ok("Control { cross-align: start; }");
 }
 
+/// `material-params` 是空格/逗号分隔的数值列表，独立于 `material`。
+#[test]
+fn material_params_parses_a_number_list() {
+    use zephyra_core::filter::MaterialParams;
+    let r = ok("Control { material: glass; material-params: 24 20 0.3 1.5; }");
+    let d = &r.sheet.rules()[0].declarations;
+    let get = |name: &str| {
+        d.iter()
+            .find(|x| x.key.name() == name)
+            .unwrap_or_else(|| panic!("少了 {name}"))
+    };
+    // material 只是种类（不复述参数）。
+    assert_eq!(
+        get("Material")
+            .value
+            .get::<zephyra_core::filter::Material>(),
+        Some(zephyra_core::filter::Material::Glass)
+    );
+    // 参数独立，按序填入。
+    assert_eq!(
+        get("MaterialParams").value.get::<MaterialParams>(),
+        Some(MaterialParams {
+            amount: Some(24.0),
+            bezel: Some(20.0),
+            dispersion: Some(0.3),
+            ior: Some(1.5),
+        })
+    );
+
+    // 逗号分隔也行；少写的项保持 None。
+    let r = ok("Control { material-params: 12; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0]
+            .value
+            .get::<MaterialParams>(),
+        Some(MaterialParams {
+            amount: Some(12.0),
+            ..MaterialParams::none()
+        })
+    );
+}
+
 #[test]
 fn position_parses_static_and_absolute_and_rejects_others() {
     // `position` 只认 static / absolute 两个关键字（本仓的 absolute 等价于

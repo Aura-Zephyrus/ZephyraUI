@@ -685,11 +685,18 @@ impl BlendMode {
 ///
 /// `filter:` 是**底层效果链**（`blur` / `drop-shadow` / `refraction` …），把
 /// 效果一个接一个排起来。`material:` 是**高层材质语义** —— `.zstyle` 写一个
-/// 词（`solid` / `frosted` / `glass`）就能得到一整块材质，不用记物理参数。
+/// 词（`solid` / `frosted` / `glass`）就能得到一整块材质选型。
 ///
 /// 两者**可共存且正交**：一个节点可以 `filter: drop-shadow(...)`（阴影）+
 /// `material: glass`（液态玻璃底）—— 材质展开成滤镜链，与 `filter:` 那条链
 /// **合并**后交给渲染。材质不覆盖 filter，也不被 filter 覆盖。
+///
+/// # 种类与参数分开
+///
+/// 本枚举只表示**种类**，**不带参数**。参数（σ / 厚度 / 倒角 / 色散 / 折射率）
+/// 由**独立的** [`MaterialParams`] 携带（`.zstyle` 的 `material-params:` 属性）。
+/// 这样「选哪种材质」与「调它的参数」是两件互不耦合的事 —— 同一个
+/// `material: glass` 可以在不同页面用不同的 `material-params`。
 ///
 /// # 三种材质
 ///
@@ -698,33 +705,15 @@ impl BlendMode {
 /// | [`Material::Solid`] | `solid`（默认） | 空链 | 纯色（靠 `background:`）|
 /// | [`Material::Frosted`] | `frosted` | [`Filter::BackdropBlur`] | 磨砂玻璃：背后被模糊 |
 /// | [`Material::Glass`] | `glass` | [`Filter::Refraction`] | 液态玻璃：背后被折射弯曲 |
-///
-/// # 为什么参数藏进默认值、不在 `.zstyle` 暴露
-///
-/// 材质是**纯视觉**的东西。让 `.zstyle` 写 `material: glass` 一个词、而不是
-/// `material: refraction(24px, 20px, 0.3, 1.5)`，是为了「材质」这个概念在
-/// 样式表里是**不可调参的选型**，浓淡/强弱是后续要加档位时的事 —— 见
-/// [`crate::props::MATERIAL`] 的文档。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Material {
     /// 纯色：不做任何滤镜（默认）。外观全靠 `background:` 填充。
     #[default]
     Solid,
-    /// 磨砂玻璃：把元素**背后**的画面高斯模糊后透出。
-    ///
-    /// σ 是标准差（像素），与 [`Filter::Blur`] 同一个语义。默认 6px ——
-    /// 磨砂到能看出"背后是糊的"但不至于糊成一团色块。
-    Frosted { sigma: f32 },
-    /// 液态玻璃：把元素**背后**的画面按斯涅尔折射弯曲后透出。
-    ///
-    /// 参数与 [`Filter::Refraction`] 一一对应。默认值取 gallery 玻璃面板的
-    /// 常用组合：厚度 20px、倒角宽 16px、几乎无色散、IOR 1.5。
-    Glass {
-        strength: f32,
-        bezel: f32,
-        dispersion: f32,
-        ior: f32,
-    },
+    /// 磨砂玻璃：把元素**背后**的画面高斯模糊后透出（σ 见 [`MaterialParams::amount`]）。
+    Frosted,
+    /// 液态玻璃：把元素**背后**的画面按斯涅尔折射弯曲后透出（参数见 [`MaterialParams`]）。
+    Glass,
 }
 
 impl Material {
@@ -744,48 +733,88 @@ impl Material {
         Material::Solid
     }
 
-    /// 磨砂玻璃，用默认 σ。
+    /// 磨砂玻璃（参数由 [`MaterialParams`] 覆盖）。
     pub const fn frosted() -> Self {
-        Material::Frosted {
-            sigma: Self::FROSTED_SIGMA,
-        }
+        Material::Frosted
     }
 
-    /// 液态玻璃，用全部默认参数。
+    /// 液态玻璃（参数由 [`MaterialParams`] 覆盖）。
     pub const fn glass() -> Self {
-        Material::Glass {
-            strength: Self::GLASS_STRENGTH,
-            bezel: Self::GLASS_BEZEL,
-            dispersion: Self::GLASS_DISPERSION,
-            ior: Self::GLASS_IOR,
-        }
+        Material::Glass
     }
 
-    /// 本材质展开成的滤镜链。
+    /// 本材质用**默认参数**展开成的滤镜链（等价 `filter_with(&MaterialParams::default())`）。
+    pub fn filter(&self) -> FilterChain {
+        self.filter_with(&MaterialParams::default())
+    }
+
+    /// 本材质用给定**参数覆盖**展开成的滤镜链。
     ///
-    /// - [`Material::Solid`] → 空链（恒等）。
-    /// - [`Material::Frosted`] → 一条 [`Filter::BackdropBlur`]。
-    /// - [`Material::Glass`] → 一条 [`Filter::Refraction`]。
+    /// - [`Material::Solid`] → 空链（恒等），参数无关。
+    /// - [`Material::Frosted`] → 一条 [`Filter::BackdropBlur`]，σ = `params.amount` 或默认。
+    /// - [`Material::Glass`] → 一条 [`Filter::Refraction`]，四参数各取 `params` 或默认。
     ///
     /// 这条链由 fx 层与 `filter:` 的链**合并**成最终 `FilterChain`（见
     /// `zephyra_fx`）。三后端只看到合并后的链，不知道 `material` 存在。
-    pub fn filter(&self) -> FilterChain {
+    pub fn filter_with(&self, params: &MaterialParams) -> FilterChain {
         match self {
             Material::Solid => FilterChain::none(),
-            Material::Frosted { sigma } => {
-                FilterChain::single(Filter::BackdropBlur { sigma: *sigma })
-            }
-            Material::Glass {
-                strength,
-                bezel,
-                dispersion,
-                ior,
-            } => FilterChain::single(Filter::Refraction {
-                strength: *strength,
-                bezel: *bezel,
-                dispersion: *dispersion,
-                ior: *ior,
+            Material::Frosted => FilterChain::single(Filter::BackdropBlur {
+                sigma: params.amount.unwrap_or(Self::FROSTED_SIGMA),
             }),
+            Material::Glass => FilterChain::single(Filter::Refraction {
+                strength: params.amount.unwrap_or(Self::GLASS_STRENGTH),
+                bezel: params.bezel.unwrap_or(Self::GLASS_BEZEL),
+                dispersion: params.dispersion.unwrap_or(Self::GLASS_DISPERSION),
+                ior: params.ior.unwrap_or(Self::GLASS_IOR),
+            }),
+        }
+    }
+}
+
+/// 材质参数的**独立**覆盖（`.zstyle` 的 `material-params:`，与 `material:` 分开）。
+///
+/// 每个字段是 `Option`：`None` = 用对应材质的默认值（见 [`Material`] 的常量）。
+/// 这样「不写 `material-params`」与「写了但只调其中几项」都是合法的。
+///
+/// # 字段顺序 = `.zstyle` 里的书写顺序
+///
+/// `material-params: <amount> <bezel> <dispersion> <ior>`，从第一个数起依次填。
+/// 少写的项保持 `None`（用默认）。
+///
+/// - `amount` 是**主调量**：磨砂玻璃 = σ；液态玻璃 = 玻璃厚度。
+/// - `bezel` / `dispersion` / `ior` 只对液态玻璃有意义（磨砂玻璃忽略它们）。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MaterialParams {
+    /// 主调量：磨砂 = σ（模糊标准差）；液态玻璃 = 厚度（像素）。
+    pub amount: Option<f32>,
+    /// 液态玻璃的倒角带宽度（像素）。
+    pub bezel: Option<f32>,
+    /// 液态玻璃的色散量。
+    pub dispersion: Option<f32>,
+    /// 液态玻璃的折射率。
+    pub ior: Option<f32>,
+}
+
+impl MaterialParams {
+    /// 全空（所有项用种类默认值）。`const` 可用 —— `props::MATERIAL_PARAMS` 的
+    /// 静态默认值要在 `static` 里构造。
+    pub const fn none() -> Self {
+        Self {
+            amount: None,
+            bezel: None,
+            dispersion: None,
+            ior: None,
+        }
+    }
+
+    /// 从最多四个数依次填入（`material-params` 的解析结果）。多余项忽略。
+    pub fn from_numbers(nums: &[f32]) -> Self {
+        Self {
+            amount: nums.first().copied(),
+            bezel: nums.get(1).copied(),
+            dispersion: nums.get(2).copied(),
+            ior: nums.get(3).copied(),
         }
     }
 }

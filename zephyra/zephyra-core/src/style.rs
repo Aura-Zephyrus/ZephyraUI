@@ -330,7 +330,12 @@ impl Node {
         if let Some(PropertyValue::Material(m)) =
             self.value(&crate::props::MATERIAL, ctx).as_deref()
         {
-            for f in m.filter().filters() {
+            // 参数是**独立**的属性（`material-params`）；没写时用种类默认值。
+            let params = match self.value(&crate::props::MATERIAL_PARAMS, ctx).as_deref() {
+                Some(PropertyValue::MaterialParams(p)) => *p,
+                _ => crate::filter::MaterialParams::default(),
+            };
+            for f in m.filter_with(&params).filters() {
                 chain = chain.then(*f);
             }
         }

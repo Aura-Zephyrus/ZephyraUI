@@ -43,6 +43,11 @@ pub fn parse(
     if std::ptr::eq(key, &zephyra_core::props::FILTER) {
         return parse_filter_chain(input, p, line);
     }
+    // `material-params` 是**空格/逗号分隔的数值列表**（最多 4 个），也要在
+    // `input.next()` 之前分流：通用分支只取一个 token。
+    if std::ptr::eq(key, &zephyra_core::props::MATERIAL_PARAMS) {
+        return parse_material_params(input, p, line);
+    }
     let value = input.next().map_err(|_: cssparser::BasicParseError| ())?;
     match value {
         // ---- 数字 ----
@@ -207,6 +212,52 @@ fn parse_filter_chain(
         }
     }
     Ok(PropertyValue::filter(FilterChain::new(filters)))
+}
+
+/// 解析 `material-params:` 的值：**空格 / 逗号分隔的数值列表**（最多 4 个）。
+///
+/// # 支持的写法
+///
+/// ```text
+/// material-params: 12            /* 磨砂 σ = 12 */
+/// material-params: 24 20 0.3 1.5 /* 液态玻璃：厚度 24 / 倒角 20 / 色散 0.3 / IOR 1.5 */
+/// material-params: 24, 20, 0.3, 1.5
+/// ```
+///
+/// 顺序固定：`<amount> <bezel> <dispersion> <ior>`。少写的项保持 `None`（用种类
+/// 默认值）。单位（`px`）被忽略 —— 与其它数值属性一致（`12px` 等价 `12`）。
+///
+/// # 为什么不用函数语法
+///
+/// `filter:` 用 `refraction(24px, ...)` 是因为那是 CSS 原生 filter 语法。材质参数
+/// 是本仓扩展，没有 CSS 对应物；写成裸数值列表最简单，也不必再编一个函数名。
+fn parse_material_params(
+    input: &mut Parser,
+    p: &mut ZstyleParser<'_>,
+    line: u32,
+) -> Result<PropertyValue, ()> {
+    let mut nums: Vec<f32> = Vec::new();
+    loop {
+        match input.next() {
+            Ok(Token::Number { value, .. }) => nums.push(*value as f64 as f32),
+            Ok(Token::Dimension { value, .. }) => nums.push(*value as f64 as f32),
+            Ok(Token::Comma) => continue,
+            // 空白不是 token（cssparser 默认跳过）；其余（含闭括号）= 结束。
+            Ok(_) | Err(_) => break,
+        }
+    }
+    if nums.is_empty() {
+        p.errors.push(unexpected(
+            p,
+            line,
+            "expected at least one number here.",
+            &["12", "24 20 0.3 1.5", "24, 20, 0.3, 1.5"],
+        ));
+        return Err(());
+    }
+    Ok(PropertyValue::material_params(
+        zephyra_core::filter::MaterialParams::from_numbers(&nums),
+    ))
 }
 
 /// 折射倒角带的默认宽度（像素）。

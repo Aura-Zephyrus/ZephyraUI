@@ -419,6 +419,53 @@ fn material_expands_to_the_right_filter() {
     );
 }
 
+/// `material-params` 独立于 `material`：同一材质可换参数，未写的项用默认。
+#[test]
+fn material_params_override_independently() {
+    use crate::filter::{Material, MaterialParams};
+
+    // 磨砂：只给 amount（σ）。
+    let p = MaterialParams::from_numbers(&[12.0]);
+    match Material::frosted().filter_with(&p).filters()[0] {
+        Filter::BackdropBlur { sigma } => assert_eq!(sigma, 12.0),
+        other => panic!("磨砂应是 BackdropBlur，得到 {other:?}"),
+    }
+
+    // 液态玻璃：四个数全给。
+    let p = MaterialParams::from_numbers(&[24.0, 20.0, 0.3, 1.5]);
+    match Material::glass().filter_with(&p).filters()[0] {
+        Filter::Refraction {
+            strength,
+            bezel,
+            dispersion,
+            ior,
+        } => {
+            assert_eq!((strength, bezel, dispersion, ior), (24.0, 20.0, 0.3, 1.5));
+        }
+        other => panic!("液态玻璃应是 Refraction，得到 {other:?}"),
+    }
+
+    // 只给一部分：其余落默认（bezel 默认 16、dispersion 默认 0、ior 默认 1.5）。
+    let p = MaterialParams::from_numbers(&[30.0]);
+    match Material::glass().filter_with(&p).filters()[0] {
+        Filter::Refraction {
+            strength,
+            bezel,
+            dispersion,
+            ior,
+        } => {
+            assert_eq!(strength, 30.0, "只给了 amount");
+            assert_eq!(bezel, Material::GLASS_BEZEL, "bezel 落默认");
+            assert_eq!(dispersion, Material::GLASS_DISPERSION);
+            assert_eq!(ior, Material::GLASS_IOR);
+        }
+        other => panic!("应是 Refraction，得到 {other:?}"),
+    }
+
+    // 纯色无视参数。
+    assert!(Material::solid().filter_with(&p).is_identity());
+}
+
 /// 折射**不外扩**离屏矩形。
 ///
 /// # 为什么

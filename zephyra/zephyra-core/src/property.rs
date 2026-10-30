@@ -183,6 +183,9 @@ pub enum PropertyValue {
     /// 固定词汇表（`solid` / `frosted` / `glass`），所以枚举变体零分配、能参与
     /// 手写相等判断。
     Material(crate::filter::Material),
+    /// 材质参数覆盖（`filter::MaterialParams`）。与 [`PropertyValue::Material`] 分开：
+    /// 材质种类与它的参数是两件互相独立的事（见 `MaterialParams` 的文档）。
+    MaterialParams(crate::filter::MaterialParams),
     /// 纹理内的归一化矩形（`core::UvRect`）。
     UvRect(crate::core::UvRect),
     /// **资源键引用**：存键而非字面值，主题切换时只需重解析这些键。
@@ -283,6 +286,11 @@ impl PropertyValue {
         PropertyValue::Material(v)
     }
 
+    /// 构造材质参数属性值（`const` 可用）。
+    pub const fn material_params(v: crate::filter::MaterialParams) -> Self {
+        PropertyValue::MaterialParams(v)
+    }
+
     /// 构造纹理 uv 矩形属性值（`const` 可用）。
     pub const fn uv_rect(v: crate::core::UvRect) -> Self {
         PropertyValue::UvRect(v)
@@ -333,6 +341,7 @@ impl PropertyValue {
             PropertyValue::Filter(v) => v,
             PropertyValue::BlendMode(v) => v,
             PropertyValue::Material(v) => v,
+            PropertyValue::MaterialParams(v) => v,
             PropertyValue::UvRect(v) => v,
             PropertyValue::Custom { inner, .. } => &**inner,
             PropertyValue::Resource(_) => return None,
@@ -360,6 +369,7 @@ impl PartialEq for PropertyValue {
             (PropertyValue::Filter(a), PropertyValue::Filter(b)) => a == b,
             (PropertyValue::BlendMode(a), PropertyValue::BlendMode(b)) => a == b,
             (PropertyValue::Material(a), PropertyValue::Material(b)) => a == b,
+            (PropertyValue::MaterialParams(a), PropertyValue::MaterialParams(b)) => a == b,
             (PropertyValue::UvRect(a), PropertyValue::UvRect(b)) => a == b,
             (PropertyValue::Resource(a), PropertyValue::Resource(b)) => a == b,
             (PropertyValue::AlignContent(a), PropertyValue::AlignContent(b)) => a == b,
@@ -402,6 +412,7 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::Filter(v) => write!(f, "Filter({} 项)", v.filters().len()),
             PropertyValue::BlendMode(v) => write!(f, "{v:?}"),
             PropertyValue::Material(v) => write!(f, "{v:?}"),
+            PropertyValue::MaterialParams(v) => write!(f, "{v:?}"),
             PropertyValue::UvRect(v) => write!(f, "{v:?}"),
             PropertyValue::Resource(k) => write!(f, "Resource({k})"),
             PropertyValue::Custom { .. } => write!(f, "Custom"),

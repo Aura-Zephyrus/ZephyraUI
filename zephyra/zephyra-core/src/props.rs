@@ -196,6 +196,22 @@ pub static MATERIAL: PropertyKey = PropertyKey::new(
     PropertyValue::material(crate::filter::Material::solid()),
 );
 
+/// 材质参数的**独立覆盖**（`material-params`），与 [`MATERIAL`] 分开。
+///
+/// `material:` 只选**种类**（`solid` / `frosted` / `glass`），本属性调它的**参数**
+/// （σ / 厚度 / 倒角 / 色散 / 折射率）。两者互相独立：同一个 `material: glass`
+/// 可以在不同页面用不同的 `material-params`；不写本属性时用种类自带的默认值。
+///
+/// 每个字段是 `Option`——「没写」与「写了但只调其中几项」都合法，未写的项落到
+/// [`crate::filter::Material`] 的默认常量。`material-params` 的书写顺序是
+/// `<amount> <bezel> <dispersion> <ior>`（见 [`crate::filter::MaterialParams`]）。
+///
+/// 不可继承：与 [`FILTER`] 同理。
+pub static MATERIAL_PARAMS: PropertyKey = PropertyKey::new(
+    "MaterialParams",
+    PropertyValue::material_params(crate::filter::MaterialParams::none()),
+);
+
 /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]，即普通 alpha 合成）。
 ///
 /// 同样不可继承：混合模式描述的是"这一项与它**下面**那层的合成方式"，而"下面"

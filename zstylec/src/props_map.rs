@@ -194,6 +194,11 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "material",
         key: &props::MATERIAL,
     },
+    // 材质参数：独立于 material，覆盖 σ/厚度/倒角/色散/折射率。
+    Prop {
+        css: "material-params",
+        key: &props::MATERIAL_PARAMS,
+    },
     // ---- 图像 / 图标 ----
     Prop {
         css: "image-texture",

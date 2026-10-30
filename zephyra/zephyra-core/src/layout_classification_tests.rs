@@ -109,6 +109,11 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
         false,
         "材质展开成滤镜（背后模糊/折射），不改布局盒",
     ),
+    (
+        &props::MATERIAL_PARAMS,
+        false,
+        "只改材质的物理参数（σ/厚度…），不改布局盒",
+    ),
     (&props::IMAGE_TEXTURE, false, "只决定画哪张图"),
     (
         &props::IMAGE_SIZE,
@@ -200,6 +205,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "FILTER",
         "BLEND_MODE",
         "MATERIAL",
+        "MATERIAL_PARAMS",
         "IMAGE_TEXTURE",
         "IMAGE_SIZE",
         "IMAGE_TINT",
@@ -256,6 +262,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "Filter",
         "BlendMode",
         "Material",
+        "MaterialParams",
         "Image.Texture",
         "Image.Size",
         "Image.Tint",

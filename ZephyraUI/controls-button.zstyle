@@ -89,10 +89,14 @@ Control.button.focused {
  *
  * 半透明填充让按钮「能看见背后」，`material: frosted` 让背后「被糊掉」——
  * 两者合起来才是磨砂玻璃。只写 material 不写 background 会看见**清晰**的
- * 背后（只是没被糊），那是「透明按钮」不是「磨砂按钮」。 */
+ * 背后（只是没被糊），那是「透明按钮」不是「磨砂按钮」。
+ *
+ * `material-params` 是**独立**于 `material` 的参数覆盖：这里把 σ 调到 10px
+ * （默认 6px）—— 磨得更狠一点。不写它就吃默认值。 */
 Control.button.frosted {
     background: @surface_alt_translucent;
     material: frosted;
+    material-params: 10;
 }
 
 Control.button.frosted.hovered {
@@ -103,9 +107,13 @@ Control.button.frosted.hovered {
  *
  * 液态玻璃要的是「透过按钮看见**被弯曲**的背景」，所以填充必须完全透明 ——
  * 不写 `background` 即默认透明（core 读不到 background 时按 `rgba(0,0,0,0)`），
- * 不必显式写 `background: transparent`。 */
+ * 不必显式写 `background: transparent`。
+ *
+ * `material-params` 独立于 `material`：顺序 `<厚度> <倒角> <色散> <折射率>`，
+ * 这里调成厚 26px（默认 20）、倒角 18px（默认 16）、无仍色散、IOR 1.5。 */
 Control.button.glass {
     material: glass;
+    material-params: 26 18 0 1.5;
     border-color: #ffffffb3;
 }
 

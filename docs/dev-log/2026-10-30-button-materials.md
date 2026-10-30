@@ -40,8 +40,8 @@
 
 | 层 | 改动 |
 |---|---|
-| **core** | `Filter` 加 `BackdropBlur { sigma }`（采 `g_dst` + 高斯卷积，不外扩、σ≤0 恒等）；新 `Material` 枚举（`Solid`/`Frosted`/`Glass`，参数藏默认值）；`props::MATERIAL`；`property::PropertyValue::Material`；`Node::filter()` 把材质展开的链**追加**到 `filter:` 链之后（Solid→空，filter-only 行为逐字节不变） |
-| **zstylec** | `props_map` 加 `material`；`value.rs::enum_value` 加 `material:` 的 `solid`/`frosted`/`glass` 三词（**独立于** `filter` 的函数解析） |
+| **core** | `Filter` 加 `BackdropBlur { sigma }`（采 `g_dst` + 高斯卷积，不外扩、σ≤0 恒等）；新 `Material` 枚举（**纯种类**：`Solid`/`Frosted`/`Glass`）+ `MaterialParams`（独立参数覆盖，每字段 `Option`）；`props::MATERIAL` + `props::MATERIAL_PARAMS`；`property::PropertyValue::Material` + `MaterialParams`；`Node::filter()` 把材质按参数展开的链**追加**到 `filter:` 链之后 |
+| **zstylec** | `props_map` 加 `material` / `material-params`；`value.rs` 加 `material:` 的 `solid`/`frosted`/`glass` 三词（**独立于** `filter` 的函数解析）+ `material-params` 的数值列表解析 |
 | **fx** | `OffscreenPass` 加 `backdrop_blur: Option<BackdropBlur>`；`pass_for_chain` 把 `Filter::BackdropBlur` 当合成期参数（读 `g_dst`、`redraw_original=true`、与折射互斥后者覆盖前者）；`backdrop_blur_composite_quad`；`RenderReport::backdrop_blur_passes` |
 | **D3D11 / D3D12** | `PSBackdropBlur`（HLSL，两份手抄同步）→ fxc 编译 `.ps.bin`；`PS_VARIANTS` 加一项；renderer 在合成趟按 `refraction`/`backdrop_blur`/普通三分支选管线，`g_dst` 副本条件合并两者 |
 | **Vulkan** | `fs_backdrop_blur`（WGSL 手抄，与 HLSL 对应）；新管线；`SegmentPlan::Offscreen` 加 `backdrop_blur` 槽；`record_frame` 返回三元组 |
@@ -60,10 +60,30 @@
 4. **液态玻璃不写 `background: transparent`**：不写即默认透明（core 读不到
    background 时按 `rgba(0,0,0,0)`），显式写是噪声。
 
+## 材质参数（`material-params`，独立于 `material`）
+
+`material:` 只选**种类**（`solid`/`frosted`/`glass`），参数由**独立的** `material-params:`
+属性覆盖 —— 两者互不耦合：同一个 `material: glass` 在不同页面可用不同参数；不写
+`material-params` 时用种类自带默认值。
+
+```css
+Control.button.glass { material: glass; material-params: 26 18 0 1.5; }  /* 厚 倒角 色散 IOR */
+Control.button.frosted { material: frosted; material-params: 10; }        /* σ */
+```
+
+- 顺序固定 `<amount> <bezel> <dispersion> <ior>`，少写的项保持 `None`（用默认）。
+- `amount` 是**主调量**：磨砂 = σ；液态玻璃 = 厚度。
+- core 侧：`Material` 变成**纯种类枚举**（不再带参数），参数搬进 `MaterialParams`
+  （每字段 `Option`）；`Material::filter_with(&params)` 展开时逐项 `unwrap_or(默认)`。
+- zstylec：`material-params` 走**独立的数值列表解析**（`parse_material_params`），
+  与 `filter` 的函数语法分开。
+
 ## 已知限制（本轮不做，记账）
 
-- 材质参数（σ / 折射率…）是**固定默认值**，`.zstyle` 不能调浓淡。要调档位时加
-  `material: frosted(2)` 一类语法 + `Material` 档位表。
+- 材质参数的调节是**样式表级**（`material-params` 写死一档），没有 gallery 现场
+  滑块/步进器。要做实时调参，照现有 `glass-params` 面板另加一套 UI。
+- `amount` 在磨砂与液态玻璃里是**同名不同义**（σ / 厚度）—— 因为两者都只有「一个
+  主调量」，合用一个 slot 比给每种材质编一个属性名更省。少见的歧义写进文档。
 - 磨砂玻璃的背景模糊是**单趟二维高斯**（截半径 12 + 步长抽样），不是 H/V 两趟
   乒乓 —— 因为读的是 `g_dst` 全屏副本、拿不到元素自身那条离屏 RT。磨砂到看不出
   细节即可，不追求逐像素精确。
@@ -71,10 +91,13 @@
 
 ## 门禁
 
-- `cargo test -p zephyra-core --lib filter` —— 加 `backdrop_blur_has_no_outset_and_zero_sigma_is_identity`
-  与 `material_expands_to_the_right_filter`（纯色→空链、磨砂→BackdropBlur、玻璃→Refraction）。
+- `cargo test -p zephyra-core --lib filter` —— 加 `backdrop_blur_has_no_outset_and_zero_sigma_is_identity`、
+  `material_expands_to_the_right_filter`（纯色→空链、磨砂→BackdropBlur、玻璃→Refraction）
+  与 `material_params_override_independently`（参数独立覆盖、只给一部分时其余落默认）。
 - `material_property_reaches_command` / `material_and_filter_coexist`（材质展开进
   `Command`，且与 filter 正交共存）。
+- `cargo test -p zstylec` 的 `material_params_parses_a_number_list`（空格/逗号列表、
+  少写项保持 None）。
 - `zephyra-vulkan` 的 `fs_backdrop_blur_exists_and_samples_the_backdrop`（WGSL 入口
   存在 + 采样 `g_dst` + 高斯 + 1px 遮罩）。
 - `zephyra-winit` 的 `shader_assets_are_in_sync`（所有 `.bin` 都比 `zephyra.hlsl` 新

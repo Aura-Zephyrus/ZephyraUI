@@ -66,9 +66,11 @@ CheckBox/Segmented 键盘激活等）的打样。`ToolButton` / `PillButton` 等
 
 **`Button` 支持可插拔材质**（2026-10-30）：`.zstyle` 用 `material:` 声明纯色 /
 磨砂玻璃（`frosted`，背后高斯模糊）/ 液态玻璃（`glass`，背后折射），未声明默认
-纯色。材质是独立属性（与 `filter` 正交），展开成底层滤镜链后交给渲染，三后端不
-感知 `material`。磨砂玻璃的「背景模糊」是本轮**新增**的 `Filter::BackdropBlur`
-（三后端 shader 手抄同步）。用法 `<Button material="frosted"/>`。详见
+纯色。材质**种类**与**参数**分开：`material-params:` 独立调 σ / 厚度 / 倒角 /
+色散 / 折射率（不写用默认）。材质是独立属性（与 `filter` 正交），展开成底层滤镜
+链后交给渲染，三后端不感知 `material`。磨砂玻璃的「背景模糊」是本轮**新增**的
+`Filter::BackdropBlur`（三后端 shader 手抄同步）。用法
+`<Button material="glass"/>` + `.glass { material-params: 26 18 0 1.5; }`。详见
 [2026-10-30-button-materials](../dev-log/2026-10-30-button-materials.md)。
 
 ## 结构整理风险
