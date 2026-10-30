@@ -284,6 +284,11 @@ enum SegmentPlan {
         /// `zephyra_fx::offscreen::refraction_composite_quad` 的文档）。拿不到
         /// 目标副本时退化路径要能挑回 `composite` 那份，所以两份都先建好。
         refraction: Option<(u32, u32)>,
+        /// 背景模糊合成趟的顶点/索引偏移；`None` = 这条命令不做背景模糊。
+        ///
+        /// 与 `refraction` 同形、互斥（`pass_for_chain` 里后写者清前者）：
+        /// 顶点字段约定与普通合成不同（按元素矩形铺 + 元素 SDF 遮罩），所以单独建。
+        backdrop_blur: Option<(u32, u32)>,
         /// 元素在**屏幕**上的内容矩形 —— 折射四边形的几何来源。
         ///
         /// 取命令自己的内容矩形而不是 `pass.bounds`：折射四边形的 `position` 与
@@ -415,6 +420,8 @@ pub struct Renderer {
     composite: vk::Pipeline,
     /// 折射合成趟管线（`fs_refraction`）：画回 MSAA 附件，采样目标副本。
     refraction: vk::Pipeline,
+    /// 背景模糊合成趟管线（`fs_backdrop_blur`）：画回 MSAA 附件，采样目标副本 + 高斯卷积。
+    backdrop_blur: vk::Pipeline,
     /// 描述符池。
     desc_pool: vk::DescriptorPool,
     /// 采样器。
@@ -645,6 +652,16 @@ impl Renderer {
             "fs_refraction",
             src_over_blend(),
         )?;
+        // 背景模糊合成趟：同样的通道 / 采样 / 混合 —— `fs_backdrop_blur` 输出的
+        // 也是**预乘**的模糊背景。
+        let backdrop_blur = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_backdrop_blur",
+            src_over_blend(),
+        )?;
 
         // ── 14 档 PS 变体管线 ──
         // 直通混合（`src_blend`）：片元输出的已经是「与目标混完之后」的最终色，
@@ -711,6 +728,7 @@ impl Renderer {
             blur_v,
             composite,
             refraction,
+            backdrop_blur,
             desc_pool,
             sampler,
             scratch: Scratch::new(),
@@ -1017,6 +1035,7 @@ impl Renderer {
                         blurs: Vec::new(),
                         composite: None,
                         refraction: None,
+                        backdrop_blur: None,
                         element,
                         corner_radius,
                     });
@@ -1066,7 +1085,7 @@ impl Renderer {
             // 先只读地取到要用的数据（克隆 blur 列表与 refraction，其余 Copy），
             // 之后才可变地写回偏移 —— 一次解构里同时拿 `&pass` 与 `&mut blurs`
             // 编译不过。
-            let (blur_steps, bounds, tint, rt_f, refraction, element, corner_radius) =
+            let (blur_steps, bounds, tint, rt_f, refraction, backdrop_blur, element, corner_radius) =
                 match &self.segments[i] {
                     SegmentPlan::Offscreen {
                         pass,
@@ -1079,6 +1098,7 @@ impl Renderer {
                         pass.tint,
                         (pass.rt_size.0 as f32, pass.rt_size.1 as f32),
                         pass.refraction,
+                        pass.backdrop_blur,
                         *element,
                         *corner_radius,
                     ),
@@ -1127,6 +1147,29 @@ impl Renderer {
                 };
                 *slot = Some((vtx_off, idx_off));
             }
+            // 背景模糊合成四边形：套路与折射完全一样（按元素矩形铺 + 元素 SDF），
+            // 只是着色器做高斯卷积而不是位移。两份几何都先建好，录制时按 `pass`
+            // 里哪个 Some 挑 —— 拿不到目标副本时都退化回普通合成。
+            if let Some(bb) = backdrop_blur {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad = zephyra_fx::offscreen::backdrop_blur_composite_quad(
+                    element,
+                    screen_f,
+                    corner_radius,
+                    bb.sigma,
+                );
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen {
+                    backdrop_blur: slot,
+                    ..
+                } = &mut self.segments[i]
+                else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
         }
     }
 
@@ -1135,9 +1178,9 @@ impl Renderer {
     /// 调用方只需 `begin_command_buffer` → 本方法 → `end_command_buffer`；
     /// 所有 `begin_render_pass` 与布局屏障都在这里。
     ///
-    /// 返回 `(unimplemented, refractions)`：前者是退回默认混合的段数，后者是
-    /// 本帧**真正画出**的折射趟数（`RenderReport::refraction_passes` 的记录
-    /// 来源 —— 计划了折射但拿不到目标副本时不计，与 D3D12 同一条语义）。
+    /// 返回 `(unimplemented, refractions, backdrop_blurs)`：前者是退回默认混合的段数，
+    /// 后两者是本帧**真正画出**的折射 / 背景模糊趟数（`RenderReport::refraction_passes`
+    /// / `backdrop_blur_passes` 的记录来源 —— 计划了但拿不到目标副本时不计，与 D3D12 同）。
     ///
     /// # 单采样为什么不拆段
     ///
@@ -1153,7 +1196,7 @@ impl Renderer {
         framebuffer: vk::Framebuffer,
         display_list: &DisplayList,
         default_blend: BlendMode,
-    ) -> (u32, u32) {
+    ) -> (u32, u32, u32) {
         let mut unimplemented = 0u32;
         // 描述符池每帧重置一次（**不是每段一次**）。
         //
@@ -1217,7 +1260,7 @@ impl Renderer {
             unsafe {
                 self.device.cmd_end_render_pass(cmd);
             }
-            return (unimplemented, 0);
+            return (unimplemented, 0, 0);
         }
         // ── 帧首：把 MSAA 转到 COLOR_ATTACHMENT_OPTIMAL ──
         //
@@ -1249,6 +1292,7 @@ impl Renderer {
         // 本帧真正画出的折射趟数（`RenderReport::refraction_passes` 的记录
         // 来源）—— 与「计划了折射」不是一回事：拿不到目标副本时会退化。
         let mut refractions = 0u32;
+        let mut backdrop_blurs = 0u32;
         let segments = std::mem::take(&mut self.segments);
         for seg in &segments {
             match seg {
@@ -1295,6 +1339,7 @@ impl Renderer {
                     blurs,
                     composite,
                     refraction,
+                    backdrop_blur,
                     ..
                 } => {
                     // 每段按**自己的** rt_size 准备 RT（尺寸变了会重建）。
@@ -1324,15 +1369,17 @@ impl Renderer {
                         blurs,
                         *composite,
                         *refraction,
+                        *backdrop_blur,
                         default_blend,
                         &mut unimplemented,
                         &mut refractions,
+                        &mut backdrop_blurs,
                     );
                 }
             }
         }
         self.segments = segments;
-        (unimplemented, refractions)
+        (unimplemented, refractions, backdrop_blurs)
     }
 
     /// 开主通道（MSAA → surface）并设视口/裁剪。
@@ -1452,9 +1499,11 @@ impl Renderer {
         blurs: &[(u32, u32)],
         composite: Option<(u32, u32)>,
         refraction: Option<(u32, u32)>,
+        backdrop_blur: Option<(u32, u32)>,
         default_blend: BlendMode,
         unimplemented: &mut u32,
         refractions: &mut u32,
+        backdrop_blurs: &mut u32,
     ) {
         // ⚠ 必须把 view **拷成局部值**：直接持有 `&self.rt_a` 会让后面
         // `&mut self` 的 `update_descriptor` 借不出来（句柄都是 Copy 的复制品）。
@@ -1570,7 +1619,7 @@ impl Renderer {
         //
         // resolve 是 transfer 类操作，**不能在渲染通道内**录 —— 此刻内容趟与
         // 模糊趟都已 end，正好在通道外。
-        let dst_snapshot = if refraction.is_some() {
+        let dst_snapshot = if refraction.is_some() || backdrop_blur.is_some() {
             self.ensure_dst_rt(gpu, self.size);
             self.dst_rt.as_ref().map(|rt| (rt.image, rt.view, rt.size))
         } else {
@@ -1587,29 +1636,34 @@ impl Renderer {
                 },
             );
         }
-        // 折射与普通合成**互斥**：一次只画一趟。两者在同一块屏幕区域上「贴回」，
-        // 同时画会互相覆盖 —— 症状是折射区域变成模糊结果。
-        let drew_refraction = match (refraction, dst_snapshot) {
-            (Some(_), Some(_)) => true,
-            _ => {
-                // 退化路径：计划了折射但拿不到目标副本（dst_rt 建不出来）⇒
-                // 照常画普通合成，计进 unimplemented。屏幕上有玻璃但没有弯曲，
-                // 与 D3D12 同一条语义 —— 不能让整帧失败。
-                if refraction.is_some() {
-                    *unimplemented += 1;
+        // 折射 / 背景模糊与普通合成**互斥**：一次只画一趟。它们在同一块屏幕区域
+        // 上「贴回」，同时画会互相覆盖 —— 症状是折射区域变成模糊结果。
+        //
+        // 选择顺序：折射 > 背景模糊 > 普通合成。`pass_for_chain` 保证两者互斥，
+        // 这里两个都 Some 时先挑折射（不会发生）。拿不到目标副本时退化。
+        let (pipeline, vtx_off, idx_off, dst_effect) =
+            match (refraction, backdrop_blur, dst_snapshot) {
+                (Some(_), _, Some(_)) => {
+                    let (v, i) = refraction.expect("上面刚匹配过 Some");
+                    (self.refraction, v, i, Some(true))
                 }
-                false
-            }
-        };
-        let (pipeline, vtx_off, idx_off) = if drew_refraction {
-            let (v, i) = refraction.expect("上面刚匹配过 Some");
-            (self.refraction, v, i)
-        } else {
-            let Some((v, i)) = composite else {
-                return;
+                (_, Some(_), Some(_)) => {
+                    let (v, i) = backdrop_blur.expect("上面刚匹配过 Some");
+                    (self.backdrop_blur, v, i, Some(false))
+                }
+                _ => {
+                    // 退化路径：计划了折射/背景模糊但拿不到目标副本（dst_rt 建不出来）
+                    // ⇒ 照常画普通合成，计进 unimplemented。屏幕上有玻璃但没有
+                    // 弯曲/模糊，与 D3D12 同一条语义 —— 不能让整帧失败。
+                    if refraction.is_some() || backdrop_blur.is_some() {
+                        *unimplemented += 1;
+                    }
+                    let Some((v, i)) = composite else {
+                        return;
+                    };
+                    (self.composite, v, i, None)
+                }
             };
-            (self.composite, v, i)
-        };
         self.begin_main_pass(cmd, framebuffer, false);
         if let Ok(desc) = self.update_descriptor(last_view) {
             // set 1 始终绑：`fs_refraction` 采样 `g_dst`（目标副本），拿不到时
@@ -1643,8 +1697,10 @@ impl Renderer {
                     .cmd_bind_index_buffer(cmd, self.index_buffer, 0, vk::IndexType::UINT16);
                 self.device.cmd_draw_indexed(cmd, 6, 1, idx_off, 0, 0);
             }
-            if drew_refraction {
-                *refractions += 1;
+            match dst_effect {
+                Some(true) => *refractions += 1,
+                Some(false) => *backdrop_blurs += 1,
+                None => {}
             }
         }
         unsafe {

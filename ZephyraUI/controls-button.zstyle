@@ -72,6 +72,43 @@ Control.button.focused {
     border-width: 2px;
 }
 
+/* ---- 材质（material）----
+ *
+ * 材质与 background **正交**：
+ * - `material:` 决定「透过按钮看**背后**怎么处理」（背后模糊 / 背后折射 / 不动）；
+ * - `background:` 决定「按钮自己画什么」（实色 / 半透明 / 透明）。
+ *
+ * 未声明 `material` 的按钮 = 纯色（默认，只靠 background）。材质名只写一个词，
+ * 参数（模糊 σ / 折射率…）藏在 core `filter::Material` 的默认值里 —— 见
+ * `docs/todo/control-capability-audit.md` 与 `props::MATERIAL` 的文档。
+ *
+ * 用法：`<Button material="frosted"/>` / `<Button material="glass"/>`。
+ */
+
+/* 模糊透明（磨砂玻璃）：半透明填充 + 背后高斯模糊。
+ *
+ * 半透明填充让按钮「能看见背后」，`material: frosted` 让背后「被糊掉」——
+ * 两者合起来才是磨砂玻璃。只写 material 不写 background 会看见**清晰**的
+ * 背后（只是没被糊），那是「透明按钮」不是「磨砂按钮」。 */
+Control.button.frosted {
+    background: @surface_alt_translucent;
+    material: frosted;
+}
+
+Control.button.frosted.hovered {
+    background: @control_fill_hover;
+}
+
+/* 液态玻璃：不写 background（默认透明）+ 背后折射。
+ *
+ * 液态玻璃要的是「透过按钮看见**被弯曲**的背景」，所以填充必须完全透明 ——
+ * 不写 `background` 即默认透明（core 读不到 background 时按 `rgba(0,0,0,0)`），
+ * 不必显式写 `background: transparent`。 */
+Control.button.glass {
+    material: glass;
+    border-color: #ffffffb3;
+}
+
 Text.btn-label {
     text-size: 15px;
     text-color: @content;

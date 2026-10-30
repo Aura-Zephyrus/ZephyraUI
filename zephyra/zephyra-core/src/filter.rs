@@ -142,6 +142,28 @@ pub enum Filter {
         /// 超出这个区间就不再像玻璃，所以给了上界。
         ior: f32,
     },
+    /// 背景模糊（磨砂玻璃）：把元素**背后**已经画在屏幕上的画面模糊后再透出。
+    ///
+    /// # 与 [`Filter::Blur`] / [`Filter::Refraction`] 的关系
+    ///
+    /// - [`Filter::Blur`] 模糊的是元素**自己**的离屏内容（读 `g_tex`）；
+    ///   本变体模糊的是**背后**的画面（读 `g_dst`）。两者读的纹理不同 ——
+    ///   这与折射（[`Filter::Refraction`]）和 blur 的差别是同一个。
+    /// - [`Filter::Refraction`] 把背后画面**位移**（斯涅尔折射），本变体把背后
+    ///   画面**模糊**。磨砂玻璃（frosted）与液态玻璃（liquid glass）是两种
+    ///   材质 —— 前者软化背景、后者弯曲背景。
+    ///
+    /// # 为什么 σ 用一个而不是两个
+    ///
+    /// 磨砂玻璃的模糊是**各向同性**的（磨砂没有方向），所以只给一个 σ。
+    /// [`Filter::Blur`] 留两个是因为文字选区的水平/垂直柔化需求不同 ——
+    /// 那是"柔化元素自身"，不是"软化背景"。
+    ///
+    /// # 与 `redraw_original` 的关系
+    ///
+    /// 与折射同一条：合成阶段输出的是**被模糊的背景**，不是元素自己 ——
+    /// 所以元素自己的描边 / 文字 / 图标必须在合成**之后**再画一遍。
+    BackdropBlur { sigma: f32 },
 }
 
 impl Filter {
@@ -212,6 +234,12 @@ impl Filter {
             //
             // 所以这里给**零**外扩：离屏 RT 正好等于元素矩形。
             Filter::Refraction { .. } => Outset::default(),
+            // 背景模糊（磨砂玻璃）同样**不外扩** —— 与折射同一个理由：它采样的是
+            // `g_dst`（目标副本 = 元素背后已经画在屏幕上的画面），不是元素自己。
+            // 外扩会把"背景被模糊的区域"扩到元素矩形之外，而那圈里根本没有
+            // 元素的背景可糊 —— 纯浪费，还会在拿不到目标副本时把元素自己的内容
+            // 多画一圈出去。
+            Filter::BackdropBlur { .. } => Outset::default(),
         }
     }
 
@@ -262,6 +290,8 @@ impl Filter {
                 let _ = (bezel, dispersion, ior);
                 !param_active(*strength)
             }
+            // 背景模糊在 σ ≤ 0 时恒等（与 [`Filter::Blur`] 同判据）。
+            Filter::BackdropBlur { sigma } => blur_radius(*sigma) <= 0.0,
         }
     }
 }
@@ -646,6 +676,117 @@ impl BlendMode {
     /// 未初始化的 RT 上（而不必先清）。
     pub fn needs_destination(&self) -> bool {
         !matches!(self, BlendMode::Clear | BlendMode::Src)
+    }
+}
+
+/// 一种**材质**（`material:` 声明的高层语义），与 [`Filter`] 正交。
+///
+/// # 为什么要有材质而不是直接用 [`Filter`]
+///
+/// `filter:` 是**底层效果链**（`blur` / `drop-shadow` / `refraction` …），把
+/// 效果一个接一个排起来。`material:` 是**高层材质语义** —— `.zstyle` 写一个
+/// 词（`solid` / `frosted` / `glass`）就能得到一整块材质，不用记物理参数。
+///
+/// 两者**可共存且正交**：一个节点可以 `filter: drop-shadow(...)`（阴影）+
+/// `material: glass`（液态玻璃底）—— 材质展开成滤镜链，与 `filter:` 那条链
+/// **合并**后交给渲染。材质不覆盖 filter，也不被 filter 覆盖。
+///
+/// # 三种材质
+///
+/// | 材质 | `.zstyle` | 展开成 | 含义 |
+/// |---|---|---|---|
+/// | [`Material::Solid`] | `solid`（默认） | 空链 | 纯色（靠 `background:`）|
+/// | [`Material::Frosted`] | `frosted` | [`Filter::BackdropBlur`] | 磨砂玻璃：背后被模糊 |
+/// | [`Material::Glass`] | `glass` | [`Filter::Refraction`] | 液态玻璃：背后被折射弯曲 |
+///
+/// # 为什么参数藏进默认值、不在 `.zstyle` 暴露
+///
+/// 材质是**纯视觉**的东西。让 `.zstyle` 写 `material: glass` 一个词、而不是
+/// `material: refraction(24px, 20px, 0.3, 1.5)`，是为了「材质」这个概念在
+/// 样式表里是**不可调参的选型**，浓淡/强弱是后续要加档位时的事 —— 见
+/// [`crate::props::MATERIAL`] 的文档。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Material {
+    /// 纯色：不做任何滤镜（默认）。外观全靠 `background:` 填充。
+    #[default]
+    Solid,
+    /// 磨砂玻璃：把元素**背后**的画面高斯模糊后透出。
+    ///
+    /// σ 是标准差（像素），与 [`Filter::Blur`] 同一个语义。默认 6px ——
+    /// 磨砂到能看出"背后是糊的"但不至于糊成一团色块。
+    Frosted { sigma: f32 },
+    /// 液态玻璃：把元素**背后**的画面按斯涅尔折射弯曲后透出。
+    ///
+    /// 参数与 [`Filter::Refraction`] 一一对应。默认值取 gallery 玻璃面板的
+    /// 常用组合：厚度 20px、倒角宽 16px、几乎无色散、IOR 1.5。
+    Glass {
+        strength: f32,
+        bezel: f32,
+        dispersion: f32,
+        ior: f32,
+    },
+}
+
+impl Material {
+    /// 磨砂玻璃的**默认 σ**（像素）。
+    pub const FROSTED_SIGMA: f32 = 6.0;
+    /// 液态玻璃的**默认厚度**（像素）。
+    pub const GLASS_STRENGTH: f32 = 20.0;
+    /// 液态玻璃的**默认倒角带**（像素）。
+    pub const GLASS_BEZEL: f32 = 16.0;
+    /// 液态玻璃的**默认色散**。
+    pub const GLASS_DISPERSION: f32 = 0.0;
+    /// 液态玻璃的**默认折射率**。
+    pub const GLASS_IOR: f32 = 1.5;
+
+    /// 默认材质 = 纯色。
+    pub const fn solid() -> Self {
+        Material::Solid
+    }
+
+    /// 磨砂玻璃，用默认 σ。
+    pub const fn frosted() -> Self {
+        Material::Frosted {
+            sigma: Self::FROSTED_SIGMA,
+        }
+    }
+
+    /// 液态玻璃，用全部默认参数。
+    pub const fn glass() -> Self {
+        Material::Glass {
+            strength: Self::GLASS_STRENGTH,
+            bezel: Self::GLASS_BEZEL,
+            dispersion: Self::GLASS_DISPERSION,
+            ior: Self::GLASS_IOR,
+        }
+    }
+
+    /// 本材质展开成的滤镜链。
+    ///
+    /// - [`Material::Solid`] → 空链（恒等）。
+    /// - [`Material::Frosted`] → 一条 [`Filter::BackdropBlur`]。
+    /// - [`Material::Glass`] → 一条 [`Filter::Refraction`]。
+    ///
+    /// 这条链由 fx 层与 `filter:` 的链**合并**成最终 `FilterChain`（见
+    /// `zephyra_fx`）。三后端只看到合并后的链，不知道 `material` 存在。
+    pub fn filter(&self) -> FilterChain {
+        match self {
+            Material::Solid => FilterChain::none(),
+            Material::Frosted { sigma } => {
+                FilterChain::single(Filter::BackdropBlur { sigma: *sigma })
+            }
+            Material::Glass {
+                strength,
+                bezel,
+                dispersion,
+                ior,
+            } => FilterChain::single(Filter::Refraction {
+                strength: *strength,
+                bezel: *bezel,
+                dispersion: *dispersion,
+                ior: *ior,
+            }),
+        }
     }
 }
 

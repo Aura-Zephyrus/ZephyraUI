@@ -300,6 +300,11 @@
         <RoundButton key="round-a" label="" icon="chevron-up"/>
         <RoundButton key="round-b" label="" icon="close" checked="{true}"/>
       </DemoRow>
+      <DemoRow label="{tr('ui.materials')}">
+        <Button key="act:solid" label="{tr('ui.solid')}" variant="standard"/>
+        <Button key="act:frosted" label="{tr('ui.frosted')}" variant="standard" material="frosted"/>
+        <Button key="act:glass" label="{tr('ui.glass')}" variant="subtle" material="glass"/>
+      </DemoRow>
     </Section>
     <Section key="sec-text" title="{tr('ui.text-input')}">
       <DemoRow label="{tr('ui.text-input-display')}">

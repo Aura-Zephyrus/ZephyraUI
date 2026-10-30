@@ -81,7 +81,7 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// `PSMain` 是默认路径（系数可表达模式走固定功能混合方程，PS 只算源色）；
 /// 紧随其后的 14 个是可分离 / 非可分离混合模式的合成变体（E4.2 / E4.3）。
 /// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
-pub const PS_VARIANTS: [(&str, &[u8]); 19] = [
+pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
     (
         "PSOverlay",
@@ -152,6 +152,10 @@ pub const PS_VARIANTS: [(&str, &[u8]); 19] = [
         "PSRefraction",
         include_bytes!("../shaders/zephyra.PSRefraction.ps.bin"),
     ),
+    (
+        "PSBackdropBlur",
+        include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
+    ),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体。
@@ -191,6 +195,10 @@ pub const PS_COMPOSITE: usize = 17;
 ///
 /// ⚠ 与 [`PS_COMPOSITE`] **互斥**：一条 pass 只走其中之一。
 pub const PS_REFRACTION: usize = 18;
+/// 背景模糊（磨砂玻璃）合成 —— 读 `g_dst` + 二维高斯卷积。
+///
+/// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] **互斥**：一条 pass 只走其中之一。
+pub const PS_BACKDROP_BLUR: usize = 19;
 
 /// 顶点布局表：`(HLSL 语义名, 语义索引, DXGI 格式, 字节偏移)`。
 ///

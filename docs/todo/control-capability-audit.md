@@ -64,6 +64,13 @@ core `ActivationState` 复用 pressed 通道触发点击，应用零改动。它
 CheckBox/Segmented 键盘激活等）的打样。`ToolButton` / `PillButton` 等其余按钮族
 尚未接入，下一步可照同一模式补。
 
+**`Button` 支持可插拔材质**（2026-10-30）：`.zstyle` 用 `material:` 声明纯色 /
+磨砂玻璃（`frosted`，背后高斯模糊）/ 液态玻璃（`glass`，背后折射），未声明默认
+纯色。材质是独立属性（与 `filter` 正交），展开成底层滤镜链后交给渲染，三后端不
+感知 `material`。磨砂玻璃的「背景模糊」是本轮**新增**的 `Filter::BackdropBlur`
+（三后端 shader 手抄同步）。用法 `<Button material="frosted"/>`。详见
+[2026-10-30-button-materials](../dev-log/2026-10-30-button-materials.md)。
+
 ## 结构整理风险
 
 ~~当前同一控件结构存在两种来源。~~ **已于 2026-10-28 收口**（两步提交

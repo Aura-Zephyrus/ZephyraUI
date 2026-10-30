@@ -223,6 +223,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.standard", "Standard"),
     ("en", "ui.accent", "Accent"),
     ("en", "ui.subtle", "Subtle"),
+    ("en", "ui.materials", "Materials"),
+    ("en", "ui.solid", "Solid"),
+    ("en", "ui.frosted", "Frosted"),
+    ("en", "ui.glass", "Glass"),
     ("en", "ui.primary", "Primary"),
     ("en", "ui.pill", "Pill"),
     ("en", "ui.with-icon-round", "With icon / round"),
@@ -414,6 +418,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.standard", "标准"),
     ("zh-Hans", "ui.accent", "强调"),
     ("zh-Hans", "ui.subtle", "低调"),
+    ("zh-Hans", "ui.materials", "材质"),
+    ("zh-Hans", "ui.solid", "纯色"),
+    ("zh-Hans", "ui.frosted", "磨砂"),
+    ("zh-Hans", "ui.glass", "玻璃"),
     ("zh-Hans", "ui.primary", "主要"),
     ("zh-Hans", "ui.pill", "胶囊"),
     ("zh-Hans", "ui.with-icon-round", "带图标 / 圆形"),
@@ -609,6 +617,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.standard", "標準"),
     ("ja", "ui.accent", "アクセント"),
     ("ja", "ui.subtle", "サブトル"),
+    ("ja", "ui.materials", "マテリアル"),
+    ("ja", "ui.solid", "ソリッド"),
+    ("ja", "ui.frosted", "フロスト"),
+    ("ja", "ui.glass", "ガラス"),
     ("ja", "ui.primary", "プライマリ"),
     ("ja", "ui.pill", "ピル"),
     ("ja", "ui.with-icon-round", "アイコン付き / 丸"),
@@ -890,10 +902,13 @@ pub const SELDEMO_IDS: [&str; 3] = ["seldemo:day", "seldemo:week", "seldemo:mont
 ///
 /// ⚠ 新增触发按钮时把 key 加进这张表——漏加的症状是「点了没反应」，
 /// 而门禁 `every_interactive_key_is_wired_or_whitelisted` 会先一步红。
-pub const ACT_IDS: [&str; 13] = [
+pub const ACT_IDS: [&str; 16] = [
     "act:standard",
     "act:accent",
     "act:subtle",
+    "act:solid",
+    "act:frosted",
+    "act:glass",
     "act:send",
     "act:touch-ok",
     "act:touch-bad",

@@ -76,3 +76,34 @@ fn dispersion_offsets_red_and_blue_in_opposite_directions() {
         "色散的两个方向系数不完整 —— R/B 必须沿法线反向拉开，否则色散永不生效"
     );
 }
+
+/// 背景模糊入口必须存在，且采样的是 `g_dst`（背后）而不是 `g_tex`（元素自己）。
+///
+/// 与 `fs_refraction` 同一条手抄纪律：漏了入口，`fs_backdrop_blur` 在 Linux 侧
+/// 整个消失；采样错了纹理，磨砂糊的是元素自己而不是背后，症状是「磨砂像普通模糊」。
+#[test]
+fn fs_backdrop_blur_exists_and_samples_the_backdrop() {
+    assert!(
+        WGSL.contains("fn fs_backdrop_blur(i: VsOut)"),
+        "WGSL 里没有 fs_backdrop_blur 入口 —— 磨砂在 Linux 侧会整个消失"
+    );
+    // 在这个入口的源码段里，采样必须是 g_dst（元素背后），不是 g_tex（元素自己）。
+    let start = WGSL
+        .find("fn fs_backdrop_blur(i: VsOut)")
+        .expect("上面刚断言存在");
+    let body = &WGSL[start..];
+    let end = body.find("\n}").map(|e| e + 2).unwrap_or(body.len());
+    let body = &body[..end];
+    assert!(
+        body.contains("textureSampleLevel(g_dst"),
+        "fs_backdrop_blur 必须采样 g_dst（背后画面），否则磨砂糊的是元素自己"
+    );
+    assert!(
+        body.contains("gauss_weight"),
+        "fs_backdrop_blur 必须用高斯权重做卷积"
+    );
+    assert!(
+        body.contains("let mask = saturate(-d / 1.0);"),
+        "fs_backdrop_blur 的遮罩必须是 1px 抗锯齿带（与折射同一条纪律）"
+    );
+}

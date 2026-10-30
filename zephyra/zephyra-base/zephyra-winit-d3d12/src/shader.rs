@@ -67,7 +67,7 @@ pub const BUILD_COMMAND_HINT: &str = "fxc /nologo /T {vs_5_0|ps_5_0} /E <Entry>"
 /// 决定**，放在一起反而会让两边互相牵制。
 ///
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
-pub const PS_VARIANTS: [(&str, &[u8]); 19] = [
+pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
     (
         "PSOverlay",
@@ -138,6 +138,10 @@ pub const PS_VARIANTS: [(&str, &[u8]); 19] = [
         "PSRefraction",
         include_bytes!("../shaders/zephyra.PSRefraction.ps.bin"),
     ),
+    (
+        "PSBackdropBlur",
+        include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
+    ),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
@@ -176,6 +180,10 @@ pub const PS_COMPOSITE: usize = 17;
 /// 两条同时对同一块屏幕做"贴回"会互相覆盖 —— 症状是折射区域变成了模糊结果，
 /// 而两者各自的单测都是绿的（它们本来就不该同时出现）。
 pub const PS_REFRACTION: usize = 18;
+/// 背景模糊（磨砂玻璃）合成 —— 读 `g_dst` + 二维高斯卷积。
+///
+/// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] **互斥**：一条 pass 只走其中之一。
+pub const PS_BACKDROP_BLUR: usize = 19;
 
 /// D3D12 那边不再有单一 `PS_BYTECODE`：见 [`PS_VARIANTS`]。
 ///

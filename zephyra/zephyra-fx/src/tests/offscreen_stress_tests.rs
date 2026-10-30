@@ -455,6 +455,8 @@ fn stress_pass_for_chain_step_table_matches_the_filters() {
                     exp_redraw = true;
                 }
                 Filter::Refraction { .. } => exp_redraw = true,
+                // 背景模糊与折射同：合成输出的是背景，原命令要之后再画一遍。
+                Filter::BackdropBlur { .. } => exp_redraw = true,
             }
         }
         assert_eq!(p.blurs.len(), exp_blurs, "seed {seed}: 趟数对不上");

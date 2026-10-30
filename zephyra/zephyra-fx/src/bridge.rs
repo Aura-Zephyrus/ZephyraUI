@@ -843,6 +843,7 @@ pub fn value_to_text(v: &zephyra_core::property::PropertyValue) -> String {
         PropertyValue::Layer(v) => format!("{v:?}"),
         PropertyValue::Filter(v) => format!("{v:?}"),
         PropertyValue::BlendMode(v) => format!("{v:?}"),
+        PropertyValue::Material(v) => format!("{v:?}"),
         PropertyValue::UvRect(v) => format!("{v:?}"),
         // 类型擦除载荷没有稳定文本：只标存在性。真正要读它的宿主应该
         // 注册成字符串属性，而不是指望调试器看穿 `dyn Any`。

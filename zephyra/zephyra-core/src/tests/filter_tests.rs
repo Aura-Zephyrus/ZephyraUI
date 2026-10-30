@@ -377,6 +377,48 @@ fn refraction_without_thickness_is_the_identity() {
     );
 }
 
+/// 背景模糊（磨砂玻璃）**不外扩**离屏矩形，σ ≤ 0 时恒等。
+///
+/// # 为什么不外扩
+///
+/// 与折射同一个理由：`BackdropBlur` 合成趟采的是 `g_dst`（目标的**全屏**副本），
+/// 不是离屏 RT 里元素自己的内容。外扩会让"背景被模糊的区域"扩到元素矩形之外，
+/// 而那圈里根本没有元素的背景可糊 —— 纯浪费。
+#[test]
+fn backdrop_blur_has_no_outset_and_zero_sigma_is_identity() {
+    let f = Filter::BackdropBlur { sigma: 6.0 };
+    assert_eq!(f.outsets(), Outset::default(), "背景模糊不外扩（与折射同）");
+    assert!(!f.is_identity(), "σ>0 非恒等");
+
+    let f = Filter::BackdropBlur { sigma: 0.0 };
+    assert!(f.is_identity(), "σ=0 恒等（与 Blur 同判据）");
+}
+
+/// 材质展开成滤镜链：纯色→空、磨砂→BackdropBlur、液态玻璃→Refraction。
+#[test]
+fn material_expands_to_the_right_filter() {
+    use crate::filter::Material;
+
+    assert!(
+        Material::solid().filter().is_identity(),
+        "纯色不产生任何滤镜（恒等空链）"
+    );
+
+    let frosted = Material::frosted().filter();
+    assert_eq!(frosted.filters().len(), 1);
+    assert!(
+        matches!(frosted.filters()[0], Filter::BackdropBlur { .. }),
+        "磨砂展开成 BackdropBlur"
+    );
+
+    let glass = Material::glass().filter();
+    assert_eq!(glass.filters().len(), 1);
+    assert!(
+        matches!(glass.filters()[0], Filter::Refraction { .. }),
+        "液态玻璃展开成 Refraction"
+    );
+}
+
 /// 折射**不外扩**离屏矩形。
 ///
 /// # 为什么

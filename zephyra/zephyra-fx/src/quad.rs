@@ -615,6 +615,12 @@ pub struct RenderReport {
     /// 判据：用了折射的页面 `refraction_passes > 0`；且它与
     /// `offscreen_passes` 之差恰好是模糊趟数。
     pub refraction_passes: usize,
+    /// 本次**真的画出**了背景模糊（磨砂玻璃）趟的次数（`Filter::BackdropBlur`）。
+    ///
+    /// 与 [`Self::refraction_passes`] 对称：两者都是"读 `g_dst` 的合成期效果"，
+    /// 共用离屏 pass 的计数，所以需要一个**正面**计数区分"磨砂到底跑没跑"。
+    /// 判据：用了磨砂材质的页面 `backdrop_blur_passes > 0`。
+    pub backdrop_blur_passes: usize,
     /// 因找不到注册钩子（或处于几何展开层——它画不出自绘内容）而**未执行**的
     /// 外部渲染源命令数（`Command::Custom`）。
     ///
@@ -652,6 +658,7 @@ impl RenderReport {
         self.unimplemented_blends += other.unimplemented_blends;
         self.offscreen_passes += other.offscreen_passes;
         self.refraction_passes += other.refraction_passes;
+        self.backdrop_blur_passes += other.backdrop_blur_passes;
         self.reallocated |= other.reallocated;
         // `vertex_bytes` 取**最大值**而不是求和：所有段共用同一个顶点缓冲，而它
         // 记的是"这次写了多少字节"，不是"这一帧总共写了几次"。

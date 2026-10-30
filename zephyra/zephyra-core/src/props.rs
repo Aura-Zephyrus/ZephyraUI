@@ -174,6 +174,28 @@ pub static FILTER: PropertyKey = PropertyKey::new(
     PropertyValue::filter(crate::filter::FilterChain::none()),
 );
 
+/// 材质：一种**高层**表面语义（纯色 / 磨砂玻璃 / 液态玻璃），与 [`FILTER`] 正交。
+///
+/// # 为什么独立于 [`FILTER`]
+///
+/// `filter:` 是底层效果链（`blur` / `drop-shadow` / `refraction` …），把效果
+/// 一个接一个排起来；`material:` 是高层的**材质选型**（`solid` / `frosted` /
+/// `glass`），一个词对应一整块表面处理。两者**可共存且互不覆盖**：一个节点可以
+/// `filter: drop-shadow(...)`（阴影）+ `material: glass`（玻璃底）—— 展开时
+/// 材质变一条滤镜、与 `filter:` 的链合并。
+///
+/// # 为什么参数不进样式表
+///
+/// 材质是**纯视觉**的选型，`.zstyle` 只写 `material: frosted` 一个词，不用记
+/// 厚度/σ/折射率。参数藏进 [`crate::filter::Material`] 的默认值，浓淡强弱是
+/// 后续要加档位时的事。
+///
+/// 不可继承：与 [`FILTER`] 同理 —— "这块表面怎么处理"是节点自己的事。
+pub static MATERIAL: PropertyKey = PropertyKey::new(
+    "Material",
+    PropertyValue::material(crate::filter::Material::solid()),
+);
+
 /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]，即普通 alpha 合成）。
 ///
 /// 同样不可继承：混合模式描述的是"这一项与它**下面**那层的合成方式"，而"下面"

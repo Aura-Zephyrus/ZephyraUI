@@ -189,6 +189,11 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "blend-mode",
         key: &props::BLEND_MODE,
     },
+    // 材质：高层表面语义（solid / frosted / glass），与 filter 正交。
+    Prop {
+        css: "material",
+        key: &props::MATERIAL,
+    },
     // ---- 图像 / 图标 ----
     Prop {
         css: "image-texture",

@@ -311,11 +311,30 @@ impl Node {
     /// `FilterChain` 内部是 `Vec`，借不出`&[Filter]`——`value()` 返回的
     /// `Option<&PropertyValue>` 借到的是外层枚举。复制一条空链不分配，只有
     /// 真的有滤镜时才分配一次。
+    ///
+    /// # 与 `MATERIAL` 的合并
+    ///
+    /// `material:` 是高层表面选型，展开成一条滤镜链后**追加**到 `filter:` 的链
+    /// 之后——两者读不同纹理（`filter` 的 `blur` 读元素自身、`material` 的
+    /// `BackdropBlur`/`Refraction` 读背景 `g_dst`），顺序不影响结果。两者正交：
+    /// 一个节点可以 `filter: drop-shadow(...)` + `material: glass`。
+    ///
+    /// [`crate::filter::Material::Solid`] 展开成**空链**，所以「只写了 filter」
+    /// 与「没写 material」的节点，返回的链逐字节不变。
     pub fn filter(&self, ctx: Context<'_>) -> crate::filter::FilterChain {
-        match self.value(&crate::props::FILTER, ctx).as_deref() {
+        let mut chain = match self.value(&crate::props::FILTER, ctx).as_deref() {
             Some(PropertyValue::Filter(f)) => f.clone(),
             _ => crate::filter::FilterChain::none(),
+        };
+        // 材质展开成滤镜链，并进 filter 之后。Solid ⇒ 空，不进任何一项。
+        if let Some(PropertyValue::Material(m)) =
+            self.value(&crate::props::MATERIAL, ctx).as_deref()
+        {
+            for f in m.filter().filters() {
+                chain = chain.then(*f);
+            }
         }
+        chain
     }
 
     /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]）。

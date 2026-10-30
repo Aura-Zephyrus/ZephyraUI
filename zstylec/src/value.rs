@@ -293,6 +293,21 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
     };
     let eq = |s: &str| s.eq_ignore_ascii_case(word);
 
+    // 材质：一个词 = 一整块表面。参数藏进 `Material` 的默认值（见其文档）。
+    if key.name() == "Material" {
+        use zephyra_core::filter::Material;
+        if eq("solid") {
+            return Some(PropertyValue::material(Material::solid()));
+        }
+        if eq("frosted") {
+            return Some(PropertyValue::material(Material::frosted()));
+        }
+        if eq("glass") {
+            return Some(PropertyValue::material(Material::glass()));
+        }
+        return None;
+    }
+
     if key.name() == "Position" {
         if eq("static") {
             return Some(PropertyValue::position(Position::Static));

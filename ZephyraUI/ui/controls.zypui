@@ -14,8 +14,8 @@
      - 可选图标位用 if cond="icon"：实参缺省即假。
      - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。 -->
 
-<component name="Button" params="label icon variant">
-  <control class="button {variant} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}" interactive="true" focusable="true" activatable="true">
+<component name="Button" params="label icon variant material">
+  <control class="button {variant} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}" interactive="true" focusable="true" activatable="true">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-icon"/>
     </if>

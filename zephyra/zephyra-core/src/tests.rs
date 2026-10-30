@@ -1154,6 +1154,104 @@ mod effect_contract {
         assert_eq!(filters[0].outsets().left, 6.0, "σ=2 ⇒ 3σ = 6");
     }
 
+    /// `props::MATERIAL` 展开成滤镜链并进 `Command`（与 `FILTER` 正交）。
+    #[test]
+    fn material_property_reaches_command() {
+        use crate::filter::Material;
+
+        let rect = || {
+            Element::new(NodeTag::Container).with_key("root").with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+            )
+        };
+
+        // 磨砂 → BackdropBlur。
+        let frosted = rect().with(
+            &crate::props::MATERIAL,
+            PropertyValue::material(Material::frosted()),
+        );
+        let cmd_filter = |e: &Element| {
+            render_of(e)
+                .iter()
+                .find_map(|i| match &i.command {
+                    Command::Quad { filter, .. } => Some(filter.clone()),
+                    _ => None,
+                })
+                .expect("根节点应产出 Quad")
+        };
+        let f = cmd_filter(&frosted);
+        assert!(
+            f.filters()
+                .iter()
+                .any(|x| matches!(x, Filter::BackdropBlur { .. })),
+            "materials::frosted 应展开出 BackdropBlur"
+        );
+
+        // 液态玻璃 → Refraction。
+        let glass = rect().with(
+            &crate::props::MATERIAL,
+            PropertyValue::material(Material::glass()),
+        );
+        let f = cmd_filter(&glass);
+        assert!(
+            f.filters()
+                .iter()
+                .any(|x| matches!(x, Filter::Refraction { .. })),
+            "materials::glass 应展开出 Refraction"
+        );
+
+        // 纯色 → 空链（恒等）。
+        let solid = rect().with(
+            &crate::props::MATERIAL,
+            PropertyValue::material(Material::solid()),
+        );
+        assert!(
+            cmd_filter(&solid).is_identity(),
+            "materials::solid 不应产生任何滤镜"
+        );
+    }
+
+    /// 材质与 filter 正交：同一节点同时声明两者，筛出的链里两条都在。
+    #[test]
+    fn material_and_filter_coexist() {
+        use crate::filter::Material;
+        let el = Element::new(NodeTag::Container)
+            .with_key("root")
+            .with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+            )
+            .with(
+                &crate::props::FILTER,
+                PropertyValue::filter(FilterChain::single(Filter::Blur {
+                    sigma_x: 1.0,
+                    sigma_y: 1.0,
+                })),
+            )
+            .with(
+                &crate::props::MATERIAL,
+                PropertyValue::material(Material::glass()),
+            );
+        let f = render_of(&el)
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Quad { filter, .. } => Some(filter.clone()),
+                _ => None,
+            })
+            .expect("根节点应产出 Quad");
+        assert!(
+            f.filters().iter().any(|x| matches!(x, Filter::Blur { .. })),
+            "filter 的 Blur 仍在"
+        );
+        assert!(
+            f.filters()
+                .iter()
+                .any(|x| matches!(x, Filter::Refraction { .. })),
+            "material 的 Refraction 也在"
+        );
+    }
+
     /// 走完 声明 → 布局 → 渲染，且带上图标集。
     fn render_with_icons(element: &Element, icons: &'static IconSet) -> DisplayList {
         let theme = Theme::dark();

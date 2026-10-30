@@ -297,6 +297,26 @@ pub struct OffscreenPass {
     ///
     /// 它是一个**合成期**参数：合成阶段同时能拿到 RT 结果与背景副本。
     pub refraction: Option<Refraction>,
+    /// 背景模糊（磨砂玻璃）参数；`None` = 这条链不做背景模糊。
+    ///
+    /// # 为什么与 `refraction` 并列而不是复用它
+    ///
+    /// 两者都读 `g_dst`、都在合成期执行，但**着色器完全不同**：折射按 SDF 法线
+    /// 做斯涅尔位移，背景模糊做各向同性高斯卷积。一次合成只能选一种（它们都
+    /// "替换"了背景那块区域）—— 所以是**互斥**的两个字段，不是可叠加的列表。
+    /// 一条链里同时写 `material: glass` + `material: frosted` 时后者覆盖前者
+    /// （与 `tint` 同一条"就地替换"语义）。
+    pub backdrop_blur: Option<BackdropBlur>,
+}
+
+/// 背景模糊（磨砂玻璃）的执行参数。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BackdropBlur {
+    /// 标准差（像素），**不是**半径。着色器内部自己乘 3 得到半径。
+    ///
+    /// 与 [`zephyra_core::filter::Filter::BackdropBlur`] 的 `sigma` 同名同义 ——
+    /// 中间任何一步做了重复的 `×SIGMA_TO_RADIUS` 换算，误差会直接体现在模糊宽度上。
+    pub sigma: f32,
 }
 
 /// 折射（液态玻璃）的执行参数。
@@ -373,6 +393,7 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
     let mut offset = zephyra_core::core::Point::new(0.0, 0.0);
     let mut redraw_original = false;
     let mut refraction = None;
+    let mut backdrop_blur = None;
 
     // `filters[0]` 最先执行 —— 见 `FilterChain` 的顺序语义。
     for f in filter.filters() {
@@ -411,10 +432,19 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
                     dispersion: *dispersion,
                     ior: *ior,
                 });
+                backdrop_blur = None;
                 // ⚠ 合成阶段输出的是**被扰动的背景**，不是这个元素本身 ——
                 // 所以元素自己的描边 / 文字 / 图标必须在合成**之后**再画一遍。
                 // 与 `DropShadow` 同一条理由（那是"额外一层"），但方向相反：
                 // 投影是"原图在影子之上"，折射是"原图在扰动过的背景之上"。
+                redraw_original = true;
+            }
+            zephyra_core::filter::Filter::BackdropBlur { sigma } => {
+                // 与折射同一个形态：合成阶段输出的是**被模糊的背景**，元素自己的
+                // 描边/文字/图标之后由 `redraw_original` 再画一遍。两者互斥 ——
+                // 谁出现在链里靠后，谁就是最终合成那趟（就地替换语义）。
+                backdrop_blur = Some(BackdropBlur { sigma: *sigma });
+                refraction = None;
                 redraw_original = true;
             }
         }
@@ -435,6 +465,7 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
         tint,
         redraw_original,
         refraction,
+        backdrop_blur,
     }
 }
 
@@ -641,6 +672,53 @@ pub fn refraction_composite_quad(
         color: [refraction.dispersion, refraction.bezel, refraction.ior, 1.0],
         // x = 圆角半径，y = 玻璃厚度
         corner: [corner_radius, refraction.strength],
+        half_size: half,
+        kind: crate::quad::kind::BLUR,
+    };
+    [
+        v([x0, y0], [0.0, 0.0]),
+        v([x1, y0], [ew, 0.0]),
+        v([x1, y1], [ew, eh]),
+        v([x0, y1], [0.0, eh]),
+    ]
+}
+
+/// 背景模糊合成趟的铺满四边形。
+///
+/// 与 [`refraction_composite_quad`] 同一套顶点字段约定（`local`/`half_size` 是
+/// **元素**的、`uv` 是元素内归一化、屏幕 uv 由着色器从 `ndc` 推），差别只在
+/// 参数塞法：折射把 `corner.y` 当玻璃厚度、`color` 前三通道当色散/倒角/IOR；
+/// 背景模糊只有一个 σ，塞进 `corner.y`，`color` 留常量。
+///
+/// 几何同样只铺**元素矩形**（理由见 [`refraction_composite_quad`] 的文档：
+/// 四边形必须与 `local` 覆盖同一块区域，否则整幅画面都成了磨砂）。
+pub fn backdrop_blur_composite_quad(
+    element_screen: Rect,
+    dst_size: (f32, f32),
+    corner_radius: f32,
+    sigma: f32,
+) -> [crate::quad::Vertex; 4] {
+    let ew = element_screen.width.max(1e-6);
+    let eh = element_screen.height.max(1e-6);
+    let sw = dst_size.0.max(1e-6);
+    let sh = dst_size.1.max(1e-6);
+    let (x0, x1) = (
+        element_screen.x / sw * 2.0 - 1.0,
+        (element_screen.x + element_screen.width) / sw * 2.0 - 1.0,
+    );
+    let (y0, y1) = (
+        1.0 - element_screen.y / sh * 2.0,
+        1.0 - (element_screen.y + element_screen.height) / sh * 2.0,
+    );
+    let half = [ew * 0.5, eh * 0.5];
+    let v = |position: [f32; 2], local: [f32; 2]| crate::quad::Vertex {
+        position,
+        local,
+        uv: [local[0] / ew, local[1] / eh],
+        // 背景模糊不染色，`color` 留常量。
+        color: [0.0, 0.0, 0.0, 1.0],
+        // x = 圆角半径，y = σ。
+        corner: [corner_radius, sigma],
         half_size: half,
         kind: crate::quad::kind::BLUR,
     };

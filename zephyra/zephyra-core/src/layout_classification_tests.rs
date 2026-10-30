@@ -104,6 +104,11 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
     (&props::LAYER, false, "只影响排序"),
     (&props::FILTER, false, "滤镜不改变布局盒（离屏范围另算）"),
     (&props::BLEND_MODE, false, "只影响合成"),
+    (
+        &props::MATERIAL,
+        false,
+        "材质展开成滤镜（背后模糊/折射），不改布局盒",
+    ),
     (&props::IMAGE_TEXTURE, false, "只决定画哪张图"),
     (
         &props::IMAGE_SIZE,
@@ -194,6 +199,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "LAYER",
         "FILTER",
         "BLEND_MODE",
+        "MATERIAL",
         "IMAGE_TEXTURE",
         "IMAGE_SIZE",
         "IMAGE_TINT",
@@ -249,6 +255,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "Layer",
         "Filter",
         "BlendMode",
+        "Material",
         "Image.Texture",
         "Image.Size",
         "Image.Tint",

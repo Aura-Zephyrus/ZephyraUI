@@ -1585,8 +1585,11 @@ impl Renderer {
         // 折射读的是"元素背后已经画在屏幕上的画面"，所以拷贝的时机必须是
         // **元素自己的内容被合上去之前** —— 那正是此刻。晚一步拷到的就是
         // 元素自己，症状是"玻璃边缘把元素自己的轮廓糊开"。
-        let refraction_srv = match pass.refraction {
-            Some(_) => match self.refresh_dst_copy(device, context, env.rtv, env.size) {
+        // 折射与背景模糊**都**读 `g_dst`（元素背后的目标副本），所以任一种存在
+        // 就要拷一份。两者互斥（`pass_for_chain` 里后写者清前者），一次只画一趟。
+        let needs_dst = pass.refraction.is_some() || pass.backdrop_blur.is_some();
+        let dst_copy = match needs_dst {
+            true => match self.refresh_dst_copy(device, context, env.rtv, env.size) {
                 Some(srv) => Some(srv),
                 None => {
                     // 建不出副本 ⇒ 降级成普通合成，而不是让整帧失败。
@@ -1594,7 +1597,7 @@ impl Renderer {
                     None
                 }
             },
-            None => None,
+            false => None,
         };
         let final_rt = if src_is_a { &a } else { &b };
         // ⚠ 这里**不**先调 `bind_target`：那会绑回目标，然后 `draw_pass_quad`
@@ -1605,36 +1608,35 @@ impl Renderer {
         // 所以删掉那句 `bind_target` 之后全部测试仍然通过 —— 变异测试把它抓出来
         // 才确认它是死代码。真正需要"重绑目标"的是**投影那一步**的重画原图
         // （那里不走 `draw_pass_quad`），见 `render` 里的说明。）
-        // 折射与普通合成**互斥**：一次只画一趟。两者都在同一块屏幕区域上
-        // "贴回"，同时画会互相覆盖 —— 症状是折射区域变成了模糊结果。
+        // 折射 / 背景模糊与普通合成**互斥**：一次只画一趟。三者都在同一块屏幕
+        // 区域上"贴回"，同时画会互相覆盖 —— 症状是折射区域变成了模糊结果。
         let screen = env.size_as_f32();
-        let (q, ps, dst_srv) = match (pass.refraction, refraction_srv) {
-            (Some(r), Some(srv)) => {
-                // 元素在 RT 里的子矩形 = 内容矩形原点 - RT 原点。
-                // ⚠ 这是折射**唯一**的坐标系换算处；算错时折射仍"有效果"，
-                // 只是边缘高光整体偏移 —— 肉眼极难察觉，所以两侧都取自
-                // `OffscreenPass` 已算好的量，不在这里重算。
-                // 元素在**屏幕**上的内容矩形。理由见 D3D12 那份调用点的注释：
-                // 四边形必须与 `local` / `half_size` 覆盖**同一块区域**，
-                // 否则四边形越出元素的那一圈里 `local` 仍落在 `[0, ew]` 内、
-                // SDF 判成「内部」，于是整幅画面都被当成了玻璃。
-                let content =
-                    zephyra_core::paint::command_content_rect(&item.command).unwrap_or(pass.bounds);
-                (
-                    offscreen::refraction_composite_quad(
-                        content,
-                        screen,
-                        zephyra_core::paint::command_corner_radius(&item.command),
-                        r,
-                    ),
-                    crate::shader::PS_REFRACTION,
-                    Some(srv),
-                )
-            }
+        // 元素在**屏幕**上的内容矩形。四边形必须与 `local` / `half_size` 覆盖
+        // **同一块区域**，否则四边形越出元素的那一圈里 `local` 仍落在 `[0, ew]` 内、
+        // SDF 判成「内部」，于是整幅画面都被当成了玻璃。
+        let content =
+            zephyra_core::paint::command_content_rect(&item.command).unwrap_or(pass.bounds);
+        let corner = zephyra_core::paint::command_corner_radius(&item.command);
+        // 第 4 项标记"这一趟是折射还是背景模糊"，用来计正确的正面计数。
+        let (q, ps, dst_srv, is_refraction) = match (pass.refraction, pass.backdrop_blur, dst_copy)
+        {
+            (Some(r), _, Some(srv)) => (
+                offscreen::refraction_composite_quad(content, screen, corner, r),
+                crate::shader::PS_REFRACTION,
+                Some(srv),
+                true,
+            ),
+            (_, Some(bb), Some(srv)) => (
+                offscreen::backdrop_blur_composite_quad(content, screen, corner, bb.sigma),
+                crate::shader::PS_BACKDROP_BLUR,
+                Some(srv),
+                false,
+            ),
             _ => (
                 offscreen::composite_quad(pass.bounds, screen, pass.rt_size_as_f32(), pass.tint),
                 crate::shader::PS_COMPOSITE,
                 None,
+                false,
             ),
         };
         // 合成输出的是**预乘**颜色（`Vertex::quad` 已经把顶点色预乘，而
@@ -1642,9 +1644,13 @@ impl Renderer {
         // `SrcOver`（`ONE / INV_SRC_ALPHA`），也就是 `blends[3]`。
         //
         // ⚠ 计数在**调用之前**取：`dst_srv` 是不是 `Some` 在上面那个 match
-        // 里已经决定了这一趟走不走 `PSRefraction`，它不会在这两行之间变。
+        // 里已经决定了这一趟走不走折射 / 背景模糊，它不会在这两行之间变。
         if dst_srv.is_some() {
-            report.refraction_passes += 1;
+            if is_refraction {
+                report.refraction_passes += 1;
+            } else {
+                report.backdrop_blur_passes += 1;
+            }
         }
         // 命令自己的混合模式在**合成趟**生效 —— 滤镜链的结果与已画内容按它合成。
         //
