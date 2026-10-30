@@ -18,6 +18,7 @@
 //! - [`mod@pointer`]：事件词汇表 + 固定容量指针表
 //! - [`mod@text`]：键盘 / 字符 / 输入法（IME）事件词汇表
 //! - [`mod@focus`]：焦点状态机（Tab 顺序、圈闭、FOCUSED 属性写入）
+//! - [`mod@activation`]：键盘激活状态机（焦点落在 ACTIVATABLE 节点上时 Space/Enter 闩住 pressed）
 //! - [`pinch`]：两指捏合（增量语义 + 平方域容差）
 //! - [`recognizer`]：单入口手势状态机
 //! - [`viewport`]：屏幕 ↔ 内容坐标变换（缩放钳位的唯一来源）
@@ -29,6 +30,7 @@
 //! 与 [`crate::input::router`] 的事。分开的原因：手势是可复用的底层语义，
 //! 而"哪个控件被点了"必须结合布局矩形才有意义。
 
+pub mod activation;
 pub mod focus;
 pub mod momentum;
 pub mod pinch;
@@ -38,6 +40,7 @@ pub mod router;
 pub mod text;
 pub mod viewport;
 
+pub use activation::ActivationState;
 pub use focus::FocusState;
 pub use momentum::Momentum;
 pub use pinch::PinchDelta;

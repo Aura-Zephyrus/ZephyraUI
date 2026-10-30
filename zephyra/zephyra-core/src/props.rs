@@ -312,6 +312,19 @@ pub static FOCUSABLE: PropertyKey = PropertyKey::new("Focusable", PropertyValue:
 /// 控件层读它决定"要不要显示光标 / 焦点环"，`view()` 时查自己的 key 即可。
 pub static FOCUSED: PropertyKey = PropertyKey::new("Focused", PropertyValue::bool(false));
 
+/// 是否**可激活**：拥有键盘焦点时，Space / Enter 触发点击（等价一次指针点击）。
+///
+/// # 为什么与 [`FOCUSABLE`] 分开
+///
+/// WinUI 的 `KeyPress::ButtonBase::IsPress` 把 Space / Enter 当指针按下，但这条语义
+/// 只属于**按钮**一类。文本框同样可聚焦（[`FOCUSABLE`]），可它的 Space 是**插入一个
+/// 空格**而不是触发提交。若把「可激活」并进「可聚焦」，焦点一旦落到输入框，打空格
+/// 就会误触发——一个焦点系统建好之后**最先**会踩的坑。
+///
+/// 所以聚焦回答「Tab 该不该停在这」，激活回答「停在这时空格/回车意味着什么」，
+/// 两个问题两个属性。控件层同时声明两者即成一个键盘可达的按钮。
+pub static ACTIVATABLE: PropertyKey = PropertyKey::new("Activatable", PropertyValue::bool(false));
+
 /// 未使用的占位，避免 `CornerRadius` 导入被判定为 dead code。
 ///
 /// `CornerRadius` 目前只作为文档语义出现（绘制命令用的是裸 `f32` 半径），

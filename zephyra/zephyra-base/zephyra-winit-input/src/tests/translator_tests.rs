@@ -16,6 +16,7 @@ fn edit_keys_map_to_semantic_keys() {
         (NamedKey::Delete, Key::Delete),
         (NamedKey::Enter, Key::Enter),
         (NamedKey::Escape, Key::Escape),
+        (NamedKey::Space, Key::Space),
         (NamedKey::Tab, Key::Tab),
         (NamedKey::ArrowLeft, Key::Left),
         (NamedKey::ArrowRight, Key::Right),
@@ -41,6 +42,15 @@ fn edit_key_count_matches_name_table() {
     // 13 = `Key` 里除 `Other` 之外的变体数。少一个说明映射表漏了。
     assert_eq!(Key::PageDown.as_str(), "PageDown");
     assert_eq!(Key::Backspace.as_str(), "Backspace");
+}
+
+#[test]
+fn space_maps_to_a_semantic_key_with_a_stable_name() {
+    // 空格是激活键（与 Enter 一起触发按钮点击），必须是语义键而不是 `Other`。
+    assert_eq!(key_from_logical(&WKey::Named(NamedKey::Space)), Key::Space);
+    assert_eq!(Key::Space.as_str(), "Space");
+    // MCP `press_key "Space"` 走规范名回环，名字要一致。
+    assert_eq!(key_name(&WKey::Named(NamedKey::Space)), "Space");
 }
 
 #[test]

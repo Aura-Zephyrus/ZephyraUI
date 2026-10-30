@@ -15,7 +15,7 @@
      - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。 -->
 
 <component name="Button" params="label icon variant">
-  <control class="button {variant} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control class="button {variant} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}" interactive="true" focusable="true" activatable="true">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-icon"/>
     </if>
@@ -506,8 +506,8 @@
 
 <!-- 单行输入框。children 槽位给 AutoSuggestBox 追加建议列表用
      （Rust 版 field.with_children([list]) 同一形态）。 -->
-<component name="TextField" params="value placeholder focused">
-  <control class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+<component name="TextField" params="value placeholder">
+  <control class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true" focusable="true">
     <text key="text" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
     <if cond="value != ''">
       <control key="field:clear" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}" interactive="true">

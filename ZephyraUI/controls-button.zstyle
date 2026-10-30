@@ -62,6 +62,16 @@ Control.button.accent.pressed {
     background: @accent_fill;
 }
 
+/* 焦点环：键盘 Tab/点击把焦点停在这颗按钮上时描一圈。
+ *
+ * 与 text-field 的 `.focused` 同一套度量（`@focus_ring` + 2px）。焦点环与
+ * hovered/pressed 是**正交**的两维——一个按钮可以既被悬停又有焦点，所以
+ * `focused` 不进 pressed/hovered 那条三元链，而是独立的一条规则。 */
+Control.button.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
 Text.btn-label {
     text-size: 15px;
     text-color: @content;

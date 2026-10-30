@@ -155,6 +155,8 @@ pub struct UseNode {
 /// | `icon` | [`zephyra_core::props::ICON_NAME`] | 字符串（内置图标名） |
 /// | `collapsed` | [`zephyra_core::props::COLLAPSED`] | 布尔 |
 /// | `interactive` | [`zephyra_core::props::INTERACTIVE`] | 布尔 |
+/// | `focusable` | [`zephyra_core::props::FOCUSABLE`] | 布尔 —— 进 Tab 顺序、能获键盘焦点 |
+/// | `activatable` | [`zephyra_core::props::ACTIVATABLE`] | 布尔 —— 有焦点时空格/回车触发点击 |
 /// | `texture` | [`zephyra_core::props::IMAGE_TEXTURE`] | 字符串（纹理句柄） |
 /// | `uv` | [`zephyra_core::props::IMAGE_SRC`] | `x,y,w,h` 四个数 |
 /// | `width` / `height` | `WIDTH` / `HEIGHT` | 数值 —— **仅限 `fill:` 键**
@@ -169,6 +171,8 @@ pub const BARE_ATTRS: &[&str] = &[
     "icon",
     "collapsed",
     "interactive",
+    "focusable",
+    "activatable",
     "texture",
     "uv",
     "width",

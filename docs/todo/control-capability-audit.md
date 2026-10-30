@@ -23,7 +23,7 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 
 | 组件 | 当前行为 | 未实现 / 降级能力 | 建议重写目标 |
 |---|---|---|---|
-| `TextField` | 显示调用方提供的值或 placeholder；`focused` 是调用方传入的样式状态；清除按钮只提供可命中的 key | 无可编辑缓冲、键盘焦点、光标、选区、键入与 IME；宿主必须自行处理输入并回传新值 | 建立可接入宿主输入事件的编辑状态、焦点与 IME 契约；明确受控/非受控模型 |
+| `TextField` | 显示调用方提供的值或 placeholder；`focused` 用框架焦点系统（Tab/点击设焦点）；清除按钮只提供可命中的 key | 无可编辑缓冲、键盘焦点、光标、选区、键入与 IME；宿主必须自行处理输入并回传新值 | 建立可接入宿主输入事件的编辑状态、焦点与 IME 契约；明确受控/非受控模型 |
 | `TextArea` | 将调用方提供的字符串切成静态文本行 | 无编辑、光标、选区、换行输入或键盘焦点 | 与 `TextField` 共用编辑模型，再提供多行布局 |
 | `ScrollableTextArea` | 显示文本区和按 `ratio` 计算高度的滚动 thumb | thumb 仅是视觉件；内容不会滚动，滚轮不会更新偏移 | 接入滚动偏移、视口裁剪、滚轮/触控滚动和真实 thumb 映射 |
 | `AutoSuggestBox` | 输入框下方以内联子节点显示建议列表；`open`、选中项和文字由调用方提供 | 不是浮层；没有锚定定位、键盘导航或内建输入查询 | 接入可编辑输入状态、键盘候选选择和窗口/视口约束下的弹层定位 |
@@ -50,12 +50,19 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 
 以下组件也不会自行切换业务状态，但这是控件层的声明式边界，不应单独据此判为无效：
 
-- `Button`、`ToolButton`、`PillButton`、`RoundButton`、`Hyperlink`
+- `ToolButton`、`PillButton`、`RoundButton`、`Hyperlink`
 - `CheckBox`、`RadioButton`、`ToggleSwitch`、`Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
 - `Slider`、`Expander`、`SettingExpander`、`InfoBar` 的关闭项
 - `MenuItem`、`MenuBarItem`、`ListView` 行、`SwipeView` 页点、`DatePicker` 日期格
 
 这些组件提供 `key` / `INTERACTIVE` / 状态样式所需的结构；点击、拖动、键盘或关闭后要做什么，以及新状态何时回到 `view()`，属于使用它们的应用。**但 `Slider` 目前只有传值与绘制 fill 的结构，不会把拖动位置反算成值**，因此与普通受控按钮不同，仍在上方列为需要补足的交互能力。
+
+**`Button` 已从「纯受控声明」升级为有原生交互行为的控件**（2026-10-30）：
+声明 `focusable` / `activatable` 进 Tab 序，焦点环走 `focused` 类；Space / Enter 经
+core `ActivationState` 复用 pressed 通道触发点击，应用零改动。它是第一个消费
+「键盘/IME 契约 + 焦点状态机」地基的控件，也是后续重写（TextField 编辑态、
+CheckBox/Segmented 键盘激活等）的打样。`ToolButton` / `PillButton` 等其余按钮族
+尚未接入，下一步可照同一模式补。
 
 ## 结构整理风险
 
@@ -75,10 +82,13 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 1. **先补基础能力**：输入/IME/焦点与 Overlay/Popup 管理。它们决定文本框、菜单、对话框、建议列表等控件能否有真实行为。
    - ✅ **键盘 / 字符 / IME 事件契约已完成**（2026-10-28）：core 定
      `TextEvent`（`Key` / `Char` / `Ime` 三通道），三宿主共用
-     `zephyra-winit-input` 翻译。控件层**尚未消费**它 —— 那是下一步。
-   - ✅ **焦点状态机已完成**（2026-10-28）：core 新建 `input::focus`
-     （`FocusState`），props 加 `FOCUSABLE` / `FOCUSED`，Tab 按深度优先移动并圈闭。
-     **宿主尚未接入**（三个 `host.rs` 还没持有它，控件层还没消费 FOCUSED）。
+     `zephyra-winit-input` 翻译。
+   - ✅ **焦点状态机已完成并接入**（2026-10-28 状态机；2026-10-30 三宿主接线）：
+     core 新建 `input::focus`（`FocusState`），props 加 `FOCUSABLE` / `FOCUSED`，
+     Tab 按深度优先移动并圈闭；三宿主已持有并驱动它，控件层以 `focused` 内置词消费。
+   - ✅ **键盘激活已完成**（2026-10-30）：core 新建 `input::activation`
+     （`ActivationState`），props 加 `ACTIVATABLE`；Space / Enter 复用 pressed 通道
+     触发点击。`Button` 是第一个消费它的控件（见「依赖应用状态」一节）。
    - ⬜ Overlay / Popup 管理仍是空白（`Layer::Popup` 零生产者）。
 2. **再补滚动与裁剪**：Scroll、Clip/Mask 与手势。随后重写列表、文本区、日期/时间选择器和 SwipeView。
 3. **最后补专用呈现**：弧线/进度环、动画时钟、系统 Acrylic 或明确的静态降级命名。

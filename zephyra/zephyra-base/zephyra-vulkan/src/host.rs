@@ -49,6 +49,8 @@ pub struct HostWindow<V: View> {
     translator: zephyra_winit_input::Translator,
     /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
     focus: zephyra_core::input::FocusState,
+    /// 键盘激活状态机：焦点落在 ACTIVATABLE 节点上时 Space/Enter 闩住 pressed。
+    activation: zephyra_core::input::ActivationState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     dirty: bool,
     engine: std::cell::RefCell<TextEngine>,
@@ -166,6 +168,7 @@ impl<V: View> HostWindow<V> {
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
             focus: zephyra_core::input::FocusState::new(),
+            activation: zephyra_core::input::ActivationState::new(),
             pending_scroll: None,
             dirty: true,
             engine: std::cell::RefCell::new(engine),
@@ -517,7 +520,14 @@ impl<V: View> HostWindow<V> {
         self.last_frame_at = Some(now);
         let state = InputState {
             hovered: self.router.hovered().cloned(),
-            pressed: self.router.pressed().cloned(),
+            // 键盘激活复用指针的 pressed 通道（指针优先）—— Space 按住时模板出
+            // 按下态、抬起时归空，与应用既有的「上帧按着→这帧松了 = 点击」重建逻辑
+            // 同构，应用零改动。
+            pressed: self
+                .router
+                .pressed()
+                .or_else(|| self.activation.held())
+                .cloned(),
             focused: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
@@ -719,6 +729,22 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.translator
                     .key_events(&event, &mut self.pending_text_events);
+                // 键盘激活（Space/Enter）**当帧**生效，与下面的 Tab 同理：核心状态机
+                // 自己判「这个键是不是激活键、焦点节点可不可激活」，宿主只递键边沿。
+                {
+                    let kp = zephyra_winit_input::KeyParts::from(&event);
+                    let key_input = self.translator.key(kp);
+                    let focused = self.focus.focused().cloned();
+                    let node = self.cache.node();
+                    if let Some(true) = self.activation.on_key(
+                        &key_input,
+                        node,
+                        focused.as_ref(),
+                        Context::new(self.theme),
+                    ) {
+                        self.dirty = true;
+                    }
+                }
                 // Tab 移焦点是**当帧**就该生效的：用户按 Tab 期望立刻看到焦点环
                 // 跳到下一个控件。
                 if event.state == winit::event::ElementState::Pressed {
@@ -738,10 +764,12 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             WindowEvent::Focused(false) => {
                 // 窗口失焦：焦点必须清空（否则回来后旧焦点还亮着，且按键全落到
                 // 一个看不见的节点上）。`clear` 会写回 FOCUSED=false 到旧节点。
+                // 激活闩也清（与 D3D11 / D3D12 宿主一致）。
                 if let Some(node) = self.cache.node_mut() {
                     self.focus.clear(Some(node));
                     self.dirty = true;
                 }
+                self.activation.clear();
             }
             WindowEvent::Ime(ime) => {
                 // 插入点：焦点系统还没建，用最近一次指针位置当代理（用户点进

@@ -950,6 +950,8 @@ pub struct Gallery {
     pub pressed: Option<ElementKey>,
     /// 上一帧的 pressed —— 用来还原 click。
     pub last_pressed: Option<ElementKey>,
+    /// 当前拥有键盘焦点的 key（来自 InputState）。模板据此发 `focused` 类。
+    pub focused: Option<ElementKey>,
     /// 想要深色主题（意图；宿主执行）。
     pub wants_dark: bool,
     /// 主题意图的共享格（窗口路用；dump 路直接读 `wants_dark`）。
@@ -1297,6 +1299,7 @@ impl Default for Gallery {
             hovered: None,
             pressed: None,
             last_pressed: None,
+            focused: None,
             wants_dark: true,
             theme_intent: None,
             seg: "seg:grid",
@@ -1387,6 +1390,9 @@ impl Gallery {
     }
     pub fn holds(&self, key: &str) -> bool {
         self.pressed.as_ref().and_then(|k| k.as_name()) == Some(key)
+    }
+    pub fn is_focused(&self, key: &str) -> bool {
+        self.focused.as_ref().and_then(|k| k.as_name()) == Some(key)
     }
 
     /// 应用一次 click（按下与抬起落在同一 key 上）。
@@ -1665,6 +1671,7 @@ impl View for Gallery {
         self.last_pressed = state.pressed.clone();
         self.hovered = state.hovered.clone();
         self.pressed = state.pressed.clone();
+        self.focused = state.focused.clone();
 
         // 入场动画时钟。
         //
@@ -1917,5 +1924,9 @@ impl zypui::Host for Gallery {
 
     fn holds(&self, key: &str) -> bool {
         Gallery::holds(self, key)
+    }
+
+    fn is_focused(&self, key: &str) -> bool {
+        Gallery::is_focused(self, key)
     }
 }

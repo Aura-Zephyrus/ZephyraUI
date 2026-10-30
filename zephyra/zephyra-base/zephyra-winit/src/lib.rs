@@ -142,6 +142,9 @@ pub struct HostWindow<V: View> {
     translator: zephyra_winit_input::Translator,
     /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
     focus: zephyra_core::input::FocusState,
+    /// 键盘激活状态机：焦点落在 ACTIVATABLE 节点上时 Space/Enter 闩住 pressed。
+    /// 与 [`Self::focus`] 同址跨帧持有；结果并进 `pressed` 通道（见 `sync_input`）。
+    activation: zephyra_core::input::ActivationState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
@@ -259,6 +262,7 @@ impl<V: View> HostWindow<V> {
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
             focus: zephyra_core::input::FocusState::new(),
+            activation: zephyra_core::input::ActivationState::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
             dirty: true,
@@ -497,7 +501,14 @@ impl<V: View> HostWindow<V> {
         self.last_frame_at = Some(now);
         self.view.on_input(&InputState {
             hovered: self.router.hovered().cloned(),
-            pressed: self.router.pressed().cloned(),
+            // 键盘激活复用指针的 pressed 通道：指针优先，键盘闩作后备。于是
+            // Space 按住时模板出按下态、抬起时归空——与指针按下完全同构，应用
+            // 既有的「上帧按着→这帧松了 = 点击」重建逻辑自动为键盘触发。
+            pressed: self
+                .router
+                .pressed()
+                .or_else(|| self.activation.held())
+                .cloned(),
             focused: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
@@ -1042,6 +1053,25 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.translator
                     .key_events(&event, &mut self.pending_text_events);
+                // 键盘激活（Space/Enter）**当帧**生效，与下面的 Tab 同理：用户按
+                // 空格期望立刻看到按下态，攒到下一帧 sync_input 会慢一拍。核心状态机
+                // 自己判「这个键是不是激活键、焦点节点可不可激活」，宿主只把键边沿递
+                // 过去——于是「Space/Enter 触发点击」的语义全仓只有一份（core）。
+                {
+                    let kp = zephyra_winit_input::KeyParts::from(&event);
+                    let key_input = self.translator.key(kp);
+                    let focused = self.focus.focused().cloned();
+                    let node = self.cache.node();
+                    let theme = self.theme;
+                    if let Some(true) = self.activation.on_key(
+                        &key_input,
+                        node,
+                        focused.as_ref(),
+                        Context::new(theme),
+                    ) {
+                        self.dirty = true;
+                    }
+                }
                 if event.state == ElementState::Pressed {
                     // Tab 移焦点是**当帧**就该生效的（不像字符/命令要等下一帧
                     // sync_input 才进 InputState）：用户按 Tab 期望立刻看到焦点环
@@ -1080,10 +1110,13 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             WindowEvent::Focused(false) => {
                 // 窗口失焦：焦点必须清空（否则回来后旧焦点还亮着，且按键全落到
                 // 一个看不见的节点上）。`clear` 会写回 FOCUSED=false 到旧节点。
+                // 激活闩也要清（与 WinUI `OnLostFocus` 清 `m_bIsSpaceOrEnterKeyDown`
+                // 一致）：否则失焦时若 Space 正按着，`held` 一直指着旧节点。
                 if let Some(node) = self.cache.node_mut() {
                     self.focus.clear(Some(node));
                     self.dirty = true;
                 }
+                self.activation.clear();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (delta_x, delta_y) = match delta {

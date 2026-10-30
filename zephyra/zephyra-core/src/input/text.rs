@@ -92,6 +92,12 @@ pub enum Key {
     Delete,
     Enter,
     Escape,
+    /// 空格。与 [`Key::Enter`] 一起构成**控件激活键**（WinUI 的
+    /// `KeyPress::ButtonBase::IsPress`：Space 与 Enter 等价于指针按下）。
+    ///
+    /// 单列出来而不是塞进 [`Key::Other`]：按钮要靠它触发点击，而 `Other` 的身份
+    /// 住在运行期 `name` 里、要字符串比较——激活是热路径上的语义判断，不该退化成比串。
+    Space,
     Tab,
     Left,
     Right,
@@ -124,6 +130,7 @@ impl Key {
             Key::Delete => "Delete",
             Key::Enter => "Enter",
             Key::Escape => "Escape",
+            Key::Space => "Space",
             Key::Tab => "Tab",
             Key::Left => "ArrowLeft",
             Key::Right => "ArrowRight",
@@ -148,6 +155,7 @@ impl Key {
             "Delete" => Key::Delete,
             "Enter" | "NumpadEnter" => Key::Enter,
             "Escape" => Key::Escape,
+            "Space" => Key::Space,
             "Tab" => Key::Tab,
             "ArrowLeft" => Key::Left,
             "ArrowRight" => Key::Right,

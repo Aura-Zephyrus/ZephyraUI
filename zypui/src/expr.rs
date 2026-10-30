@@ -9,7 +9,7 @@
 //! | 写法 | 含义 |
 //! |---|---|
 //! | `'text'` / `3.5` / `true` | 字面量 |
-//! | `hover` / `press` | 当前实例 key 的悬停/按住（内置词，见 [`BUILTINS`]） |
+//! | `hover` / `press` / `focused` | 当前实例 key 的悬停/按住/焦点（内置词，见 [`BUILTINS`]） |
 //! | `name` | 组件实参或 `for` 变量（作用域链解析） |
 //! | `@name` | 宿主绑定（路由、开关状态、文案外的应用数据） |
 //! | `tr("key")` | i18n 取文案（唯一内置调用，其余的等真需求出现再加） |
@@ -93,9 +93,10 @@ pub enum Expr {
 ///   实例化器维护：进入带 key 的组件实例或元素时更新，子树共享 ——
 ///   与现状 Rust 控件「调用方把 hovered 传进构造器、构造器扇出给子节点」
 ///   是同一条数据流。
+/// - `focused`：当前实例 key 是否拥有键盘焦点（模板据此发 `focused` 分类名做焦点环）。
 /// - `key`：当前实例 key 本身（字符串）。expander 家族的「可点区域 key =
 ///   实例 key」场景用（模板内固定 key 会同页撞名）。
-pub const BUILTINS: &[&str] = &["hover", "press", "key"];
+pub const BUILTINS: &[&str] = &["hover", "press", "focused", "key"];
 
 /// 内置调用名。
 ///
@@ -106,4 +107,7 @@ pub const BUILTINS: &[&str] = &["hover", "press", "key"];
 /// - `at(list, i)`：按下标取列表元素（分格布局：日历的 `r*7+c`）。
 /// - `hover(k)` / `press(k)`：**指定 key** 的悬停/按住 —— 数据驱动列表的
 ///   逐项状态（`hover('td:00')`）；无参形式用内置词 `hover` / `press`。
-pub const CALLS: &[&str] = &["tr", "min", "max", "range", "str", "at", "hover", "press"];
+/// - `focused(k)`：**指定 key** 的焦点（同上，逐项焦点环）。
+pub const CALLS: &[&str] = &[
+    "tr", "min", "max", "range", "str", "at", "hover", "press", "focused",
+];

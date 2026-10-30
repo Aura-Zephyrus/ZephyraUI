@@ -1013,6 +1013,10 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
 /// 于是 `position: absolute; left: 120px;`（只给 X）会横向钉到 120、
 /// 纵向仍跟着兄弟往下排——这正是 CSS 的行为，也是「X、Y 单独赋值或计算」。
 /// 绝对子项**不推进正常流游标**（它不占位）。
+// `too_many_arguments` 是刻意放过的：8 个参数是布局一趟的**全部输入**——节点、
+// 栈方向/交叉对齐、原点、可用尺寸、游标起点、间隙、上下文。把它们各自包成结构体
+// 会新增一层中间类型，且与「arrange 参数就是测量趟的输出」的语义相悖。
+#[allow(clippy::too_many_arguments)]
 fn arrange_flow(
     node: &mut Node,
     stack: Stack,

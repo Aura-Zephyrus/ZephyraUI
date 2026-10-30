@@ -77,6 +77,8 @@ pub fn eval(expr: &Expr, scope: &Scope, ctx: &mut Ctx) -> Val {
                 // 内置词：当前实例 key 的输入状态。
                 "hover" => Val::B(ctx.host.hovers(ctx.cur_key)),
                 "press" => Val::B(ctx.host.holds(ctx.cur_key)),
+                // 当前实例是否拥有键盘焦点（模板据此发 `focused` 分类名做焦点环）。
+                "focused" => Val::B(ctx.host.is_focused(ctx.cur_key)),
                 // 当前实例 key 本身（expander 家族的「可点区域 = 实例 key」）。
                 "key" => Val::S(ctx.cur_key),
                 // 声明了但**没传值**的组件实参落在这里：合法，缺省即假
@@ -134,16 +136,16 @@ pub fn eval(expr: &Expr, scope: &Scope, ctx: &mut Ctx) -> Val {
                     _ => Val::B(false),
                 }
             }
-            "hover" | "press" => {
+            "hover" | "press" | "focused" => {
                 let key = args
                     .first()
                     .map(|a| eval(a, scope, ctx))
                     .and_then(|v| v.as_str())
                     .unwrap_or(ctx.cur_key);
-                if *name == "hover" {
-                    Val::B(ctx.host.hovers(key))
-                } else {
-                    Val::B(ctx.host.holds(key))
+                match *name {
+                    "hover" => Val::B(ctx.host.hovers(key)),
+                    "press" => Val::B(ctx.host.holds(key)),
+                    _ => Val::B(ctx.host.is_focused(key)),
                 }
             }
             "str" => {

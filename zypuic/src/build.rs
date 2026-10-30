@@ -29,7 +29,7 @@ use zypui::ir::BARE_ATTRS;
 use zypui::ir::{ClassTok, Component, ElementNode, ForNode, IfNode, Node, Page, RawUi, UseNode};
 
 /// 保留字：不能当组件参数名。
-const RESERVED: &[&str] = &["key", "class", "hover", "press"];
+const RESERVED: &[&str] = &["key", "class", "hover", "press", "focused"];
 
 /// 把全部文件的 XML 树构建成一个 [`RawUi`]。
 ///

@@ -365,6 +365,16 @@ impl Node {
         self.flag(&crate::props::FOCUSED, ctx)
     }
 
+    /// 是否**可激活**：拥有焦点时 Space / Enter 触发点击（见 [`crate::props::ACTIVATABLE`]）。
+    pub fn is_activatable(&self, ctx: Context<'_>) -> bool {
+        self.flag(&crate::props::ACTIVATABLE, ctx)
+    }
+
+    /// 是否禁用。禁用节点不响应指针点击，也不参与键盘激活（见 [`crate::props::DISABLED`]）。
+    pub fn is_disabled(&self, ctx: Context<'_>) -> bool {
+        self.flag(&crate::props::DISABLED, ctx)
+    }
+
     /// 读一个颜色属性，解析其中的资源键。
     pub(crate) fn color(
         &self,

@@ -123,6 +123,13 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
     (&props::INTERACTIVE, false, "只影响命中测试与状态"),
     (&props::SELECTED, false, "只影响状态"),
     (&props::DISABLED, false, "只影响状态"),
+    (&props::FOCUSABLE, false, "只决定进不进 Tab 顺序"),
+    (&props::FOCUSED, false, "只影响焦点环绘制"),
+    (
+        &props::ACTIVATABLE,
+        false,
+        "只决定 Space/Enter 能否触发点击",
+    ),
 ];
 
 #[test]
@@ -201,6 +208,9 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "INTERACTIVE",
         "SELECTED",
         "DISABLED",
+        "FOCUSABLE",
+        "FOCUSED",
+        "ACTIVATABLE",
     ];
     let pinned: Vec<&str> = EXPECTED.iter().map(|(k, _, _)| k.name()).collect();
     // ⚠ `DECLARED` 记的是 Rust 的**静态名**，`key.name()` 是**属性字符串**，两者不同，
@@ -253,6 +263,9 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "Interactive",
         "Selected",
         "Disabled",
+        "Focusable",
+        "Focused",
+        "Activatable",
     ];
     for n in NAMES {
         assert!(

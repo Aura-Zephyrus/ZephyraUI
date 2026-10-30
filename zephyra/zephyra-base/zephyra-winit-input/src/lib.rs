@@ -279,6 +279,9 @@ fn named_key(named: NamedKey) -> Key {
         NamedKey::Delete => Key::Delete,
         NamedKey::Enter => Key::Enter,
         NamedKey::Escape => Key::Escape,
+        // 空格是**激活键**（与 Enter 一起触发按钮点击），升为语义键而不是落
+        // `Key::Other`——激活是热路径上的判断，不该退化成运行期比串。
+        NamedKey::Space => Key::Space,
         NamedKey::Tab => Key::Tab,
         NamedKey::ArrowLeft => Key::Left,
         NamedKey::ArrowRight => Key::Right,

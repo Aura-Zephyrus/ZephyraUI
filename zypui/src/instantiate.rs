@@ -51,6 +51,15 @@ pub trait Host {
     fn hovers(&self, key: &str) -> bool;
     /// `key` 是否正被按住。
     fn holds(&self, key: &str) -> bool;
+    /// `key` 是否拥有键盘焦点（供模板发 `focused` 分类名做焦点环）。
+    ///
+    /// 与 [`Self::hovers`] / [`Self::holds`] 同构：模板据此扇出 `focused` 类，
+    /// `.zstyle` 才能按分类名给它加焦点边框——`.zstyle` 选择器只认类型名与分类名，
+    /// 不匹配 [`zephyra_core::props::FOCUSED`] 属性。
+    fn is_focused(&self, key: &str) -> bool {
+        let _ = key;
+        false
+    }
 
     /// 按 `.zypui` 的 `render-source="kind"` 查找宿主拥有的载荷。
     ///
@@ -268,6 +277,10 @@ fn build_node(
                     "collapsed" => el_el.with(&props::COLLAPSED, PropertyValue::bool(v.truthy())),
                     "interactive" => {
                         el_el.with(&props::INTERACTIVE, PropertyValue::bool(v.truthy()))
+                    }
+                    "focusable" => el_el.with(&props::FOCUSABLE, PropertyValue::bool(v.truthy())),
+                    "activatable" => {
+                        el_el.with(&props::ACTIVATABLE, PropertyValue::bool(v.truthy()))
                     }
                     "uv" => match uv_of(&v) {
                         Some(r) => el_el.with(&props::IMAGE_SRC, PropertyValue::UvRect(r)),
