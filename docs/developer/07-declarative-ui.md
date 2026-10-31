@@ -33,6 +33,9 @@ build.rs: zypuic::compile(&[("ui/demo.zypui", src)]) → OUT_DIR/*.zypui.bin
 XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`（其它
 标签名按组件引用处理）。全部展开成裸元素树，没有运行时组件对象。
 
+排版（属性顺序、一元素一行、缩进）另有规范：[zypui-style](zypui-style.md)。
+那五条**不是语义** —— 编译器不管，判据是一条扫描全仓 `.zypui` 的测试。
+
 ### key 与分类名
 
 ```xml

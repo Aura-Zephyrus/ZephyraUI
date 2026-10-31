@@ -24,6 +24,11 @@ pub mod xml;
 #[cfg(test)]
 mod tests;
 
+// 排版门禁：扫仓内全部 `.zypui`（不是内联样例），所以单独一个文件。
+#[cfg(test)]
+#[path = "tests/style_gate_tests.rs"]
+mod style_gate_tests;
+
 pub use xml::{Diag, Level, XEl, XNode};
 
 use zypui::RawUi;

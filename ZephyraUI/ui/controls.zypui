@@ -15,7 +15,7 @@
      - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。 -->
 
 <component name="Button" params="label icon variant material">
-  <control class="button {variant} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}" interactive="true" focusable="true" activatable="true">
+  <control interactive="true" focusable="true" activatable="true" class="button {variant} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-icon"/>
     </if>
@@ -24,13 +24,13 @@
 </component>
 
 <component name="ToolButton" params="icon">
-  <control class="tool-button {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="tool-button {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="icon" icon="{icon}" class="{press ? 'pressed' : (hover ? 'hovered' : '')} tool-icon"/>
   </control>
 </component>
 
 <component name="PillButton" params="label icon checked">
-  <control class="pill {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="pill {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-icon"/>
     </if>
@@ -83,7 +83,7 @@
       <text key="title" text="{title}" class="expander-title"/>
       <container key="chevron" icon="chevron-down" class="expander-chevron {expanded ? 'open' : 'closed'}"/>
     </container>
-    <container key="content" class="expander-content" collapsed="{!expanded}">
+    <container key="content" collapsed="{!expanded}" class="expander-content">
       <children/>
     </container>
   </container>
@@ -99,7 +99,7 @@
 
 <!-- 选中族共用骨架：指示器 + 标记常驻（状态不增删节点）。 -->
 <component name="CheckBox" params="label checked">
-  <control class="check-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="check-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="indicator" class="check-indicator {checked ? 'checked'}">
       <container key="mark" class="check-mark {checked ? 'checked'}"/>
     </container>
@@ -108,7 +108,7 @@
 </component>
 
 <component name="RadioButton" params="label checked">
-  <control class="radio-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="radio-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="indicator" class="radio-indicator {checked ? 'checked'}">
       <container key="mark" class="radio-dot {checked ? 'checked'}"/>
     </container>
@@ -117,7 +117,7 @@
 </component>
 
 <component name="ToggleSwitch" params="checked">
-  <control class="switch {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="switch {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="track" class="switch-track {checked ? 'on'}">
       <container key="knob" class="switch-knob"/>
     </container>
@@ -126,9 +126,9 @@
 
 <!-- 填充宽是内容几何（fill: 键例外）；轨道宽常量与样式表门禁对齐。 -->
 <component name="Slider" params="value01 label">
-  <control class="slider {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="slider {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="track" class="slider-track">
-      <container key="fill:slider" class="slider-fill" width="{min(max(value01, 0.0), 1.0) * 220.0}"/>
+      <container key="fill:slider" width="{min(max(value01, 0.0), 1.0) * 220.0}" class="slider-fill"/>
       <container key="thumb" class="slider-thumb"/>
     </container>
     <if cond="label">
@@ -138,8 +138,8 @@
 </component>
 
 <component name="ProgressBar" params="value01 state">
-  <control class="progress" interactive="true">
-    <container key="fill:progress" class="progress-fill {state}" width="{min(max(value01, 0.0), 1.0) * 240.0}"/>
+  <control interactive="true" class="progress">
+    <container key="fill:progress" width="{min(max(value01, 0.0), 1.0) * 240.0}" class="progress-fill {state}"/>
   </control>
 </component>
 
@@ -155,7 +155,7 @@
 </component>
 
 <component name="NavItem" params="label icon selected compact">
-  <control class="nav-item {selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="nav-item {selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="bar" class="nav-bar {selected ? 'selected'}"/>
     <container key="icon" icon="{icon}" class="{selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')} nav-icon"/>
     <text key="label" text="{label}" collapsed="{compact}" class="{selected ? 'selected'} {compact ? 'compact'} {press ? 'pressed' : (hover ? 'hovered' : '')} nav-label"/>
@@ -176,7 +176,7 @@
 </component>
 
 <component name="MenuItem" params="label checked arrow">
-  <container class="menu-item {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <container interactive="true" class="menu-item {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="check" class="menu-check {checked ? 'checked'}"/>
     <text key="label" text="{label}" class="menu-item-label"/>
     <container key="arrow" icon="chevron-down" class="menu-arrow {arrow ? 'on'}"/>
@@ -195,7 +195,7 @@
 </component>
 
 <component name="NavSubItem" params="label icon selected">
-  <control class="nav-sub {selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="nav-sub {selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <container key="indent" class="nav-indent"/>
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{selected ? 'selected'} {press ? 'pressed' : (hover ? 'hovered' : '')} sub-icon"/>
@@ -244,11 +244,11 @@
     <!-- collapsed 是「有则设 true」：closable 时不设该属性（与 Rust 版
          `if !closable { with(COLLAPSED, true) }` 同形，空 false 也是多余属性）。 -->
     <if cond="closable">
-      <control key="bar:close" class="bar-close" interactive="true">
+      <control key="bar:close" interactive="true" class="bar-close">
         <container key="icon" icon="close" class="bar-close-icon"/>
       </control>
       <else>
-        <control key="bar:close" class="bar-close" interactive="true" collapsed="true">
+        <control key="bar:close" interactive="true" collapsed="true" class="bar-close">
           <container key="icon" icon="close" class="bar-close-icon"/>
         </control>
       </else>
@@ -292,7 +292,7 @@
 <!-- 根类序 [round, round, …]：Rust 版 style("round") + 类表里的 "round"
      各出现一次 —— 忠实复刻现状，parity 对照按此。 -->
 <component name="RoundButton" params="label icon checked">
-  <control class="round round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="round round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-icon"/>
     </if>
@@ -301,14 +301,14 @@
 </component>
 
 <component name="Hyperlink" params="text url">
-  <control class="hyperlink {hover ? 'hovered' : ''}" interactive="true" url="{url}">
+  <control interactive="true" url="{url}" class="hyperlink {hover ? 'hovered' : ''}">
     <text key="label" text="{text}" class="{hover ? 'hovered' : ''} hyperlink-label"/>
     <container key="underline" class="{hover ? 'hovered' : ''} link-underline"/>
   </control>
 </component>
 
 <component name="DropDownButton" params="label icon open">
-  <control class="drop-down drop-down {open ? 'open'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="drop-down drop-down {open ? 'open'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="dd-icon"/>
     </if>
@@ -318,7 +318,7 @@
 </component>
 
 <component name="ComboBox" params="value">
-  <control class="combo-box {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="combo-box {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <text key="value" text="{value}" class="combo-value"/>
     <container key="chevron" icon="chevron-down" class="combo-chevron"/>
   </control>
@@ -327,12 +327,12 @@
 <!-- 步进钮的 hover/press 基准是它们自己的 key（与 Rust 版一致：
      调用方按 "spin:up"/"spin:down" 查输入态）。 -->
 <component name="SpinBox" params="value">
-  <control class="spin-box {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="spin-box {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <text key="value" text="{value}" class="spin-value"/>
-    <control key="spin:up" class="spin-step {press('spin:up') ? 'pressed' : (hover('spin:up') ? 'hovered' : '')}" interactive="true">
+    <control key="spin:up" interactive="true" class="spin-step {press('spin:up') ? 'pressed' : (hover('spin:up') ? 'hovered' : '')}">
       <container key="icon" icon="chevron-up" class="spin-step-icon"/>
     </control>
-    <control key="spin:down" class="spin-step {press('spin:down') ? 'pressed' : (hover('spin:down') ? 'hovered' : '')}" interactive="true">
+    <control key="spin:down" interactive="true" class="spin-step {press('spin:down') ? 'pressed' : (hover('spin:down') ? 'hovered' : '')}">
       <container key="icon" icon="chevron-down" class="spin-step-icon"/>
     </control>
   </control>
@@ -426,7 +426,7 @@
       </container>
       <container key="chevron" icon="chevron-down" class="setting-chevron {expanded ? 'open'}"/>
     </container>
-    <container key="content" class="setting-content" collapsed="{!expanded}">
+    <container key="content" collapsed="{!expanded}" class="setting-content">
       <children/>
     </container>
   </container>
@@ -507,10 +507,10 @@
 <!-- 单行输入框。children 槽位给 AutoSuggestBox 追加建议列表用
      （Rust 版 field.with_children([list]) 同一形态）。 -->
 <component name="TextField" params="value placeholder">
-  <control class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true" focusable="true">
+  <control interactive="true" focusable="true" class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <text key="text" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
     <if cond="value != ''">
-      <control key="field:clear" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}" interactive="true">
+      <control key="field:clear" interactive="true" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}">
         <container key="icon" icon="close" class="{focused ? 'focused'} {hover ? 'hovered' : ''} field-clear-icon"/>
       </control>
     </if>
@@ -530,7 +530,7 @@
   <container class="scroll-area">
     <TextArea key="area" lines="{lines}"/>
     <container key="scrollbar" class="scrollbar">
-      <container key="fill:scroll" class="scroll-thumb" height="{max(ratio * 120.0, 16.0)}"/>
+      <container key="fill:scroll" height="{max(ratio * 120.0, 16.0)}" class="scroll-thumb"/>
     </container>
   </container>
 </component>
@@ -540,13 +540,13 @@
      列表整个换掉。这里不修（改了就是行为变更），parity 按现状对照；
      要修请两侧同修并更新 parity 页。 -->
 <component name="AutoSuggestBox" params="suggestions open sel">
-  <control class="text-field {open ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}" interactive="true">
+  <control interactive="true" class="text-field {open ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="open">
       <container key="suggestions" class="suggest-list">
         <SugRows suggestions="{suggestions}" sel="{sel}"/>
       </container>
       <else>
-        <container key="suggestions" class="suggest-list" collapsed="true">
+        <container key="suggestions" collapsed="true" class="suggest-list">
           <SugRows suggestions="{suggestions}" sel="{sel}"/>
         </container>
       </else>

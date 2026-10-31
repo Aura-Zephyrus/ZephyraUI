@@ -47,9 +47,7 @@
 
 <component name="PageGuide">
   <PageRoot key="guide" cls="page-guide">
-    <TextLabel key="guide-blurb"
-      text="{tr('ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline')}"
-      level="text-body"/>
+    <TextLabel key="guide-blurb" text="{tr('ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline')}" level="text-body"/>
     <DemoRow label="{tr('ui.counter')}">
       <Button key="guide-inc" label="{tr('ui.click-me')}" variant="accent"/>
     </DemoRow>
@@ -59,9 +57,7 @@
 
 <component name="PageState">
   <PageRoot key="state" cls="page-state">
-    <TextLabel key="state-blurb"
-      text="Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug."
-      level="text-body"/>
+    <TextLabel key="state-blurb" text="Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug." level="text-body"/>
     <Section key="state-wired" title="Wired to state">
       <DemoRow label="{tr('ui.checkbox')}">
         <CheckBox key="state-check" label="Toggle me" checked="{@demo_check}"/>
@@ -92,9 +88,7 @@
 
 <component name="PageStyling">
   <PageRoot key="styling" cls="page-styling">
-    <TextLabel key="styling-blurb"
-      text="Appearance lives in .zstyle. Source sends keys and class names only — no colors, no sizes."
-      level="text-body"/>
+    <TextLabel key="styling-blurb" text="Appearance lives in .zstyle. Source sends keys and class names only — no colors, no sizes." level="text-body"/>
     <Section key="styling-tokens" title="Colors come from theme tokens">
       <DemoRow label="{tr('ui.token-colored-text')}">
         <TextLabel key="styling-note" text="This color is @content_secondary" level="styling-note"/>
@@ -113,9 +107,7 @@
     </Section>
     <Section key="styling-layout" title="Layout-affecting properties">
       <DemoRow label="{tr('ui.spacing-demo')}">
-        <TextLabel key="styling-layout-note"
-          text="Spacing is declared affects_layout so color-only changes skip relayout"
-          level="text-caption"/>
+        <TextLabel key="styling-layout-note" text="Spacing is declared affects_layout so color-only changes skip relayout" level="text-caption"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -123,9 +115,7 @@
 
 <component name="PageLayout">
   <PageRoot key="layout" cls="page-layout">
-    <TextLabel key="layout-blurb"
-      text="{tr('ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll')}"
-      level="text-body"/>
+    <TextLabel key="layout-blurb" text="{tr('ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll')}" level="text-body"/>
     <Section key="layout-flex" title="{tr('ui.flexbox-rows-that-grow-and-wrap')}">
       <DemoRow label="{tr('ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines')}">
         <PageRoot key="fx-grow-demo" cls="fx-row">
@@ -184,9 +174,7 @@
 
 <component name="PageTheme">
   <PageRoot key="theme" cls="page-theme">
-    <TextLabel key="theme-blurb"
-      text="Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins."
-      level="text-body"/>
+    <TextLabel key="theme-blurb" text="Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins." level="text-body"/>
     <Section key="theme-darklight" title="Dark / Light">
       <DemoRow label="{tr('ui.toggle-theme')}">
         <ToggleSwitch key="theme-toggle" checked="{@wants_dark}"/>
@@ -218,9 +206,7 @@
 
 <component name="PageTesting">
   <PageRoot key="testing" cls="page-testing">
-    <TextLabel key="testing-blurb"
-      text="Three layers of self-verification, from fastest to slowest. Each guards a different class of silent failure."
-      level="text-body"/>
+    <TextLabel key="testing-blurb" text="Three layers of self-verification, from fastest to slowest. Each guards a different class of silent failure." level="text-body"/>
     <Section key="testing-current" title="Current state">
       <DemoRow label="{tr('ui.route')}">
         <TextLabel key="testing-route" text="{@route}" level="text-body"/>
@@ -270,19 +256,35 @@
 
 <component name="PageReference">
   <PageRoot key="reference" cls="page-reference">
-    <TextLabel key="reference-blurb"
-      text="Control reference — pick a family to see its controls."
-      level="text-body"/>
+    <TextLabel key="reference-blurb" text="Control reference — pick a family to see its controls." level="text-body"/>
     <Segmented key="ref-family" items="{@ref_segs}" sel="{@ref_sel}"/>
-    <if cond="@ref_family == 0"><PageBasics/></if>
-    <if cond="@ref_family == 1"><PageToggles/></if>
-    <if cond="@ref_family == 2"><PageLayoutFamily/></if>
-    <if cond="@ref_family == 3"><PageCollections/></if>
-    <if cond="@ref_family == 4"><PageMenus/></if>
-    <if cond="@ref_family == 5"><PageNavigation/></if>
-    <if cond="@ref_family == 6"><PageStatus/></if>
-    <if cond="@ref_family == 7"><PageDialogs/></if>
-    <if cond="@ref_family == 8"><PagePaging/></if>
+    <if cond="@ref_family == 0">
+      <PageBasics/>
+    </if>
+    <if cond="@ref_family == 1">
+      <PageToggles/>
+    </if>
+    <if cond="@ref_family == 2">
+      <PageLayoutFamily/>
+    </if>
+    <if cond="@ref_family == 3">
+      <PageCollections/>
+    </if>
+    <if cond="@ref_family == 4">
+      <PageMenus/>
+    </if>
+    <if cond="@ref_family == 5">
+      <PageNavigation/>
+    </if>
+    <if cond="@ref_family == 6">
+      <PageStatus/>
+    </if>
+    <if cond="@ref_family == 7">
+      <PageDialogs/>
+    </if>
+    <if cond="@ref_family == 8">
+      <PagePaging/>
+    </if>
   </PageRoot>
 </component>
 
@@ -546,9 +548,7 @@
 
 <component name="PageGlass">
   <PageRoot key="glass" cls="page-glass">
-    <TextLabel key="glass-blurb"
-      text="{tr('ui.liquid-glass-refraction-parameters-are-runtime-adjustable')}"
-      level="text-body"/>
+    <TextLabel key="glass-blurb" text="{tr('ui.liquid-glass-refraction-parameters-are-runtime-adjustable')}" level="text-body"/>
     <Section key="sec-params" title="{tr('ui.refraction-parameters')}">
       <GlassParams/>
       <GlassStage/>
@@ -592,15 +592,15 @@
     </PageRoot>
     <PageRoot key="glass-panes" cls="glass-panes">
       <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:a" class="glass-pane" filter="{@glass_filter_0}"/>
+        <container key="glass:a" filter="{@glass_filter_0}" class="glass-pane"/>
         <TextLabel key="gt:a" text="{tr('ui.thin')}" level="glass-title"/>
       </PageRoot>
       <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:b" class="glass-pane" filter="{@glass_filter_1}"/>
+        <container key="glass:b" filter="{@glass_filter_1}" class="glass-pane"/>
         <TextLabel key="gt:b" text="{tr('ui.normal')}" level="glass-title"/>
       </PageRoot>
       <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:c" class="glass-pane" filter="{@glass_filter_2}"/>
+        <container key="glass:c" filter="{@glass_filter_2}" class="glass-pane"/>
         <TextLabel key="gt:c" text="{tr('ui.thick')}" level="glass-title"/>
       </PageRoot>
     </PageRoot>
@@ -653,8 +653,7 @@
       </container>
       <container key="caption" class="caption-bar">
         <for var="c" list="@caps">
-          <control key="{c.key}" interactive="true"
-            class="caption-btn {c.close ? 'close' : ''} {press(c.key) ? 'pressed' : (hover(c.key) ? 'hovered' : '')}">
+          <control key="{c.key}" interactive="true" class="caption-btn {c.close ? 'close' : ''} {press(c.key) ? 'pressed' : (hover(c.key) ? 'hovered' : '')}">
             <container key="icon" icon="{c.icon}" class="caption-icon"/>
           </control>
         </for>
@@ -666,8 +665,7 @@
           <NavItem key="{r.id}" label="{r.label}" icon="{r.icon}" selected="{r.id == @route}" compact="{@compact}"/>
         </for>
         <container key="nav-spacer" class="nav-spacer"/>
-        <NavItem key="{@settings_item.id}" label="{@settings_item.label}" icon="{@settings_item.icon}"
-          selected="{@settings_item.id == @route}" compact="{@compact}"/>
+        <NavItem key="{@settings_item.id}" label="{@settings_item.label}" icon="{@settings_item.icon}" selected="{@settings_item.id == @route}" compact="{@compact}"/>
       </container>
       <container key="content" class="content-card">
         <container key="header" class="page-header">
@@ -682,15 +680,33 @@
           </container>
         </container>
         <container key="page" class="page {@enter_class}">
-          <if cond="@route == 'guide'"><PageGuide/></if>
-          <if cond="@route == 'state'"><PageState/></if>
-          <if cond="@route == 'styling'"><PageStyling/></if>
-          <if cond="@route == 'layout'"><PageLayout/></if>
-          <if cond="@route == 'theme'"><PageTheme/></if>
-          <if cond="@route == 'testing'"><PageTesting/></if>
-          <if cond="@route == 'reference'"><PageReference/></if>
-          <if cond="@route == 'glass'"><PageGlass/></if>
-          <if cond="@route == 'settings'"><PageSettings/></if>
+          <if cond="@route == 'guide'">
+            <PageGuide/>
+          </if>
+          <if cond="@route == 'state'">
+            <PageState/>
+          </if>
+          <if cond="@route == 'styling'">
+            <PageStyling/>
+          </if>
+          <if cond="@route == 'layout'">
+            <PageLayout/>
+          </if>
+          <if cond="@route == 'theme'">
+            <PageTheme/>
+          </if>
+          <if cond="@route == 'testing'">
+            <PageTesting/>
+          </if>
+          <if cond="@route == 'reference'">
+            <PageReference/>
+          </if>
+          <if cond="@route == 'glass'">
+            <PageGlass/>
+          </if>
+          <if cond="@route == 'settings'">
+            <PageSettings/>
+          </if>
         </container>
       </container>
     </container>

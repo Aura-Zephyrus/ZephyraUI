@@ -25,6 +25,7 @@
 
 | 日期 | 条目 | 状态 |
 |---|---|---|
+| 2026-10-31 | [.zypui 写法统一（排版门禁）](2026-10-31-zypui-style-normalization.md) | 已接；五条排版规则（标签不跨行 / 一元素一行 / `key`→内容→行为→`class` 收尾 / 缩进 2 空格 / 非空行以 `<` 开头）成文 `docs/developer/zypui-style.md`，`zypuic` 扫全仓 `*.zypui` 两条测试钉住；三份存量文件归一化，门禁违规 90 → 0（纯排版，属性/标签/注释多重集与改动前全等）。三个坑：归一化脚本曾吞掉跨行标签后的元素（靠多重集对照抓到）、门禁 `attr_names` 曾被缩进卡住少报近一半 class 违规（靠拿旧内容回跑门禁抓到）、PowerShell `Get-Content` 把 UTF-8 读成乱码且行数不对（别拿它数行） |
 | 2026-10-29 | [元素定位：坐标进样式表](2026-10-29-element-positioning.md) | 已接；`position: static│absolute` + `left` / `top`（DIP，**窗口坐标**，等价 CSS `fixed`）；绝对子项脱离正常流但**仍测量**、只不占父内容尺寸；`arrange_absolute_children` 按窗口坐标摆位；新增 `Node::find(key)` / `find_rect(key)` 做按 key 查窗口矩形；`zstylec` 同步映射与关键字。画序仍在树序，未做 z-index |
 | 2026-10-28 | [焦点状态机：Tab 顺序 / 圈闭 / FOCUSED 属性](2026-10-28-input-focus.md) | 已接；core 新建 `input::focus`（`FocusState`），props 加 `FOCUSABLE` / `FOCUSED`；Tab 按树深度优先移动、末端圈闭；FOCUSED 走 Local 层属性（`set_prop`），`.zstyle` 可按它给焦点环；**三宿主已接入**（点击设焦点 / Tab 当帧移动 / 窗口失焦清空，`InputState.focused` 每帧上报）——控件层尚未消费 FOCUSED |
 | 2026-10-28 | [键盘 / 字符 / IME 事件契约与三后端接线](2026-10-28-input-keyboard-ime.md) | 已接；core 定 `TextEvent`（`Key` / `Char` / `Ime` 三通道，`KeyInput` 带语义键+键名+重复+修饰键），新建 `zephyra-winit-input` 一份翻译供三宿主共用；Vulkan 补上键盘/滚轮/IME（此前 `key_events` 与 `scroll` 写死空值）；MCP `press_key` 改走同一套词汇。控件层尚未消费 |
