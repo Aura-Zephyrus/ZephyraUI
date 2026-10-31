@@ -516,3 +516,171 @@ fn scaffold_entry_implements_every_required_trait_method() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- `fmt` ----
+
+/// 跑一次 `fmt`，拿到 (退出码, stdout, stderr)。
+///
+/// ⚠ 这些用例**全部传绝对路径**，绝不改 cwd。`set_current_dir` 是进程级的，
+/// 而 cargo 的测试是并行的：两个用例同时切 cwd 会互相踩，而「跑完把 cwd 切回去」
+/// 还会在别的用例已经 `remove_dir_all` 掉那个目录时失败（实测就是这样红的）。
+///
+/// `Err(CliError)` 也变成退出码 —— 「用法错」正是 `fmt` 的正常输出之一
+/// （未知扩展名报 2），把它 expect 掉会变成 panic。
+fn run_fmt(cmdline: &str) -> (ExitCode, String, String) {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut io = Io {
+            out: &mut out,
+            err: &mut err,
+        };
+        let ParseOutcome::Parsed(a) = args::parse(argv(cmdline)) else {
+            panic!("expected Parsed")
+        };
+        let cmd = commands::find("fmt").unwrap();
+        match (cmd.run)(&a, &mut io) {
+            Ok(c) => c,
+            Err(e) => {
+                // 用法错/环境缺失也走同一条打印路径（entry::dispatch 的形状）。
+                io.err_line(&format!("error: {}", e.message));
+                e.code
+            }
+        }
+    };
+    (
+        code,
+        String::from_utf8_lossy(&out).to_string(),
+        String::from_utf8_lossy(&err).to_string(),
+    )
+}
+
+/// 每次用例一个独立目录：临时目录名带进程 id + 运行时戳，避免并行用例互踩。
+fn scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "zephyra-cli-fmt-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn fmt_is_registered_with_the_check_flag() {
+    let cmd = commands::find("fmt").expect("`fmt` must be in the command table");
+    assert!(cmd.flags.contains(&"check"), "`fmt` should accept --check");
+    let help = commands::render_help("zephyra", "0.0.0");
+    assert!(help.contains("fmt"), "`--help` must list `fmt`");
+}
+
+#[test]
+fn fmt_formats_a_zstyle_file_in_place() {
+    let dir = scratch("zstyle");
+    let f = dir.join("app.zstyle");
+    // 单行规则：排版器必须展开成多行。
+    std::fs::write(&f, "Control.x { width: 10px; height: 20px; }\n").unwrap();
+
+    let (code, out, _) = run_fmt(&format!("fmt {}", f.display()));
+    assert_eq!(code, ExitCode::Success);
+    assert!(out.contains("formatted"), "{out}");
+
+    let after = std::fs::read_to_string(&f).unwrap();
+    assert_eq!(
+        after, "Control.x {\n    width: 10px;\n    height: 20px;\n}\n",
+        "排版后必须是标准形态"
+    );
+    // 再跑一次：已经干净 ⇒ 不再报要排版。
+    let (code2, out2, _) = run_fmt(&format!("fmt --check {}", f.display()));
+    assert_eq!(code2, ExitCode::Success, "{out2}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_check_reports_dirty_files_without_writing() {
+    let dir = scratch("check");
+    let f = dir.join("a.zstyle");
+    let bad = "Control{width:10px;}\n";
+    std::fs::write(&f, bad).unwrap();
+
+    // `--check` 只报不写，且有要排版的就退 1（CI 的形状）。
+    let (code, out, err) = run_fmt(&format!("fmt --check {}", f.display()));
+    assert_eq!(code, ExitCode::Failure);
+    assert!(out.contains("would format"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(&f).unwrap(),
+        bad,
+        "--check 不许写盘"
+    );
+    assert!(err.contains("would be formatted"), "{err}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_formats_a_zypui_file_in_place() {
+    let dir = scratch("zypui");
+    let f = dir.join("shell.zypui");
+    // class 在中间：排版器必须挪到行尾（位置非语义，所以这是排版不是行为变更）。
+    let bad = "<component name=\"P\">\n  <container key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n";
+    std::fs::write(&f, bad).unwrap();
+
+    let (code, _, _) = run_fmt(&format!("fmt {}", f.display()));
+    assert_eq!(code, ExitCode::Success);
+    let after = std::fs::read_to_string(&f).unwrap();
+    assert_eq!(
+        after,
+        "<component name=\"P\">\n  <container key=\"a\" icon=\"gear\" class=\"c\"/>\n</component>\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_refuses_extensions_it_does_not_format() {
+    let dir = scratch("bad-ext");
+    std::fs::write(dir.join("notes.txt"), "hello\n").unwrap();
+
+    // 未知扩展名报**用法错**，而不是静默跳过 —— 静默跳过会让「我以为排过了」成立。
+    let (code, _, err) = run_fmt(&format!("fmt {}", dir.join("notes.txt").display()));
+    assert_eq!(code, ExitCode::Usage);
+    assert!(err.contains("cannot format"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_walks_a_directory_and_skips_target() {
+    // 目录参数 ⇒ 递归扫里面的样式表/结构文件，`target/` 跳过（否则每次 build
+    // 都改一遍产物）。这也覆盖「不给路径」那条路用的同一个 `collect_ext`。
+    let dir = scratch("walk");
+    let style = dir.join("frontend").join("app.zstyle");
+    let ui = dir.join("frontend").join("app.zypui");
+    std::fs::create_dir_all(style.parent().unwrap()).unwrap();
+    std::fs::write(&style, "Control{width:10px;}\n").unwrap();
+    std::fs::write(
+        &ui,
+        "<component name=\"P\">\n<container key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("target").join("x")).unwrap();
+    std::fs::write(
+        dir.join("target").join("x").join("junk.zstyle"),
+        "Control{a:b;}\n",
+    )
+    .unwrap();
+
+    let (code, out, _) = run_fmt(&format!("fmt --check {}", dir.display()));
+    assert_eq!(code, ExitCode::Failure, "{out}");
+    assert!(out.contains("app.zstyle"), "{out}");
+    assert!(out.contains("app.zypui"), "{out}");
+    assert!(!out.contains("junk"), "target/ 里的文件不该被扫到：{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("target").join("x").join("junk.zstyle")).unwrap(),
+        "Control{a:b;}\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

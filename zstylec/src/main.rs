@@ -5,6 +5,7 @@
 //! ```text
 //! zstylec check <file.zstyle>...   # 检查（默认子命令）
 //! zstylec check --format json ...   # 机器可读输出，给编辑器 / CI 用
+//! zstylec fmt [--check] <file...>   # 排版（只动空白，不改语义）
 //! zstylec props                     # 列出全部受支持的属性名
 //! zstylec --help / --version
 //! ```
@@ -19,11 +20,23 @@
 //!
 //! 2 与 1 分开的理由：「样式表写错了」和「文件名打错了」在 CI 里要能分别处理，
 //! 前者该改代码、后者该改流水线。
+//!
+//! # `fmt` 的退出码
+//!
+//! | 码 | 含义 |
+//! |---|---|
+//! | 0 | 全部文件都已排好（或已改好） |
+//! | 1 | `--check` 下有文件**要**排版 |
+//! | 2 | 用法错、或文件读不了 |
+//!
+//! 与 `cargo fmt --check` 同一形状：1 表示「该跑一次 fmt」，不是「样式表坏了」。
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use zstylec::{check as check_all, has_errors, Diag, FileReport, Level};
+use zstylec::{
+    check as check_all, format_style as format_zstyle, has_errors, Diag, FileReport, Level,
+};
 
 const USAGE: &str = "\
 zstylec -- ZephyraUI stylesheet compiler
@@ -31,6 +44,7 @@ zstylec -- ZephyraUI stylesheet compiler
 USAGE
     zstylec check <file.zstyle>...        check one or more stylesheets
     zstylec check --format json <file>... machine-readable diagnostics
+    zstylec fmt [--check] <file.zstyle>...   format (whitespace only)
     zstylec props                         list every supported property
     zstylec --help                        this text
     zstylec --version
@@ -64,8 +78,82 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        "fmt" => run_fmt(&args[1..]),
         _ => run_check(&args),
     }
+}
+
+/// `zstylec fmt [--check] <file...>` —— 排版（只动空白）。
+///
+/// 与 `check` 共用同一条「读不到 = 退出码 2」的线：`fmt` 是流水线里的一步，
+/// 「文件名打错了」必须和「要排版了」分开。
+fn run_fmt(args: &[String]) -> ExitCode {
+    let mut check_only = false;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--check" => check_only = true,
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("error: unknown flag `{other}`");
+                eprint!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            other => paths.push(PathBuf::from(other)),
+        }
+        i += 1;
+    }
+
+    if paths.is_empty() {
+        eprintln!("error: fmt needs at least one file. Try `zstylec fmt app.zstyle`.");
+        return ExitCode::from(2);
+    }
+
+    let mut changed = 0usize;
+    for p in &paths {
+        let src = match std::fs::read_to_string(p) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", p.display());
+                return ExitCode::from(2);
+            }
+        };
+        let out = match format_zstyle(&src) {
+            Some(o) => o,
+            None => {
+                // 结构不认识 ⇒ 不猜、不覆盖。报出来让人改源码。
+                eprintln!(
+                    "error: {}: not a stylesheet this formatter recognizes (broken source?)",
+                    p.display()
+                );
+                return ExitCode::from(2);
+            }
+        };
+        if out == src {
+            continue;
+        }
+        changed += 1;
+        if check_only {
+            println!("would format {}", p.display());
+            continue;
+        }
+        if let Err(e) = std::fs::write(p, &out) {
+            eprintln!("error: cannot write {}: {e}", p.display());
+            return ExitCode::from(2);
+        }
+        println!("formatted {}", p.display());
+    }
+
+    if check_only && changed > 0 {
+        eprintln!("\n{changed} file(s) would be formatted");
+        return ExitCode::from(1);
+    }
+    // `--check` 且一个都没动 ⇒ 干净；非 `--check` ⇒ 已改好。
+    ExitCode::SUCCESS
 }
 
 fn run_check(args: &[String]) -> ExitCode {

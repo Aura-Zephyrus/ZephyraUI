@@ -9,6 +9,7 @@
 //! |---|---|---|
 //! | `new` | 生成一个可跑的空工程 | 「上手成本」是一切的前置 |
 //! | `check` | 查样式表 | 唯一能在不启动 GUI 的情况下抓错的一步，必须能进 CI |
+//! | `fmt` | 排版（`.zstyle` / `.zypui` / Rust） | 写法统一靠命令不靠评审；判据在编译器里，CLI 只聚合 |
 //! | `run` | 跑起来 | |
 //! | `build` | 构建 | |
 //! | `info` | 报版本与工具链状态 | 出问题时第一句要问的就是「你装的什么版本」 |
@@ -101,6 +102,13 @@ pub const COMMANDS: &[Command] = &[
         run: check::run,
     },
     Command {
+        name: "fmt",
+        about: "format project sources: .zstyle / .zypui / Rust (via cargo fmt)",
+        args: "[<path>...] [--check] [--manifest-path <p>]",
+        flags: &["check"],
+        run: fmt::run,
+    },
+    Command {
         name: "dev",
         about: "run in dev mode: tracing on, restarts when a stylesheet changes",
         args: "[--release] [--styles <dir>] [--no-watch] [--no-trace] [--manifest-path <p>]",
@@ -176,6 +184,7 @@ pub fn render_help(bin: &str, version: &str) -> String {
 mod build;
 mod check;
 mod dev;
+mod fmt;
 mod info;
 mod mcp;
 mod new;

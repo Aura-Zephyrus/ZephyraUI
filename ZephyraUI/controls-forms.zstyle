@@ -239,19 +239,51 @@ Container.swatch.selected {
 }
 
 /* 16 个默认色格。颜色是字面量，在样式表里而不是源码里。 */
-Container.sw-0 { background: #e81123; }
-Container.sw-1 { background: #ea5800; }
-Container.sw-2 { background: #fff100; }
-Container.sw-3 { background: #00cc6a; }
-Container.sw-4 { background: #00b7c3; }
-Container.sw-5 { background: #0078d4; }
-Container.sw-6 { background: #6b69d6; }
-Container.sw-7 { background: #b146c2; }
-Container.sw-8 { background: #e3008c; }
-Container.sw-9 { background: #8a8886; }
-Container.sw-10 { background: #69797e; }
-Container.sw-11 { background: #4a5459; }
-Container.sw-12 { background: #107c10; }
-Container.sw-13 { background: #016393; }
-Container.sw-14 { background: #881798; }
-Container.sw-15 { background: #5c2e91; }
+Container.sw-0 {
+    background: #e81123;
+}
+Container.sw-1 {
+    background: #ea5800;
+}
+Container.sw-2 {
+    background: #fff100;
+}
+Container.sw-3 {
+    background: #00cc6a;
+}
+Container.sw-4 {
+    background: #00b7c3;
+}
+Container.sw-5 {
+    background: #0078d4;
+}
+Container.sw-6 {
+    background: #6b69d6;
+}
+Container.sw-7 {
+    background: #b146c2;
+}
+Container.sw-8 {
+    background: #e3008c;
+}
+Container.sw-9 {
+    background: #8a8886;
+}
+Container.sw-10 {
+    background: #69797e;
+}
+Container.sw-11 {
+    background: #4a5459;
+}
+Container.sw-12 {
+    background: #107c10;
+}
+Container.sw-13 {
+    background: #016393;
+}
+Container.sw-14 {
+    background: #881798;
+}
+Container.sw-15 {
+    background: #5c2e91;
+}

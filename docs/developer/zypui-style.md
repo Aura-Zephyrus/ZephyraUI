@@ -72,17 +72,40 @@
 ## 门禁
 
 ```text
-cargo test -p zypuic          # 22 条，其中两条属于排版门禁
+cargo test -p zypuic          # 排版门禁 + `fmt` 的用例
 ```
 
 | 测试 | 干什么 |
 |---|---|
 | `style_gate_tests::repo_zypui_files_obey_the_layout_rules` | 扫**工作区全部** `*.zypui`（递归，跳过 `target` / `.git`），逐行跑五条规则；新文件自动纳入，不需要登记 |
 | `style_gate_tests::layout_violations_are_actually_detected` | 判据自检：拿故意写坏的样例（含**带缩进**的）确认门禁真的会红，防止门禁自己坏了还全绿 |
+| `style_gate_tests::fmt_fixes_exactly_what_the_gate_checks` | **门禁与排版器对齐**：每条规则各给一个坏样例，`fmt` 修出来的形态必须同时过门禁（防「跑完 fmt 门禁还红」） |
+| `style_gate_tests::fmt_recognizes_every_repo_file` | 存量文件 `is_formatted` 都为真，即「跑一次就修好」那条路是通的 |
 
 违规输出是 `路径:行号: 规则N 说明 + 原文`，照着改即可 —— 五条都是机械改动，
 没有一处需要判断力。行号按**源文件**算（注释是打码而不是删除，打码副本与原文
 字节数、换行数逐一相等，所以注释里的 `<` 不会算成标签，行号也不会漂）。
+
+**判据住在 `zypuic::fmt::violations`**，门禁只是把它逐文件跑一遍，排版器
+（`zypuic fmt` / `zephyra fmt`）用的是同一份代码。上一轮判据与排版是两份实现，
+于是门禁自己少报了一半 class 违规（靠拿旧内容回跑才抓到）。**一份实现**才不会有
+这个失败模式。
+
+## 让排版器改
+
+```text
+zephyra fmt            # 整个工程：.zypui + .zstyle + cargo fmt（Rust）
+zephyra fmt --check    # 只报不写，给 CI 用（有要排版的退 1）
+zephyra fmt shell.zypui
+zypuic fmt shell.zypui # 编译器自己的入口，同一条判据
+```
+
+排版器只做三件事，全部**不改引号内的任何字节**：跨行的开始标签合成一行、一行
+挤了多个元素时摊开、属性重排成 `key` 在前 `class` 收尾。缩进按元素深度重算
+（2 的倍数），CRLF 统一成 LF，文末单个换行。
+
+看不懂的源码（XML 语法不干净）**原样返回**，绝不猜一份排版覆盖上去，`--check`
+把它报为脏。
 
 ### 归一化的实测账
 
@@ -97,3 +120,16 @@ cargo test -p zypuic          # 22 条，其中两条属于排版门禁
 「与改动前语义等价」这条对照是必须的 —— 排版脚本第一版吞掉了跨行标签后面的下
 一个元素，正是靠多重集比对当场抓到，详见
 [2026-10-31-zypui-style-normalization](../dev-log/2026-10-31-zypui-style-normalization.md)。
+
+### 排序往返的金标准
+
+上一个脚本是临时的（PowerShell、一次性），本轮做成了编译器的一部分，并且判据
+升级成**编译产物**：`fmt_tests::repo_files_survive_a_mangle_and_reformat_roundtrip`
+把每份存量文件**只动位置**地弄乱一遍（去掉缩进 + 把 `class` 挪到最前），再交给
+`fmt`，要求：
+
+1. 整理后的源码与原件**逐字节相同**（幂等 + 不会引入新 diff）；
+2. 连同其余 `.zypui`（组件表是跨文件的）一起编译，产物与原件**逐字节相同**。
+
+产物相同是比多重集更强的判据 —— 位置与空白**不在**产物里留任何痕迹
+（属性按名写表、树形与位置无关），所以任何一处差异都意味着排版器动到了内容。

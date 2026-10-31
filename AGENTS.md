@@ -39,6 +39,8 @@ cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
 cargo run -p zephyra-ui --bin gallery -- --list-routes --dump-cpu --route <id>
 cargo run -p zephyra-foundation --bin demo -- --dump-cpu --bench --alloc-probe
 cargo run -p zstylec -- check <file.zstyle>  # 也可用 zephyra check（同一份编译器）
+cargo run -p zstylec -- fmt [--check] <file.zstyle>   # 排版：只动空白，不改值（判据在 zstylec/src/fmt.rs）
+cargo run -p zypuic -- fmt [--check] <file.zypui>    # 排版：只动位置，不改内容（判据在 zypuic/src/fmt.rs）
 ```
 
 ### `--workspace` 不是可选项

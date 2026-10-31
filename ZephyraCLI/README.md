@@ -23,6 +23,7 @@ cargo zephyra dev
 |---|---|
 | `new <name>` | 生成一个能运行的交互示例工程，附带关键开发说明（`--path <dir>`、`--force`） |
 | `check <file.zstyle>...` | 查样式表（`--format human\|json`） |
+| `fmt [<路径>...]` | 排版：`.zstyle` / `.zypui` / Rust（`cargo fmt`）三者一起；`--check` 只报不写 |
 | `dev` | 开发模式：打开 trace，样式表或窗口配置变更后重启 |
 | `run` / `build` | 转交 cargo，并将项目窗口配置嵌入应用 |
 | `info` | 版本与工具链状态（含路径） |
@@ -111,6 +112,35 @@ AI 客户端 ──stdio·JSON-RPC── zephyra mcp ──TCP·行协议── 
   在途的 `analyze_performance` 在下一轮轮询间隙中止；被取消的请求按协议不回；
 - 桥单客户端：第二个连接要等第一个断开（AI 会话即独占使用）。MCP server 在
   按下与抬起之间消失时，应用侧会在察觉断连时补一次指针抬起，不会卡在拖动态。
+
+### `fmt` — 排版
+
+```text
+zephyra fmt                  # 整个工程：.zstyle + .zypui + Rust（cargo fmt）
+zephyra fmt --check          # 只报不写，给 CI 用（有要排版的退 1）
+zephyra fmt frontend/        # 只排某个目录里的
+zephyra fmt app.zstyle       # 只排指定文件（Rust 那一档跳过）
+```
+
+三个排版器，分工固定：
+
+| 文件 | 谁排 | 判据住在哪 |
+|---|---|---|
+| `.rs` | `cargo fmt`（spawn，不重造） | rustfmt |
+| `.zstyle` | `zstylec::format`（只动空白，值逐字照搬） | `zstylec/src/fmt.rs` |
+| `.zypui` | `zypuic::format`（只动位置，引号内逐字节不变） | `zypuic/src/fmt.rs` |
+
+CLI **不判排版**，只负责「找文件、调谁、写不写回、报什么」—— 判据一旦在 CLI 里
+再抄一份，就有了「CLI 说排好了、编译器门禁还红」的立足点。两个编译器同属一个
+workspace，所以那不可能发生，而不只是「靠一条路径依赖约定」。
+
+Rust 那一档只在**工程根有 `Cargo.toml`** 时才跑：`cargo fmt` 需要 manifest，而
+「这里只有一堆 `.zstyle`」的目录（docs/、临时目录）不该被一条 cargo 报错打红。
+识别不了的扩展名**报用法错**（退 2），不静默跳过 —— 静默跳过等于「看起来生效了
+其实没有」。
+
+延伸阅读：`.zstyle` 排版 → [developer/04-stylesheets.md](../docs/developer/04-stylesheets.md)；
+`.zypui` 排版 → [developer/zypui-style.md](../docs/developer/zypui-style.md)。
 
 ### `dev`
 

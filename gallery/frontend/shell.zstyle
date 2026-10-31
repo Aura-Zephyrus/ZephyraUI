@@ -177,11 +177,35 @@ Container.page {
     cross-align: stretch;
 }
 
-Container.page.enter-1 { opacity: 0.00; translate-y: 8px; }
-Container.page.enter-2 { opacity: 0.13; translate-y: 7px; }
-Container.page.enter-3 { opacity: 0.26; translate-y: 6px; }
-Container.page.enter-4 { opacity: 0.39; translate-y: 5px; }
-Container.page.enter-5 { opacity: 0.52; translate-y: 4px; }
-Container.page.enter-6 { opacity: 0.65; translate-y: 3px; }
-Container.page.enter-7 { opacity: 0.78; translate-y: 2px; }
-Container.page.enter-8 { opacity: 0.91; translate-y: 1px; }
+Container.page.enter-1 {
+    opacity: 0.00;
+    translate-y: 8px;
+}
+Container.page.enter-2 {
+    opacity: 0.13;
+    translate-y: 7px;
+}
+Container.page.enter-3 {
+    opacity: 0.26;
+    translate-y: 6px;
+}
+Container.page.enter-4 {
+    opacity: 0.39;
+    translate-y: 5px;
+}
+Container.page.enter-5 {
+    opacity: 0.52;
+    translate-y: 4px;
+}
+Container.page.enter-6 {
+    opacity: 0.65;
+    translate-y: 3px;
+}
+Container.page.enter-7 {
+    opacity: 0.78;
+    translate-y: 2px;
+}
+Container.page.enter-8 {
+    opacity: 0.91;
+    translate-y: 1px;
+}

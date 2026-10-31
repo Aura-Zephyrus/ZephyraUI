@@ -97,6 +97,46 @@ zephyra check --format json a.zstyle  # 机器读的
 
 ---
 
+## 排版
+
+```text
+zephyra fmt app.zstyle     # 就地排成标准形式
+zephyra fmt                # 整个工程：.zstyle + .zypui + cargo fmt（Rust）
+zephyra fmt --check        # 只报不写，给 CI 用（有要排版的退 1）
+```
+
+标准形式（与仓内存量一致，实测 19 份文件的对齐方式是同一套）：
+
+```css
+/* 注释照抄，续行的缩进也照抄 */
+Container.button.accent {
+    background: @accent_fill;
+    border-width: 1px;
+}
+
+/* 状态规则：只碰 border */
+Container.button.hovered {
+    border-color: @control_border_strong;
+}
+```
+
+排版器**只动空白**，不改内容：选择器 / 属性名 / 值 / 注释**逐字照搬**，只重排它们
+之间的缩进、换行与空行。`material-params: 26 18 0 1.5` 里的多个空格、`0.00` 与 `0`
+的区别、`@令牌` 的拼写一律原样保留。
+
+为什么不从解析结果（IR）回写：IR 把值**归一化**了（`10px` → `Float(10.0)`、
+`#rrggbb` → `Color`、`@令牌` → `Resource`），回写不可能还原源码拼写。所以判据是
+**排版前后 `zstylec::parse` 的 IR 一致** —— 那是「只动了空白」的硬证明，在
+`zstylec/src/tests/style_gate_tests.rs` 里逐份文件钉住。
+
+遇到不认识的源码（注释没闭合、`}` 多出来、声明没有 `:`）**原样返回**，绝不猜一份
+排版覆盖上去；`--check` 把这种文件报为脏，提醒你先改源码。
+
+规则细节与「为什么不从 IR 回写」的完整论述见
+[`zstylec/src/fmt.rs`](../../zstylec/src/fmt.rs) 的模块文档。
+
+---
+
 ## 优先级
 
 ```text

@@ -15,10 +15,17 @@
 //! ```
 //!
 //! 两条路共享同一份 IR（见 `zypui::ir` 的命门说明）。
+//!
+//! # `fmt`：只动位置
+//!
+//! IR 不是源码形状 —— 属性顺序、一行几个元素、缩进在编译产物里一概不留痕迹。
+//! 所以排版器直接吃原文、只重排位置（跨行标签合一、一行一个元素、`key` 在前
+//! `class` 收尾），引号内一个字节不改。规则与判据见 `fmt` 模块文档。
 
 mod build;
 mod encode;
 mod expr_parse;
+mod fmt;
 pub mod xml;
 
 #[cfg(test)]
@@ -29,6 +36,15 @@ mod tests;
 #[path = "tests/style_gate_tests.rs"]
 mod style_gate_tests;
 
+// `fmt` 的用例：与门禁共用 `crate::fmt` 的判据，这里只测 formatter 自身
+// （产物等价 / 幂等 / 引号不动）。
+#[cfg(test)]
+#[path = "tests/fmt_tests.rs"]
+mod fmt_tests;
+
+// 与 `zstylec::fmt` 同一个理由：根作用域上的 `format` 会跟 std 的 `format!` 宏
+// 撞名，`cargo doc` 直接让整个 crate 文档不出来（`zstylec` 实测踩过）。
+pub use fmt::{format as format_ui, is_formatted};
 pub use xml::{Diag, Level, XEl, XNode};
 
 use zypui::RawUi;
