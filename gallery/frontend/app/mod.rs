@@ -14,6 +14,8 @@
 //! （`wants_dark`），宿主每帧对账后执行 `set_theme` —— 于是"想切的"与
 //! "在用的"永远可分开观测，不会出现"点了没反应但也不知道为什么"。
 
+use std::sync::OnceLock;
+
 use zephyra_core::i18n::{Messages, Preferences, Tag};
 use zephyra_core::id::ElementKey;
 use zephyra_core::{context::Context, element::Element};
@@ -264,6 +266,36 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("en", "ui.fixed", "Fixed"),
     ("en", "ui.grows", "Grows"),
+    // ---- 按钮 / 复选框族（label_key 通道）+ 页面散文 ----
+    ("en", "ui.check.toggle-me", "Toggle me"),
+    ("en", "ui.check.enable-feature", "Enable feature"),
+    ("en", "ui.check.send-analytics", "Send analytics"),
+    ("en", "ui.check.beta-channel", "Beta channel"),
+    ("en", "ui.check.locked-option", "Locked option"),
+    ("en", "ui.big-enough", "Big enough"),
+    ("en", "ui.tiny", "Tiny"),
+    ("en", "ui.wired-controls-change-state-on-click-display-only-controls-dont-thats-a-core-boundary-not-a-bug", "Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug."),
+    ("en", "ui.wired-to-state", "Wired to state"),
+    ("en", "ui.appearance-lives-in-zstyle-source-sends-keys-and-class-names-only-no-colors-no-sizes", "Appearance lives in .zstyle. Source sends keys and class names only — no colors, no sizes."),
+    ("en", "ui.colors-come-from-theme-tokens", "Colors come from theme tokens"),
+    ("en", "ui.this-color-is-content-secondary", "This color is @content_secondary"),
+    ("en", "ui.class-names-are-selectors", "Class names are selectors"),
+    ("en", "ui.layout-affecting-properties", "Layout-affecting properties"),
+    ("en", "ui.spacing-is-declared-affects-layout-so-color-only-changes-skip-relayout", "Spacing is declared affects_layout so color-only changes skip relayout"),
+    ("en", "ui.breakpoints-small-medium-large", "Breakpoints: small / medium / large"),
+    ("en", "ui.touch-targets-need-44-epx", "Touch targets need 44 epx"),
+    ("en", "ui.theme-is-an-intent-not-a-reference-language-negotiates-from-system-prefs-then-manual-choice-wins", "Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins."),
+    ("en", "ui.language-en-zh-hans-ja", "Language (en / zh-Hans / ja)"),
+    ("en", "ui.current-locale", "Current locale"),
+    ("en", "ui.three-layers-of-self-verification-from-fastest-to-slowest-each-guards-a-different-class-of-silent-failure", "Three layers of self-verification, from fastest to slowest. Each guards a different class of silent failure."),
+    ("en", "ui.current-state", "Current state"),
+    ("en", "ui.1-stylesheet-syntax", "1. Stylesheet syntax"),
+    ("en", "ui.2-cpu-raster-dump", "2. CPU raster dump"),
+    ("en", "ui.dump-one-reference-family", "Dump one reference family"),
+    ("en", "ui.3-tree-level-gates", "3. Tree-level gates"),
+    ("en", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "Style tokens, dead rules, hit-test, breakpoints, no appearance in source"),
+    ("en", "ui.try-it-switch-language-same-state-as-lang", "Try it: switch language (same state as --lang)"),
+    ("en", "ui.control-reference-pick-a-family-to-see-its-controls", "Control reference — pick a family to see its controls."),
     // ---- zh-Hans ----
     ("zh-Hans", "route.guide", "快速开始"),
     ("zh-Hans", "route.state", "状态"),
@@ -366,6 +398,36 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("zh-Hans", "ui.fixed", "固定"),
     ("zh-Hans", "ui.grows", "填充"),
+    // ---- 按钮 / 复选框族（label_key 通道）+ 页面散文 ----
+    ("zh-Hans", "ui.check.toggle-me", "切换我"),
+    ("zh-Hans", "ui.check.enable-feature", "启用功能"),
+    ("zh-Hans", "ui.check.send-analytics", "发送统计"),
+    ("zh-Hans", "ui.check.beta-channel", "测试通道"),
+    ("zh-Hans", "ui.check.locked-option", "锁定的选项"),
+    ("zh-Hans", "ui.big-enough", "足够大"),
+    ("zh-Hans", "ui.tiny", "太小"),
+    ("zh-Hans", "ui.wired-controls-change-state-on-click-display-only-controls-dont-thats-a-core-boundary-not-a-bug", "接线类控件点击即改状态；纯展示类控件不改 —— 那是核心的边界，不是缺陷。"),
+    ("zh-Hans", "ui.wired-to-state", "已接状态"),
+    ("zh-Hans", "ui.appearance-lives-in-zstyle-source-sends-keys-and-class-names-only-no-colors-no-sizes", "外观住在 .zstyle 里。源码只发 key 与分类名 —— 没有颜色，没有尺寸。"),
+    ("zh-Hans", "ui.colors-come-from-theme-tokens", "颜色来自主题令牌"),
+    ("zh-Hans", "ui.this-color-is-content-secondary", "这个颜色是 @content_secondary"),
+    ("zh-Hans", "ui.class-names-are-selectors", "分类名就是选择器"),
+    ("zh-Hans", "ui.layout-affecting-properties", "影响布局的属性"),
+    ("zh-Hans", "ui.spacing-is-declared-affects-layout-so-color-only-changes-skip-relayout", "间距声明为 affects_layout，因此只改颜色的更新会跳过重排"),
+    ("zh-Hans", "ui.breakpoints-small-medium-large", "断点：小 / 中 / 大"),
+    ("zh-Hans", "ui.touch-targets-need-44-epx", "触控目标需要 44 epx"),
+    ("zh-Hans", "ui.theme-is-an-intent-not-a-reference-language-negotiates-from-system-prefs-then-manual-choice-wins", "主题是意图而非引用。语言先按系统偏好协商，再由手动选择优先。"),
+    ("zh-Hans", "ui.language-en-zh-hans-ja", "语言（en / zh-Hans / ja）"),
+    ("zh-Hans", "ui.current-locale", "当前区域"),
+    ("zh-Hans", "ui.three-layers-of-self-verification-from-fastest-to-slowest-each-guards-a-different-class-of-silent-failure", "三层自验，从快到慢。每一层挡住一类不同的静默失效。"),
+    ("zh-Hans", "ui.current-state", "当前状态"),
+    ("zh-Hans", "ui.1-stylesheet-syntax", "1. 样式表语法"),
+    ("zh-Hans", "ui.2-cpu-raster-dump", "2. CPU 光栅出图"),
+    ("zh-Hans", "ui.dump-one-reference-family", "导出一个参考族"),
+    ("zh-Hans", "ui.3-tree-level-gates", "3. 树级门禁"),
+    ("zh-Hans", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "样式令牌、死规则、命中测试、断点、源码里没有外观"),
+    ("zh-Hans", "ui.try-it-switch-language-same-state-as-lang", "试试：切换语言（与 --lang 同一状态）"),
+    ("zh-Hans", "ui.control-reference-pick-a-family-to-see-its-controls", "控件参考 —— 选一个族看它的控件。"),
     // ---- ja ----
     ("ja", "route.guide", "クイックスタート"),
     ("ja", "route.state", "状態"),
@@ -472,6 +534,36 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("ja", "ui.fixed", "固定"),
     ("ja", "ui.grows", "伸びる"),
+    // ---- 按钮 / 复选框族（label_key 通道）+ 页面散文 ----
+    ("ja", "ui.check.toggle-me", "私を切り替え"),
+    ("ja", "ui.check.enable-feature", "機能を有効にする"),
+    ("ja", "ui.check.send-analytics", "分析を送信する"),
+    ("ja", "ui.check.beta-channel", "ベータチャンネル"),
+    ("ja", "ui.check.locked-option", "ロックされたオプション"),
+    ("ja", "ui.big-enough", "十分大きい"),
+    ("ja", "ui.tiny", "小さすぎる"),
+    ("ja", "ui.wired-controls-change-state-on-click-display-only-controls-dont-thats-a-core-boundary-not-a-bug", "配線されたコントロールはクリックで状態が変わります。表示専用のコントロールは変わりません —— それはコアの境界であり、バグではありません。"),
+    ("ja", "ui.wired-to-state", "状態に接続済み"),
+    ("ja", "ui.appearance-lives-in-zstyle-source-sends-keys-and-class-names-only-no-colors-no-sizes", "外観は .zstyle にあります。ソースはキーとクラス名だけを送ります —— 色もサイズもありません。"),
+    ("ja", "ui.colors-come-from-theme-tokens", "色はテーマトークンから"),
+    ("ja", "ui.this-color-is-content-secondary", "この色は @content_secondary です"),
+    ("ja", "ui.class-names-are-selectors", "クラス名はセレクタです"),
+    ("ja", "ui.layout-affecting-properties", "レイアウトに影響するプロパティ"),
+    ("ja", "ui.spacing-is-declared-affects-layout-so-color-only-changes-skip-relayout", "間隔は affects_layout として宣言されるため、色だけの変更は再レイアウトをスキップします"),
+    ("ja", "ui.breakpoints-small-medium-large", "ブレークポイント：小 / 中 / 大"),
+    ("ja", "ui.touch-targets-need-44-epx", "タッチターゲットには 44 epx が必要"),
+    ("ja", "ui.theme-is-an-intent-not-a-reference-language-negotiates-from-system-prefs-then-manual-choice-wins", "テーマは参照ではなく意図です。言語はシステム設定から調整され、次に手動選択が優先されます。"),
+    ("ja", "ui.language-en-zh-hans-ja", "言語（en / zh-Hans / ja）"),
+    ("ja", "ui.current-locale", "現在のロケール"),
+    ("ja", "ui.three-layers-of-self-verification-from-fastest-to-slowest-each-guards-a-different-class-of-silent-failure", "三層の自己検証。速いものから順に、それぞれ別の種類の静かな失敗を防ぎます。"),
+    ("ja", "ui.current-state", "現在の状態"),
+    ("ja", "ui.1-stylesheet-syntax", "1. スタイルシートの構文"),
+    ("ja", "ui.2-cpu-raster-dump", "2. CPU ラスタダンプ"),
+    ("ja", "ui.dump-one-reference-family", "参照ファミリーを一つ書き出す"),
+    ("ja", "ui.3-tree-level-gates", "3. ツリー層のゲート"),
+    ("ja", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "スタイルトークン、死んだルール、ヒットテスト、ブレークポイント、ソースに外観なし"),
+    ("ja", "ui.try-it-switch-language-same-state-as-lang", "試してください：言語を切り替える（--lang と同じ状態）"),
+    ("ja", "ui.control-reference-pick-a-family-to-see-its-controls", "コントロール参照 —— ファミリーを選んで控件を確認します。"),
 ];
 
 /// 本表里出现过的**全部**键（按首次出现去重）。
@@ -488,19 +580,37 @@ pub fn catalog_keys() -> Vec<&'static str> {
     out
 }
 
-/// 应用内的消息表。
+/// 应用内的消息表（**控件层的默认文案已并进来**）。
 ///
 /// # 为什么文案在这里而不在控件里
 ///
 /// 源码里**没有面向用户的字符串** —— 与"源码零外观"是同一条纪律：
 /// 控件发分类名、不发颜色；页面发 key、不发文案。漏翻由门禁枚举
 /// （`every_tr_key_used_in_source_exists_in_every_language`），不靠肉眼。
-pub fn messages() -> Messages {
-    let mut m = Messages::new();
-    for (locale, key, value) in CATALOG {
-        m.insert(locale, key, value);
-    }
-    m
+///
+/// # 为什么是 `&'static`（`OnceLock` 缓存）
+///
+/// `tr()` 在**每帧**被调（模板里 `tr('…')` 是逐元素的），而 `Messages` 的
+/// 内部是 `BTreeMap` —— 每次重建就是 200 多次节点分配 + 一次整表分配。
+/// 一次 `tr()` 一次整表，等于**每个文字元素都重建一遍文案表**。
+///
+/// 文案表是**编译期常量**（`CATALOG` 是 `&'static` 切片），运行期不会变 ⇒
+/// 建一次就够。`OnceLock` 保证「只建一次」在多线程下也成立。
+///
+/// ⚠ 这不是微优化：控件模板里的 `tr(label_key)` 把每帧的 `tr()` 次数翻了一
+/// 倍（按钮与复选框的标签各一次），不缓存的话热路径开销同比翻倍。
+pub fn messages() -> &'static Messages {
+    static MESSAGES: OnceLock<Messages> = OnceLock::new();
+    MESSAGES.get_or_init(|| {
+        let mut m = Messages::new();
+        for (locale, key, value) in CATALOG {
+            m.insert(locale, key, value);
+        }
+        // 控件层**自身语义**的文案（复选框组组头的「全选」）并进来。
+        // 方向是单向的：应用条目优先 ⇒ 应用能改控件的默认说法。
+        zephyra_ui::i18n::merge_builtin(&mut m);
+        m
+    })
 }
 /// 路由 id → 文案键（`home` ⇒ `route.home`）。
 ///
@@ -614,15 +724,20 @@ fn static_key<'a>(candidates: &[&'a str], key: &str) -> Option<&'a str> {
 /// `zephyra_ui::CheckboxGroup::header_state` 的文档）。
 pub const CHECKS: [&str; 4] = ["check:alpha", "check:beta", "check:gamma", "check:locked"];
 
-/// 复选框组四个子项的文案。
+/// 复选框组四个子项的**语义 key**（不是文案）。
 ///
 /// 与 [`CHECKS`] 一一对应 —— 模板不再逐个写死 `label`，改由宿主把
-/// `id / label / state / disabled` 打包成记录列表喂给 `CheckBoxGroup`。
-pub const CHECK_LABELS: [&str; 4] = [
-    "Enable feature",
-    "Send analytics",
-    "Beta channel",
-    "Locked option",
+/// `id / label_key / state / disabled` 打包成记录列表喂给 `CheckBoxGroup`；
+/// 译文由控件模板内部 `tr()` 从文案表取。
+///
+/// ⚠ 这里存的是 **key** 而不是英文原文：`Checkbox` 的字段是 `label_key`
+/// （见 `ZephyraUI/src/checkbox.rs`）。存原文的话查表必然落空，画面上会
+/// 显示 key 本身 —— **看得见的降级**，但那是「漏翻」而不是「翻译」。
+pub const CHECK_LABEL_KEYS: [&str; 4] = [
+    "ui.check.enable-feature",
+    "ui.check.send-analytics",
+    "ui.check.beta-channel",
+    "ui.check.locked-option",
 ];
 
 /// 复选框组的**组头** key —— 点它 = 全选 / 全部不选。
@@ -901,6 +1016,24 @@ impl Gallery {
         }
     }
 
+    /// **强制**指定语言（命令行 `--lang` 用）。
+    ///
+    /// # 为什么必须走这个方法，而不能直接改 `lang`
+    ///
+    /// 直接改 `lang` 的话，窗口路第一帧的**系统协商**会把它改回系统语言 ——
+    /// 本机系统语言是 zh-Hans，于是 `--lang en` 也显示中文。
+    ///
+    /// 症状特别难查：命令行说「强制」，界面不听；而在**系统语言恰好就是
+    /// 目标语言**的机器上（大多数中文开发机都是），这个 bug 完全看不出来 ——
+    /// 只有换一台系统语言不同的机器才复现。
+    ///
+    /// 标记 `lang_negotiated` = 「语言已经定了，别再协商」—— 与用户**手动**
+    /// 点「日本語」走的是同一条路（见 `click` 里的 `lang:` 分支）。
+    pub fn force_language(&mut self, idx: usize) {
+        self.lang = idx.min(SUPPORTED.len() - 1);
+        self.lang_negotiated = true;
+    }
+
     /// 当前语言对应的偏好表。
     ///
     /// # 为什么不直接复用系统偏好
@@ -963,16 +1096,20 @@ impl Default for Gallery {
             guide_count: 0,
             last_action: "",
             pill_on: false,
-            demo_check: zephyra_ui::Checkbox::new("state-check", "Toggle me")
+            // ⚠ 第二个实参是**语义 key** 不是文案 —— 控件模板内部 `tr()` 翻译它。
+            demo_check: zephyra_ui::Checkbox::new("state-check", "ui.check.toggle-me")
                 .with_state(zephyra_ui::CheckState::Checked),
             check_group: {
                 // 组头 + 四个子项。初始勾上第一个（对应老版本 `[true, false, false]`），
                 // 于是组头一开始就是「半选」—— 一进页面就看得见三态。
                 //
                 // 第四项是**禁用**的：它不参与组头聚合，也不被「全选」捎带改。
-                let mut g = zephyra_ui::CheckboxGroup::new(CHECK_GROUP_KEY, "Select all");
-                for (i, (key, label)) in CHECKS.iter().zip(CHECK_LABELS).enumerate() {
-                    g.push(key, label);
+                // ⚠ 组头的标签 key **不传** —— 它是**控件语义**（组头 = 全选 /
+                // 全部不选），由控件层自带默认译文（`zephyra.checkbox.select-all`，
+                // 见 `zephyra_ui::i18n`）。应用想改说法才调 `with_header_label_key`。
+                let mut g = zephyra_ui::CheckboxGroup::new(CHECK_GROUP_KEY);
+                for (i, (key, label_key)) in CHECKS.iter().zip(CHECK_LABEL_KEYS).enumerate() {
+                    g.push(key, label_key);
                     let item = g.item_mut(key).expect("刚 push 进去的子项必然存在");
                     if i == 0 {
                         item.set_state(zephyra_ui::CheckState::Checked);
@@ -1309,6 +1446,9 @@ impl zypui::Host for Gallery {
             // `zephyra_ui::CheckState::class_word()` 产出，与样式表的
             // `.checked` / `.indeterminate` 同名 —— 两处同改。
             "check_group_state" => S(g.check_group.header_state().class_word()),
+            // ⚠ 子项给的是 **label_key**（语义 key），不是文案 ——
+            // 译文由控件模板内部 `tr()` 产生。给文案的话切语言时子项
+            // 标签不会跟着变，而**组头**变了 —— 一组里两种语言，最难查。
             "check_group_items" => L(g
                 .check_group
                 .items()
@@ -1316,12 +1456,16 @@ impl zypui::Host for Gallery {
                 .map(|i| {
                     rec(vec![
                         ("id", S(i.key())),
-                        ("label", S(i.label())),
+                        ("label_key", S(i.label_key())),
                         ("state", S(i.class_word())),
                         ("disabled", B(i.is_disabled())),
                     ])
                 })
                 .collect()),
+            // 组头的标签 key 来自**控件层**的默认（`zephyra.checkbox.select-all`）。
+            // Rust 模型是唯一真相源 ⇒ 模板不必再写一遍 key，也就不会出现
+            // 「模型说 A、模板说 B」这种两处不一致（画面上只表现为文案不对）。
+            "check_group_header_key" => S(g.check_group.header_label_key()),
 
             "bp_text" => S(bp_text(g)),
             "wants_dark" => B(g.wants_dark),

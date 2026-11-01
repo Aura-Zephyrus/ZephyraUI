@@ -9,6 +9,7 @@
 //! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
 //! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
 //! | 控件的**状态模型**（[`checkbox`]） | 状态**存哪**（那是宿主的事） |
+//! | 控件**自身语义**的文案（[`i18n`]） | 应用自己的文案表 |
 //!
 //! # 结构的真相只有一份：`.zypui`
 //!
@@ -29,11 +30,25 @@
 //!
 //! 2. **本 crate 不依赖渲染后端。** 控件库的用户不该被迫引入 D3D12。
 //!    后端由应用（`gallery/`）用 feature 选。
+//!
+//! # i18n：控件只发 key
+//!
+//! 控件模板的文案参数收**语义 key**，翻译发生在控件内部（`tr()` → 宿主的
+//! 文案表）。于是控件层**永远不发面向用户的文案** —— 这条门禁就做在
+//! `gallery/tests/gates.rs` 里。
+//!
+//! 控件**自身语义**的文案（复选框组组头的「全选」）归 [`i18n`]，自带三语言
+//! 默认译文，应用可覆盖。
 
 pub mod checkbox;
+pub mod i18n;
 pub mod styles;
 pub mod tokens;
 
 pub use checkbox::{CheckState, Checkbox, CheckboxGroup};
+pub use i18n::{
+    builtin_messages, is_key_param, merge_builtin, resolve, BUILTIN_KEYS, CHECKBOX_SELECT_ALL,
+    KEY_PARAMS, NAMESPACE,
+};
 pub use styles::{stylesheet, STYLESHEETS};
 pub use tokens as token_names;

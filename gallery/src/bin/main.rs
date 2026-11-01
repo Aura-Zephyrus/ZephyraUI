@@ -198,6 +198,17 @@ fn run_window_path(want_light: bool) {
             }
         }
     }
+    // `--lang <tag>`：强制语言（**窗口路也必须解析**）。
+    //
+    // ⚠ 与 `--route` / `--family` 同款理由：参数必须**两边都解析**。
+    // `--lang` 原本只在 [`dump_cpu`] 里被消费，窗口路读不到 —— 于是
+    // 「`--lang en` 开窗口」看到的仍是系统语言（本机是 zh-Hans），
+    // 而命令行说的是「强制」。
+    //
+    // 这一条对**验 i18n** 尤其要紧：中日文能不能在真窗口里看对，只有
+    // 走窗口路才验得到（dump 路不读系统字形）。
+    apply_forced_language(&args, &mut view);
+
     let mut app = Bootstrap {
         inner: None,
         view: Some(view),
@@ -439,6 +450,33 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.get(i + 1).map(|s| s.as_str())
 }
 
+/// `--lang <tag>`：**强制**语言。**两条路（窗口 / dump）都必须调它。**
+///
+/// # 为什么必须是同一个函数
+///
+/// `--route` 与 `--family` 都已经因为「只在一边解析」栽过（见 `run_window_path`
+/// 里那两处的注释）。`--lang` 是同一个坑的第三次机会 —— 而且它恰好是**最
+/// 需要在窗口路生效**的那个：它的用途正是「在本机（系统语言 zh-Hans）看
+/// 另一种语言」，只生效在 dump 路的话，就只能看静态图、看不了真窗口。
+///
+/// # 为什么要走 `force_language` 而不是直接改 `lang`
+///
+/// 窗口路第一帧会做**系统语言协商**（`Gallery::on_input`），它会把 `lang`
+/// 改回系统那个。`force_language` 同时把「已协商」置真，于是强制生效。
+///
+/// 未知语言**报错退出**，不静默回落：静默回落给出一屏英文，而那看起来
+/// 像「功能没接上」。
+fn apply_forced_language(args: &[String], view: &mut Gallery) {
+    let Some(tag) = flag_value(args, "--lang") else {
+        return;
+    };
+    let Some(idx) = SUPPORTED.iter().position(|s| *s == tag) else {
+        eprintln!("[gallery] 未知语言 {tag:?}；可用：{}", SUPPORTED.join(" "));
+        std::process::exit(2);
+    };
+    view.force_language(idx);
+}
+
 /// 逐帧改视口的计时 —— resize 路径的实测。
 ///
 /// # 为什么单独一个模式而不是给 `--bench` 加个参数
@@ -576,18 +614,11 @@ fn dump_cpu(light: bool) {
     // 为什么需要它：dump 路不读系统语言（Gallery::default 的 prefs 是空的，
     // 于是走回落分支），所以中日文只能这样才看得到。而中日文能不能真正出图，
     // 正是 i18n 唯一无法用纯 CPU 断言覆盖的部分 —— 字形在宿主的字形图集里
-    // （见 docs/developer/i18n.md §7）。给一个开关，比让下一个人以为"中日文没接"要好。
-    if let Some(tag) = flag_value(&args, "--lang") {
-        match SUPPORTED.iter().position(|s| *s == tag) {
-            Some(idx) => view.lang = idx,
-            None => {
-                // 未知语言**报错退出**，不静默回落：`--lang zh_Hant`（下划线）
-                // 这类拼错会给出英文界面，而那看起来像"功能没接上"。
-                eprintln!("[gallery] 未知语言 {tag:?}；可用：{}", SUPPORTED.join(" "));
-                std::process::exit(2);
-            }
-        }
-    }
+    // （见 docs/developer/i18n.md §8）。给一个开关，比让下一个人以为"中日文没接"要好。
+    //
+    // ⚠ 走**共用**的 `apply_forced_language`（窗口路也调它）—— 见那里的
+    // 「为什么必须是同一个函数」。
+    apply_forced_language(&args, &mut view);
     // `--enter-ms <n>`：把入场动画时钟拨到指定毫秒，供**像素自验**用。
     //
     // 为什么需要它：动画只在"换路由之后的 333 ms 内"存在，而 dump 路只渲染

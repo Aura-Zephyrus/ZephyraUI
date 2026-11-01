@@ -12,14 +12,30 @@
      - 交互态只住组件模板里；实例 key（Use 的 key）是 hover/press 基准。
      - 数据驱动列表的逐项状态用 hover(key) / press(key) 显式给 key。
      - 可选图标位用 if cond="icon"：实参缺省即假。
-     - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。 -->
+     - 内置词 `key` = 当前实例 key（expander 家族「可点区域 = 实例 key」）。
 
-<component name="Button" params="label icon variant material">
+     # 文案：控件只发 key，翻译在控件内部发生
+
+     Button / PillButton / RoundButton / CheckBox / CheckBoxGroup 的文案有**两条通道**：
+
+     - `label_key` —— **语义 key**（不是文案）。控件内部 `tr()` 翻译它。
+       静态文案走这条：`<Button label_key="ui.ok"/>`。
+     - `label` —— **已翻译的文案**。给动态文本（「删除 3 项」这种每帧不同的）
+       用；静态文案不走这条（否则切语言时它不跟着变）。
+
+     模板里择一：`text="{label_key ? tr(label_key) : label}"`。
+
+     ⚠ 控件层**不发面向用户的文案** —— 本文件里 `text=` 的值一律是表达式，
+     裸字面量会被门禁拦下（`gallery/tests/gates.rs`）。控件**自身语义**的
+     文案（复选框组组头的「全选」）归 `ZephyraUI/src/i18n.rs`，自带三语言
+     默认译文，应用可覆盖。 -->
+
+<component name="Button" params="label label_key icon variant material">
   <control interactive="true" focusable="true" activatable="true" class="button {variant} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-icon"/>
     </if>
-    <text key="label" text="{label}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-label"/>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{variant} {press ? 'pressed' : (hover ? 'hovered' : '')} btn-label"/>
   </control>
 </component>
 
@@ -29,12 +45,12 @@
   </control>
 </component>
 
-<component name="PillButton" params="label icon checked">
+<component name="PillButton" params="label label_key icon checked">
   <control interactive="true" class="pill {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-icon"/>
     </if>
-    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-label"/>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} pill-label"/>
   </control>
 </component>
 
@@ -108,7 +124,7 @@
 
      键盘可达：focusable 进 Tab 序、activatable 让 Space/Enter 触发点击
      （core 的 `ActivationState` 复用 pressed 通道，应用零改动）。 -->
-<component name="CheckBox" params="label state tristate disabled">
+<component name="CheckBox" params="label label_key state tristate disabled">
   <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="check-box {state} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
     <container key="indicator" class="check-indicator {state} {focused ? 'focused'}">
       <container key="mark" icon="check" class="check-mark {state}">
@@ -117,7 +133,7 @@
         </if>
       </container>
     </container>
-    <text key="label" text="{label}" class="{state} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{state} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
   </control>
 </component>
 
@@ -153,14 +169,14 @@
 
      ⚠ 本组件体内**不要用内置词 `key`**：Use 不带 key ⇒ 实例 key 不会推进，
      `{key}` 拿到的是**调用方**的实例 key。用 `{gkey}`。 -->
-<component name="CheckBoxGroup" params="gkey label items state">
+<component name="CheckBoxGroup" params="gkey label label_key items state">
   <container key="{'grp:' + gkey}" class="check-group">
-    <CheckBox key="{gkey}" label="{label}" state="{state}" tristate="{true}"/>
+    <CheckBox key="{gkey}" label="{label}" label_key="{label_key}" state="{state}" tristate="{true}"/>
     <container key="{'items:' + gkey}" class="check-group-items">
       <for var="e" index="i" list="items">
         <container key="{'grow:' + str(i)}" class="check-group-row">
           <container key="indent" class="check-indent"/>
-          <CheckBox key="{e.id}" label="{e.label}" state="{e.state}" disabled="{e.disabled}"/>
+          <CheckBox key="{e.id}" label="{e.label}" label_key="{e.label_key}" state="{e.state}" disabled="{e.disabled}"/>
         </container>
       </for>
     </container>
@@ -351,12 +367,12 @@
 
 <!-- 根类序 [round, round, …]：Rust 版 style("round") + 类表里的 "round"
      各出现一次 —— 忠实复刻现状，parity 对照按此。 -->
-<component name="RoundButton" params="label icon checked">
+<component name="RoundButton" params="label label_key icon checked">
   <control interactive="true" class="round round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <if cond="icon">
       <container key="icon" icon="{icon}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-icon"/>
     </if>
-    <text key="label" text="{label}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-label"/>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="round {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} round-label"/>
   </control>
 </component>
 

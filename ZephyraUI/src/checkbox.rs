@@ -162,7 +162,13 @@ pub fn aggregate(states: &[CheckState]) -> CheckState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checkbox {
     key: &'static str,
-    label: &'static str,
+    /// 标签的**语义 key**（不是文案）。
+    ///
+    /// ⚠ 2026-11-01 起是 key 而不是文本：控件层走 i18n 通道 —— 模板内部
+    /// `tr()` 翻译它。字段名与 `label_key()` 方法名一起改，是为了让**编译器**
+    /// 把所有旧调用点指出来 —— 类型没变（都是 `&'static str`）时，静默改语义
+    /// 会让「英文原文当 key 去查表」正好显示成原文，**画面上一模一样**。
+    label_key: &'static str,
     state: CheckState,
     disabled: bool,
 }
@@ -170,12 +176,18 @@ pub struct Checkbox {
 impl Checkbox {
     /// 新建一个未选中的复选框。
     ///
-    /// `key` 是**事件路由身份**（宿主按它把点击分派回来），`label` 是显示
-    /// 文本（应用自己的文案表给，控件不翻译）。
-    pub fn new(key: &'static str, label: &'static str) -> Self {
+    /// `key` 是**事件路由身份**（宿主按它把点击分派回来），`label_key` 是
+    /// 标签的**语义 key** —— 译文由控件模板内部 `tr()` 从宿主的文案表取。
+    ///
+    /// # 为什么是 key 而不是文本
+    ///
+    /// 控件层**不发面向用户的文案**（`ZephyraUI/src/i18n.rs`）：应用给的是
+    /// key，译文在控件内部产生。静态文案走这条路时，切语言不用改模板；
+    /// 走「文本」通道的动态文案（每帧不同）由宿主直接喂给模板的 `label` 实参。
+    pub fn new(key: &'static str, label_key: &'static str) -> Self {
         Self {
             key,
-            label,
+            label_key,
             state: CheckState::Unchecked,
             disabled: false,
         }
@@ -206,9 +218,9 @@ impl Checkbox {
         self.key
     }
 
-    /// 显示文本。
-    pub fn label(&self) -> &'static str {
-        self.label
+    /// 标签的**语义 key**（不是译文）。
+    pub fn label_key(&self) -> &'static str {
+        self.label_key
     }
 
     /// 当前状态。
@@ -261,22 +273,39 @@ pub struct CheckboxGroup {
 
 impl CheckboxGroup {
     /// 新建一个组。组头初始未选中（组头状态永远派生，不单独设）。
-    pub fn new(header_key: &'static str, header_label: &'static str) -> Self {
+    ///
+    /// 组头的标签默认是**控件语义**的「全选」（[`crate::i18n::CHECKBOX_SELECT_ALL`]）
+    /// —— 组头点了就是「全选 / 全部不选」，这个动作的含义由控件定义，不由应用
+    /// 定义。应用想换说法用 [`CheckboxGroup::with_header_label_key`]。
+    pub fn new(header_key: &'static str) -> Self {
         Self {
-            header: Checkbox::new(header_key, header_label),
+            header: Checkbox::new(header_key, crate::i18n::CHECKBOX_SELECT_ALL),
             items: Vec::new(),
         }
     }
 
+    /// 换掉组头的标签 key（应用覆盖控件的默认说法）。
+    pub fn with_header_label_key(mut self, label_key: &'static str) -> Self {
+        self.header.label_key = label_key;
+        self
+    }
+
+    /// 组头的标签 key（默认 [`crate::i18n::CHECKBOX_SELECT_ALL`]）。
+    pub fn header_label_key(&self) -> &'static str {
+        self.header.label_key()
+    }
+
     /// 追加一个子项，返回它以便继续设置（例如初始状态、禁用）。
-    pub fn push(&mut self, key: &'static str, label: &'static str) -> &mut Checkbox {
-        self.items.push(Checkbox::new(key, label));
+    ///
+    /// `label_key` 是标签的**语义 key**（译文由控件模板内部 `tr()` 取）。
+    pub fn push(&mut self, key: &'static str, label_key: &'static str) -> &mut Checkbox {
+        self.items.push(Checkbox::new(key, label_key));
         self.items.last_mut().expect("刚 push 进去的子项必然存在")
     }
 
     /// 追加一个子项并返回整个组（链式用法）。
-    pub fn with_item(mut self, key: &'static str, label: &'static str) -> Self {
-        self.push(key, label);
+    pub fn with_item(mut self, key: &'static str, label_key: &'static str) -> Self {
+        self.push(key, label_key);
         self
     }
 

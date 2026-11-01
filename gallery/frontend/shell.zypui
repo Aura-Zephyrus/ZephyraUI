@@ -49,7 +49,7 @@
   <PageRoot key="guide" cls="page-guide">
     <TextLabel key="guide-blurb" text="{tr('ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline')}" level="text-body"/>
     <DemoRow label="{tr('ui.counter')}">
-      <Button key="guide-inc" label="{tr('ui.click-me')}" variant="accent"/>
+      <Button key="guide-inc" label_key="ui.click-me" variant="accent"/>
     </DemoRow>
     <text key="guide-count" text="{@cnt_text}" class="text-title"/>
   </PageRoot>
@@ -57,10 +57,10 @@
 
 <component name="PageState">
   <PageRoot key="state" cls="page-state">
-    <TextLabel key="state-blurb" text="Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug." level="text-body"/>
-    <Section key="state-wired" title="Wired to state">
+    <TextLabel key="state-blurb" text="{tr('ui.wired-controls-change-state-on-click-display-only-controls-dont-thats-a-core-boundary-not-a-bug')}" level="text-body"/>
+    <Section key="state-wired" title="{tr('ui.wired-to-state')}">
       <DemoRow label="{tr('ui.checkbox')}">
-        <CheckBox key="state-check" label="Toggle me" state="{@demo_check}"/>
+        <CheckBox key="state-check" label_key="ui.check.toggle-me" state="{@demo_check}"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -68,26 +68,26 @@
 
 <component name="PageStyling">
   <PageRoot key="styling" cls="page-styling">
-    <TextLabel key="styling-blurb" text="Appearance lives in .zstyle. Source sends keys and class names only — no colors, no sizes." level="text-body"/>
-    <Section key="styling-tokens" title="Colors come from theme tokens">
+    <TextLabel key="styling-blurb" text="{tr('ui.appearance-lives-in-zstyle-source-sends-keys-and-class-names-only-no-colors-no-sizes')}" level="text-body"/>
+    <Section key="styling-tokens" title="{tr('ui.colors-come-from-theme-tokens')}">
       <DemoRow label="{tr('ui.token-colored-text')}">
-        <TextLabel key="styling-note" text="This color is @content_secondary" level="styling-note"/>
+        <TextLabel key="styling-note" text="{tr('ui.this-color-is-content-secondary')}" level="styling-note"/>
       </DemoRow>
     </Section>
-    <Section key="styling-classes" title="Class names are selectors">
+    <Section key="styling-classes" title="{tr('ui.class-names-are-selectors')}">
       <DemoRow label="{tr('ui.primary')}">
-        <Button key="act:style-primary" label="Primary" variant="accent"/>
+        <Button key="act:style-primary" label_key="ui.primary" variant="accent"/>
       </DemoRow>
       <DemoRow label="{tr('ui.subtle')}">
-        <Button key="act:style-subtle" label="Subtle" variant="subtle"/>
+        <Button key="act:style-subtle" label_key="ui.subtle" variant="subtle"/>
       </DemoRow>
       <DemoRow label="{tr('ui.standard')}">
-        <Button key="act:style-standard" label="Standard" variant="standard"/>
+        <Button key="act:style-standard" label_key="ui.standard" variant="standard"/>
       </DemoRow>
     </Section>
-    <Section key="styling-layout" title="Layout-affecting properties">
+    <Section key="styling-layout" title="{tr('ui.layout-affecting-properties')}">
       <DemoRow label="{tr('ui.spacing-demo')}">
-        <TextLabel key="styling-layout-note" text="Spacing is declared affects_layout so color-only changes skip relayout" level="text-caption"/>
+        <TextLabel key="styling-layout-note" text="{tr('ui.spacing-is-declared-affects-layout-so-color-only-changes-skip-relayout')}" level="text-caption"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -116,17 +116,17 @@
         </PageRoot>
       </DemoRow>
     </Section>
-    <Section key="layout-breakpoints" title="Breakpoints: small / medium / large">
+    <Section key="layout-breakpoints" title="{tr('ui.breakpoints-small-medium-large')}">
       <DemoRow label="{tr('ui.current-breakpoint')}">
         <TextLabel key="layout-bp" text="{@bp_text}" level="text-body-strong"/>
       </DemoRow>
     </Section>
-    <Section key="layout-touch" title="Touch targets need 44 epx">
+    <Section key="layout-touch" title="{tr('ui.touch-targets-need-44-epx')}">
       <DemoRow label="{tr('ui.44-epx-correct')}">
-        <Button key="act:touch-ok" label="Big enough" variant="standard"/>
+        <Button key="act:touch-ok" label_key="ui.big-enough" variant="standard"/>
       </DemoRow>
       <DemoRow label="{tr('ui.28-epx-too-small')}">
-        <RoundButton key="act:touch-bad" label="Tiny"/>
+        <RoundButton key="act:touch-bad" label_key="ui.tiny"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -134,8 +134,8 @@
 
 <component name="PageTheme">
   <PageRoot key="theme" cls="page-theme">
-    <TextLabel key="theme-blurb" text="Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins." level="text-body"/>
-    <Section key="theme-i18n" title="Language (en / zh-Hans / ja)">
+    <TextLabel key="theme-blurb" text="{tr('ui.theme-is-an-intent-not-a-reference-language-negotiates-from-system-prefs-then-manual-choice-wins')}" level="text-body"/>
+    <Section key="theme-i18n" title="{tr('ui.language-en-zh-hans-ja')}">
       <DemoRow label="English">
         <PillButton key="lang:en" label="English" checked="{@lang == 0}"/>
       </DemoRow>
@@ -146,7 +146,7 @@
         <PillButton key="lang:ja" label="日本語" checked="{@lang == 2}"/>
       </DemoRow>
     </Section>
-    <Section key="theme-current" title="Current locale">
+    <Section key="theme-current" title="{tr('ui.current-locale')}">
       <DemoRow label="{tr('ui.you-are-here')}">
         <TextLabel key="theme-locale" text="{@locale_name}" level="text-body-strong"/>
       </DemoRow>
@@ -156,8 +156,8 @@
 
 <component name="PageTesting">
   <PageRoot key="testing" cls="page-testing">
-    <TextLabel key="testing-blurb" text="Three layers of self-verification, from fastest to slowest. Each guards a different class of silent failure." level="text-body"/>
-    <Section key="testing-current" title="Current state">
+    <TextLabel key="testing-blurb" text="{tr('ui.three-layers-of-self-verification-from-fastest-to-slowest-each-guards-a-different-class-of-silent-failure')}" level="text-body"/>
+    <Section key="testing-current" title="{tr('ui.current-state')}">
       <DemoRow label="{tr('ui.route')}">
         <TextLabel key="testing-route" text="{@route}" level="text-body"/>
       </DemoRow>
@@ -168,31 +168,31 @@
         <TextLabel key="testing-theme" text="{@theme_text}" level="text-body"/>
       </DemoRow>
     </Section>
-    <Section key="testing-zstyle" title="1. Stylesheet syntax">
+    <Section key="testing-zstyle" title="{tr('ui.1-stylesheet-syntax')}">
       <DemoRow label="{tr('ui.check-a-stylesheet')}">
         <TextLabel key="testing-zstyle-cmd" text="cargo run -p zstylec -- check pages.zstyle" level="text-caption"/>
       </DemoRow>
     </Section>
-    <Section key="testing-dump" title="2. CPU raster dump">
+    <Section key="testing-dump" title="{tr('ui.2-cpu-raster-dump')}">
       <DemoRow label="{tr('ui.dump-current-route')}">
         <TextLabel key="testing-dump-cmd" text="cargo run -p zephyra-gallery --bin gallery -- --dump-cpu" level="text-caption"/>
       </DemoRow>
       <DemoRow label="{tr('ui.dump-a-specific-route')}">
         <TextLabel key="testing-dump-route" text="  --route reference --lang zh-Hans" level="text-caption"/>
       </DemoRow>
-      <DemoRow label="Dump one reference family">
+      <DemoRow label="{tr('ui.dump-one-reference-family')}">
         <TextLabel key="testing-dump-family" text="  --family 3   # --list-families 列合法值" level="text-caption"/>
       </DemoRow>
     </Section>
-    <Section key="testing-gates" title="3. Tree-level gates">
+    <Section key="testing-gates" title="{tr('ui.3-tree-level-gates')}">
       <DemoRow label="{tr('ui.run-all-gallery-gates')}">
         <TextLabel key="testing-gates-cmd" text="cargo test -p zephyra-gallery" level="text-caption"/>
       </DemoRow>
       <DemoRow label="{tr('ui.what-they-guard')}">
-        <TextLabel key="testing-gates-what" text="Style tokens, dead rules, hit-test, breakpoints, no appearance in source" level="text-caption"/>
+        <TextLabel key="testing-gates-what" text="{tr('ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source')}" level="text-caption"/>
       </DemoRow>
     </Section>
-    <Section key="testing-try" title="Try it: switch language (same state as --lang)">
+    <Section key="testing-try" title="{tr('ui.try-it-switch-language-same-state-as-lang')}">
       <DemoRow label="{tr('ui.language')}">
         <for var="e" index="i" list="@langs">
           <PillButton key="{e.id}" label="{e.label}" checked="{@lang == i}"/>
@@ -206,7 +206,7 @@
 
 <component name="PageReference">
   <PageRoot key="reference" cls="page-reference">
-    <TextLabel key="reference-blurb" text="Control reference — pick a family to see its controls." level="text-body"/>
+    <TextLabel key="reference-blurb" text="{tr('ui.control-reference-pick-a-family-to-see-its-controls')}" level="text-body"/>
     <Segmented key="ref-family" items="{@ref_segs}" sel="{@ref_sel}"/>
     <if cond="@ref_family == 0">
       <PageButtons/>
@@ -221,20 +221,20 @@
   <PageRoot key="buttons" cls="page-buttons">
     <Section key="sec-btns" title="{tr('ui.button')}">
       <DemoRow label="{tr('ui.variants')}">
-        <Button key="act:standard" label="{tr('ui.standard')}" variant="standard"/>
-        <Button key="act:accent" label="{tr('ui.accent')}" variant="accent"/>
-        <Button key="act:subtle" label="{tr('ui.subtle')}" variant="subtle"/>
+        <Button key="act:standard" label_key="ui.standard" variant="standard"/>
+        <Button key="act:accent" label_key="ui.accent" variant="accent"/>
+        <Button key="act:subtle" label_key="ui.subtle" variant="subtle"/>
       </DemoRow>
       <DemoRow label="{tr('ui.with-icon-round')}">
-        <Button key="act:send" label="{tr('ui.send')}" icon="pen" variant="accent"/>
-        <PillButton key="pill-a" label="{tr('ui.pill')}" icon="star" checked="{@pill_on}"/>
+        <Button key="act:send" label_key="ui.send" icon="pen" variant="accent"/>
+        <PillButton key="pill-a" label_key="ui.pill" icon="star" checked="{@pill_on}"/>
         <RoundButton key="round-a" label="" icon="chevron-up"/>
         <RoundButton key="round-b" label="" icon="close" checked="{true}"/>
       </DemoRow>
       <DemoRow label="{tr('ui.materials')}">
-        <Button key="act:solid" label="{tr('ui.solid')}" variant="standard"/>
-        <Button key="act:frosted" label="{tr('ui.frosted')}" variant="standard" material="frosted"/>
-        <Button key="act:glass" label="{tr('ui.glass')}" variant="subtle" material="glass"/>
+        <Button key="act:solid" label_key="ui.solid" variant="standard"/>
+        <Button key="act:frosted" label_key="ui.frosted" variant="standard" material="frosted"/>
+        <Button key="act:glass" label_key="ui.glass" variant="subtle" material="glass"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -242,9 +242,9 @@
 
 <component name="PageCheckbox">
   <PageRoot key="checkbox" cls="page-checkbox">
-    <Section key="sec-check" title="Checkbox">
+    <Section key="sec-check" title="{tr('ui.checkbox')}">
       <DemoRow label="{tr('ui.multiple')}">
-        <CheckBoxGroup gkey="group:checks" label="Select all" items="{@check_group_items}" state="{@check_group_state}"/>
+        <CheckBoxGroup gkey="group:checks" label_key="{@check_group_header_key}" items="{@check_group_items}" state="{@check_group_state}"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -348,7 +348,7 @@
           <container key="header-tools" class="header-tools">
             <TextLabel key="last-action" text="{@last_action}" level="text-caption"/>
             <ToolButton key="theme-toggle" icon="light"/>
-            <Button key="act:feedback" label="{tr('action.feedback')}" icon="bell" variant="subtle"/>
+            <Button key="act:feedback" label_key="action.feedback" icon="bell" variant="subtle"/>
           </container>
         </container>
         <container key="page" class="page {@enter_class}">

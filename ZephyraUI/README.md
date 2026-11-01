@@ -12,6 +12,8 @@
 | `ui/controls.zypui` | 54 个控件的**结构**（声明式组件模板） | 应用的 `build.rs` 直接读这份文件编译 |
 | `controls-*.zstyle` | 16 份控件样式表，`src/styles.rs` 用 `include_str!` 内嵌 | `STYLESHEETS` |
 | `src/tokens.rs` | `@令牌` 名单镜像（对 `Theme::role()` 逐个校验） | `tokens::ALL` |
+| `src/checkbox.rs` | 复选框的**状态模型**（三态 / 组 / 禁用） | `CheckState` / `Checkbox` / `CheckboxGroup` |
+| `src/i18n.rs` | 控件**自身语义**的文案 + 「哪些实参收语义 key」的契约表 | `merge_builtin` / `KEY_PARAMS` |
 
 **没有 Rust 控件构造器。** 曾经有 59 个（`src/controls/*.rs`，1900 行），与
 `.zypui` 逐字节 parity；全仓除 parity 测试外无人消费，却让每个控件改一次要改两处，
@@ -22,9 +24,9 @@
 ```
 zephyra-core   零依赖，禁 unsafe
      ↑
-ZephyraUI     本 crate：控件样式表 + 令牌 + 结构声明（零后端）
+ZephyraUI     本 crate：控件样式表 + 令牌 + 结构声明 + 控件语义文案（零后端）
      ↑
-gallery        应用：编译 controls.zypui + 页面编排 + 路由 + i18n + 宿主接线
+gallery        应用：编译 controls.zypui + 页面编排 + 路由 + 应用文案表 + 宿主接线
 ```
 
 **不依赖任何渲染后端。** 不出现 `D3D` / `Vulkan` / `wgpu`，也不做 `#[cfg(windows)]`
@@ -56,12 +58,38 @@ zypuic::compile(&[(controls_name, controls_src), (shell_name, shell_src)])
 
 门禁按**整棵树 × 全部页面 × 全部交互态**判，比你想的更容易红。
 
-### 2. 文案归应用
+### 2. 控件只发 key，翻译在控件内部发生
 
-控件**不发**可见文字，除了调用方**显式传进来**的那些。控件层里不许出现
-「日一二三四五六」这种写死的中文表头（`DatePicker` 的星期头是参数，就是这条的产物）。
+控件**不发**可见文字。模板里的文案实参收**语义 key**，控件内部 `tr()` 翻译它：
 
-控件也不做 i18n：`zephyra_core::i18n` 不在这里。
+```xml
+<component name="Button" params="label label_key icon variant material">
+  <text key="label" text="{label_key ? tr(label_key) : label}" class="…"/>
+```
+
+- `label_key` —— **语义 key**（`ui.send`）：静态文案走这条，控件翻译；
+- `label` —— **已翻译的文案**：动态文本（「删除 3 项」这种每帧不同的）走这条。
+
+控件层里不许出现「日一二三四五六」这种写死的中文表头（`DatePicker` 的星期头是
+参数，就是这条的产物）。
+
+门禁：`gallery/tests/gates.rs::control_layer_templates_emit_no_user_facing_text`
+（控件层模板**零**裸文案，无豁免）。
+
+#### 控件**自身语义**的文案归本层
+
+复选框组组头那句「全选」是**控件语义**（组头 = 全选 / 全部不选），不是应用语义 ——
+换应用时这一行不用改，而它恰恰是最容易漏翻的一行（不像子项那样每个应用都写一遍）。
+
+所以 `src/i18n.rs` 自带三语言默认译文（`zephyra.checkbox.select-all`），应用可覆盖：
+
+```rust
+let mut msgs = app_messages();
+zephyra_ui::i18n::merge_builtin(&mut msgs);   // 单向：应用条目优先
+```
+
+⚠ 这是本 crate **唯一**用到 `zephyra_core::i18n` 的地方。应用自己的文案表仍然归应用 ——
+本层只提供**合并**入口。规范见 `docs/developer/i18n.md` §6。
 
 ### 3. 分类名必须存在
 

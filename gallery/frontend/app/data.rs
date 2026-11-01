@@ -54,6 +54,17 @@ pub(crate) const CAPTION_BUTTONS: &[(&str, &str, bool)] = &[
 ];
 
 /// 语言段（testing 页的切换钮 —— key 带 `lang:` 前缀，`click` 两种形态都认）。
+/// 语言段（语言选择器的那几项）。
+///
+/// # 文案为什么**不进**文案表
+///
+/// 语言名用**各自语言写自己**（English / 中文 / 日本語）—— 它们是**自称**，
+/// 不是翻译：放进表里要填 3×3 = 9 条两两相同的内容，而那 9 条迟早会被误改成
+/// 「翻译」，而那正是错的。详见 `docs/developer/i18n.md` §5.2。
+///
+/// 代价是模板里也有同样三个字面量（`DemoRow` 的行首标签 + `PillButton` 的
+/// 标签）⇒ 它们在 i18n 硬门禁的**豁免表**里（`gallery/tests/gates.rs` 的
+/// `LITERAL_ALLOWLIST`）。
 pub(crate) fn langs() -> Val {
     Val::L(vec![
         item("lang:en", "English"),

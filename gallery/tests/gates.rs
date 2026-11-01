@@ -1365,7 +1365,24 @@ fn every_language_name_is_counted_in_the_same_order() {
         SUPPORTED.len(),
         "自称列表与语言表长度不一致（下标错位 = 选了 A 得到 B）"
     );
-    let n_keys = catalog_keys().len();
+    // 键集合 = **应用的表 + 控件层的自带文案**（`messages()` 是并表后的）。
+    //
+    // ⚠ 2026-11-01 起控件层也带文案（复选框组组头的「全选」），所以键集合
+    // 不再等于应用表的大小。少算控件层那几条 ⇒ 每门语言都少同样的数量 ⇒
+    // **这条门禁会恒红**（不是恒绿，但一样是假的信号）。
+    let app_keys = catalog_keys();
+    let n_keys = app_keys.len() + zephyra_ui::i18n::BUILTIN_KEYS.len();
+
+    // 撞名检查：两层用不同前缀（`zephyra.` vs 应用自己的），撞了就说明
+    // 命名空间守则破了。撞名的后果是「控件层的默认值被应用的条目吃掉」，
+    // 而症状只是组头那句变成了别的说法 —— 极难归因。
+    for k in zephyra_ui::i18n::BUILTIN_KEYS {
+        assert!(
+            !app_keys.contains(k),
+            "控件层 key `{k}` 与应用表撞名 —— 两层的前缀约定破了"
+        );
+    }
+
     for lang in SUPPORTED {
         assert_eq!(
             messages().len_for(lang),
@@ -1601,6 +1618,67 @@ fn a_manual_language_choice_survives_the_system_negotiation() {
         "Quick start",
         "界面文案必须真的切到中文，而不只是状态字段变了"
     );
+}
+
+/// 命令行 `--lang` 指定的语言必须**活过**系统的首次协商。
+///
+/// # 这条钉的是一个真实 bug
+///
+/// `--lang` 的文档写的是「强制语言」，但实现只是 `view.lang = idx` ——
+/// 而窗口路第一帧的 `on_input` 会做**系统语言协商**，把 `lang` 改回系统
+/// 那个。本机系统语言是 zh-Hans，于是 `--lang en` 也显示中文。
+///
+/// 症状难查的原因：**在系统语言恰好就是目标语言的机器上完全看不出来**。
+/// 而 `--lang en` / `--lang ja` 的用途正是「在本机（中文）看另一种语言」
+/// —— 也就是说这个 bug 恰好在它唯一有用的场景里发作。
+///
+/// # 为什么钉在**库**这一层而不是命令行那一层
+///
+/// 命令行是二进制，门禁 crate 引不到它。把「强制语言」收成
+/// [`Gallery::force_language`]（它同时置「已协商」），不变量就住在库里 ——
+/// 命令行只能调它，于是没有第二条路可走。
+#[test]
+fn a_forced_language_survives_the_system_negotiation() {
+    use zephyra_fx::InputState;
+
+    // 本机真实形状：系统语言是简体中文。
+    let system = vec!["zh-Hans".to_string()];
+
+    let mut g = Gallery::default();
+    g.force_language(0); // 强制英文
+    assert_eq!(g.locale(), "en", "强制语言没生效");
+
+    // 首帧：系统语言到了。若不钉「已协商」，这里就会把英文改回中文。
+    g.on_input(&InputState {
+        hovered: None,
+        pressed: None,
+        pointers: 0,
+        viewport: (1400.0, 800.0),
+        scale: 1.0,
+        dt_ms: 16.0,
+        languages: system.clone(),
+        ..InputState::default()
+    });
+    assert_eq!(
+        g.locale(),
+        "en",
+        "系统协商把 `--lang` 指定的语言改回去了 —— 强制语言没生效"
+    );
+    assert_eq!(
+        g.tr("route.guide"),
+        "Quick start",
+        "界面文案必须真的是英文，而不只是状态字段变了"
+    );
+
+    // 再来几帧：协商只跑一次，之后也不能翻。
+    for _ in 0..3 {
+        g.on_input(&InputState {
+            languages: system.clone(),
+            dt_ms: 16.0,
+            ..InputState::default()
+        });
+    }
+    assert_eq!(g.locale(), "en", "后续帧把强制语言翻回去了");
 }
 
 /// 系统语言**只**协商一次；协商失败也不重跑。
@@ -3421,7 +3499,7 @@ fn the_checkbox_group_header_is_keyboard_reachable() {
 /// `cfg(windows)`）—— 所以这条门禁在任何机器上都跑得了。
 #[test]
 fn the_accessibility_tree_matches_the_painted_controls() {
-    use zephyra_gallery::app::{CHECKS, CHECK_GROUP_KEY, CHECK_LABELS};
+    use zephyra_gallery::app::{CHECKS, CHECK_GROUP_KEY, CHECK_LABEL_KEYS};
     use zephyra_uia::{Role, ToggleState, WindowInfo};
 
     let theme = Theme::builtin(ThemeVariant::Dark);
@@ -3460,7 +3538,14 @@ fn the_accessibility_tree_matches_the_painted_controls() {
         .find_by_key(CHECK_GROUP_KEY)
         .expect("组头必须在无障碍树上");
     assert_eq!(header.role, Role::CheckBox, "组头是复选框");
-    assert_eq!(header.name, "Select all", "组头的可访问名");
+    // 组头的可访问名来自**控件层自带**的默认译文（`zephyra.checkbox.select-all`）——
+    // 应用没写任何东西，它照样是对的。这条断言同时证明「控件层的默认文案
+    // 真的并进了应用的表」（并表方向错的话这里会显示 key 本身）。
+    assert_eq!(
+        header.name,
+        g.tr(g.check_group.header_label_key()),
+        "组头的可访问名"
+    );
     assert_eq!(
         header.toggle,
         Some(toggle_of(g.check_group.header_state().class_word())),
@@ -3473,7 +3558,9 @@ fn the_accessibility_tree_matches_the_painted_controls() {
             .find_by_key(key)
             .unwrap_or_else(|| panic!("{key} 必须在无障碍树上"));
         assert_eq!(el.role, Role::CheckBox, "{key} 是复选框");
-        assert_eq!(el.name, CHECK_LABELS[i], "{key} 的可访问名");
+        // 可访问名 = **当前语言下**的译文。控件模板内部 `tr()` 出来的，
+        // 所以这条断言量的是「控件层 i18n 通道真的通了」而不是「模型里存了什么」。
+        assert_eq!(el.name, g.tr(CHECK_LABEL_KEYS[i]), "{key} 的可访问名");
         let model = g.check_group.item(key).expect("模型里也要有这个子项");
         assert_eq!(
             el.toggle,
@@ -3503,4 +3590,432 @@ fn the_accessibility_tree_matches_the_painted_controls() {
         "分组下面至少要有组头与子项，实际 {} 个",
         group.children.len()
     );
+}
+
+// ------------------------------------------------------- 门禁：i18n 深度融合
+
+/// 模板里承载**面向用户的文字**的属性名。
+///
+/// # 为什么按**属性名**判，而不是按元素名
+///
+/// 同一个 `label` 在 `Button` 上是按钮文字、在 `DemoRow` 上是行首标签、
+/// 在 `Section` 上根本不存在 —— 三者都是面向用户的文字，一律同判。
+/// 按元素名判就要维护一张「哪些元素的哪个属性是文案」的表，而那张表
+/// 本身会漂移（新组件没人登记）。
+const TEXT_ATTRS: &[&str] = &[
+    "label",
+    "title",
+    "text",
+    "placeholder",
+    "hint",
+    "desc",
+    "tip",
+];
+
+/// 应用模板里**允许**出现的裸字面量（白名单）。
+///
+/// # 为什么要有白名单
+///
+/// 有些字面量**本该**是字面量：命令行、符号、数字。它们不是「漏翻的散文」，
+/// 翻译它们只会产出怪东西（把 `-` 译成别的符号、把 `cargo run …` 译成
+/// 一句读不通的话）。
+///
+/// # 为什么白名单按**值**而不是按位置
+///
+/// 按位置（行号 / 属性序号）的话，改一行模板就全乱；按值的话，新增一个
+/// 命令行只需要往表里加一行 —— 而门禁的报错信息会把它列出来，不会让人
+/// 去猜是哪一处。
+const LITERAL_ALLOWLIST: &[&str] = &[
+    // ---- 命令行（测试页给的复现步骤；翻译它们没有意义）----
+    "cargo run -p zstylec -- check pages.zstyle",
+    "cargo run -p zephyra-gallery --bin gallery -- --dump-cpu",
+    "  --route reference --lang zh-Hans",
+    "  --family 3   # --list-families 列合法值",
+    "cargo test -p zephyra-gallery",
+    // ---- 符号（玻璃参数步进器的 − / +）----
+    "-",
+    "+",
+    // ---- 数字（页头徽章的静态计数）----
+    "12",
+    // ---- 语言自称（English / 中文 / 日本語）----
+    //
+    // ⚠ **故意不进文案表** —— 自称不是翻译（同一种语言名在三种语言下是同一个
+    // 字符串），进表要填 9 条两两相同的内容，而那 9 条迟早被误改成「翻译」。
+    // 详见 `docs/developer/i18n.md` §5.2。
+    "English",
+    "中文",
+    "日本語",
+];
+
+/// 剥掉模板里的 XML 块注释（`<!-- … -->`，可跨多行）。
+///
+/// 注释里写「这里该写 `text="…"`」是正当的，不剥会误报。
+fn strip_zypui_comments(src: &str) -> String {
+    let mut text = String::new();
+    let mut rest = src;
+    while let Some(start) = rest.find("<!--") {
+        text.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end) => rest = &rest[start + end + 3..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    text.push_str(rest);
+    text
+}
+
+/// 扫一份模板源码里所有「**裸**文案属性值」。返回 `(行号, 属性名, 值)`。
+///
+/// # 什么算「裸」
+///
+/// - `text="{tr('ui.x')}"` —— 表达式，**不算**；
+/// - `text="{@bp_text}"` —— 绑定，**不算**；
+/// - `label="ui.x"` —— 字面量，**算**（`label_key` 的语义 key 也算，
+///   但那一条由另一条门禁单独查）；
+/// - `label=""` —— 空串，**不算**（纯图标按钮）。
+fn bare_text_literals(src: &str) -> Vec<(usize, String, String)> {
+    let text = strip_zypui_comments(src);
+    let mut out = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        for attr in TEXT_ATTRS {
+            let pat = format!("{attr}=\"");
+            let mut cursor = 0;
+            while let Some(p) = line[cursor..].find(pat.as_str()) {
+                let at = cursor + p;
+                // 属性名必须是**完整**的：`subtitle="…"` 里也有 `title="`，
+                // 不看前一个字符就会把 `subtitle` 当成 `title` 扫一遍。
+                let prev = line[..at].chars().next_back();
+                if prev.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    cursor = at + pat.len();
+                    continue;
+                }
+                let start = at + pat.len();
+                let Some(end) = line[start..].find('"') else {
+                    break;
+                };
+                let value = &line[start..start + end];
+                cursor = start + end;
+                if value.is_empty() || value.starts_with('{') {
+                    continue;
+                }
+                out.push((idx + 1, (*attr).to_string(), value.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// 控件层模板里不许出现面向用户的裸文案。
+///
+/// # 为什么这条门禁在 **gallery** 里而不在控件层
+///
+/// 控件层自己测不了「我有没有发文案」—— 判据需要知道「什么是面向用户的
+/// 文字」，而那份清单（`TEXT_ATTRS`）随应用变。放在应用侧，两边都在同一
+/// 个 workspace 里，改一处两边同步。
+///
+/// # 为什么控件层**没有**白名单
+///
+/// 应用层至少有「命令行 / 符号 / 数字」这些天然的字面量，控件层没有 ——
+/// 控件发的每个字都是给人看的。控件层哪天真的需要例外（例如内置一个
+/// "×" 关闭符号），再在这里加白名单，并写清理由。
+#[test]
+fn control_layer_templates_emit_no_user_facing_text() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ZephyraUI/ui/controls.zypui");
+    let src =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} 可读: {e}", path.display()));
+
+    let bare = bare_text_literals(&src);
+    let listed = bare
+        .iter()
+        .map(|(l, a, v)| format!("  第 {l} 行 {a}=\"{v}\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        bare.is_empty(),
+        "控件层模板里出现了面向用户的裸文案 —— 控件只发 key，翻译在控件内部发生：\n{listed}"
+    );
+}
+
+/// 应用模板里不许出现面向用户的裸文案（白名单除外）。
+///
+/// # 为什么这条门禁现在才存在
+///
+/// 之前只有「用到的 key 有没有译文」（`every_tr_key_used_in_source_exists_in_every_language`），
+/// 那是**单向**的：模板里写 `label="Toggle me"` 这种硬编码，它根本不是 key，
+/// 门禁看不见它 —— 而切语言时它就是不变。
+///
+/// 症状特别难查：同一页里别的文字变中文了，就它不变，而它看上去完全正常。
+#[test]
+fn app_templates_emit_no_user_facing_text() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("frontend/shell.zypui");
+    let src =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} 可读: {e}", path.display()));
+
+    let bare = bare_text_literals(&src);
+    // 恒真防御：模板里一个文案属性都没有的话，这条门禁在假装通过。
+    assert!(
+        !bare.is_empty(),
+        "模板里一个文案属性都没扫到 —— 扫描规则变了，这条门禁在假装通过"
+    );
+
+    let problems: Vec<String> = bare
+        .iter()
+        .filter(|(_, _, v)| !LITERAL_ALLOWLIST.contains(&v.as_str()))
+        .map(|(l, a, v)| format!("  第 {l} 行 {a}=\"{v}\"（静态文案走 tr('…')，按钮走 label_key）"))
+        .collect();
+    assert!(
+        problems.is_empty(),
+        "应用模板里出现了面向用户的裸文案：\n{}",
+        problems.join("\n")
+    );
+}
+
+/// 每一个 `label_key` 的值，在**每一门语言**下都必须有译文。
+///
+/// # 键从哪来
+///
+/// 两个来源都扫，缺一不可：
+///
+/// 1. **模板里的字面量** —— `<Button label_key="ui.send"/>`；
+/// 2. **Rust 模型里的 key** —— 走**模型本身**（不是扫源码）：
+///    `g.check_group.header_label_key()` / `g.check_group.items()[i].label_key()`
+///    / `g.demo_check.label_key()`。
+///
+/// 走模型而不是扫源码，是因为扫源码认不出「哪个实参是 label key」
+/// （`Checkbox::new(key, label_key)` 两个都是 `&'static str`）—— 认错了
+/// 就把事件 key 当成文案 key 去查表，**每次都红**，而正确的那个反而漏了。
+///
+/// # 为什么这条与 `every_tr_key_used_in_source_exists_in_every_language` 不是一条
+///
+/// 那条查的是 `tr('…')` 的键；这条查的是 `label_key` 的键。控件模板内部
+/// 的 `tr(label_key)` 是**运行期**发生的，源码里扫不到 `tr('…')` ——
+/// 漏了这条，按钮与复选框的文案就能无声地缺译。
+#[test]
+fn every_label_key_exists_in_every_language() {
+    use zephyra_gallery::app::{messages, SUPPORTED};
+
+    let mut keys: Vec<String> = Vec::new();
+    let remember = |k: &str, keys: &mut Vec<String>| {
+        if !keys.iter().any(|x| x == k) {
+            keys.push(k.to_string());
+        }
+    };
+
+    // 1) 模板里的 label_key 字面量。
+    for rel in ["../ZephyraUI/ui/controls.zypui", "frontend/shell.zypui"] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} 可读: {e}", path.display()));
+        for line in strip_zypui_comments(&src).lines() {
+            let mut cursor = 0;
+            while let Some(p) = line[cursor..].find("label_key=\"") {
+                let at = cursor + p;
+                let prev = line[..at].chars().next_back();
+                if prev.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    cursor = at + 11;
+                    continue;
+                }
+                let start = at + 11;
+                let Some(end) = line[start..].find('"') else {
+                    break;
+                };
+                let value = &line[start..start + end];
+                cursor = start + end;
+                if value.starts_with('{') {
+                    continue; // 动态 key：由模型提供，见下面第 2 步
+                }
+                remember(value, &mut keys);
+            }
+        }
+    }
+
+    // 2) Rust 模型里的 key（模型是真相源，不扫源码）。
+    let g = Gallery::default();
+    remember(g.check_group.header_label_key(), &mut keys);
+    for item in g.check_group.items() {
+        remember(item.label_key(), &mut keys);
+    }
+    remember(g.demo_check.label_key(), &mut keys);
+
+    // 恒真防御：一个 key 都没收集到 ⇒ 门禁在假装通过。
+    assert!(
+        keys.len() >= 5,
+        "只收集到 {} 个 label_key —— 收集规则变了，这条门禁在假装通过",
+        keys.len()
+    );
+
+    let msgs = messages();
+    let mut problems: Vec<String> = Vec::new();
+    for key in &keys {
+        for lang in SUPPORTED {
+            if msgs.get(lang, key).is_none() {
+                problems.push(format!("  {key} 在 {lang} 下缺译文"));
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "这些 label_key 在某一门语言下没有译文（控件会显示 key 本身）：\n{}",
+        problems.join("\n")
+    );
+}
+
+/// 控件层的 `KEY_PARAMS` 契约表必须与**控件模板**对得上。
+///
+/// # 这条门禁挡住什么
+///
+/// 契约表说「`Button` 的 `label_key` 实参收语义 key」，而模板里可能：
+///
+/// - **没声明这个实参** ⇒ 应用传 `label_key=` 会在**编译期**报错（zypuic 查）；
+/// - **声明了却没人用** ⇒ 实参收下了没人翻译，画面上显示的是 **key 本身**
+///   （`ui.send`）—— 而编译期不报错、运行期不崩、别的门禁也不红。
+///
+/// # 「没人用」怎么判
+///
+/// 两种用法都算「用上了」：
+///
+/// - **直接翻译**：体里有 `tr(label_key)`；
+/// - **转发**：体里有 `label_key="{label_key}"`（原样传给子组件）。
+///   `CheckBoxGroup` 就是转发者 —— 它把组头的 key 交给内层的 `CheckBox`。
+///
+/// 但转发必须有**终点**：整个契约表里至少有一个组件直接 `tr(param)`。
+/// 否则「大家都在转发、没人翻译」也能过 —— 那正是这条门禁要挡的。
+#[test]
+fn the_control_layer_key_param_contract_matches_the_template() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ZephyraUI/ui/controls.zypui");
+    let src =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} 可读: {e}", path.display()));
+
+    /// 取一个组件的**声明头**（`<component name="X" …>`）与**体**。
+    fn component_of(src: &str, name: &str) -> Option<(String, String)> {
+        let decl = format!("<component name=\"{name}\"");
+        let at = src.find(&decl)?;
+        let head_end = at + src[at..].find('>')?;
+        let head = src[at..head_end].to_string();
+        let body_start = head_end;
+        let body_end = src[body_start..]
+            .find("</component>")
+            .map(|e| body_start + e)
+            .unwrap_or(src.len());
+        Some((head, src[body_start..body_end].to_string()))
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut translated_somewhere = false;
+
+    for (component, param) in zephyra_ui::i18n::KEY_PARAMS {
+        let Some((head, body)) = component_of(&src, component) else {
+            problems.push(format!("  控件层模板里没有组件 {component}"));
+            continue;
+        };
+        let params = head
+            .split("params=\"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .unwrap_or("");
+        if !params.split_whitespace().any(|p| p == *param) {
+            problems.push(format!(
+                "  组件 {component} 没声明实参 {param}（契约表说它收语义 key）"
+            ));
+            continue;
+        }
+        let direct = body.contains(&format!("tr({param})"));
+        // 转发：`label_key="{label_key}"` —— 实参原样交给子组件。
+        let forwards = body.contains(&format!("{param}=\"{{{param}}}\""));
+        if direct {
+            translated_somewhere = true;
+        } else if !forwards {
+            problems.push(format!(
+                "  组件 {component} 收下了 {param} 却既不翻译也不转发 —— 画面上会显示 key 本身"
+            ));
+        }
+    }
+
+    assert!(
+        translated_somewhere,
+        "契约表里没有任何组件直接 `tr(param)` —— 全在转发、没人翻译"
+    );
+    assert!(
+        problems.is_empty(),
+        "控件层的 key 参数契约与模板对不上：\n{}",
+        problems.join("\n")
+    );
+}
+
+/// 切语言时，按钮与复选框的**可访问名**（= 画面上画出来的那几个字）必须跟着变。
+///
+/// # 为什么这条是「深度融合」的最终证明
+///
+/// 前面的门禁只查**静态**性质：key 在不在表里、模板里有没有裸文案。
+/// 这条查的是**运行期**：同一棵树，把语言从 `en` 切到 `zh-Hans`，控件上的
+/// 字必须变。
+///
+/// 它同时覆盖两条通道：
+///
+/// - **应用通道**（`ui.*`）：按钮的标签来自应用文案表；
+/// - **控件层通道**（`zephyra.*`）：复选框组组头的「全选」来自**控件层自带**
+///   的默认译文 —— 应用一个字都没写，它照样跟着语言变。
+///
+/// # 为什么用无障碍树来量而不是直接读属性
+///
+/// 无障碍名是从元素的 TEXT 属性派生的（`zephyra_uia::rules::accessible_name`），
+/// 所以「可访问名变了」= 「画出来的字变了」。顺带还证明了**无障碍链路**
+/// 拿到的是译文而不是 key —— 屏读器念的也是人话。
+#[test]
+fn switching_the_language_changes_the_button_and_checkbox_labels() {
+    use zephyra_gallery::app::CHECK_GROUP_KEY;
+    use zephyra_uia::WindowInfo;
+
+    // `Gallery::route` 是 `&'static`（每帧重建的树不能持有运行期借用）。
+    fn name_of(route: &'static str, family: usize, lang: usize, key: &str) -> String {
+        let mut g = Gallery::default();
+        g.route = route;
+        g.ref_family = family;
+        g.lang = lang;
+        let theme = Theme::builtin(ThemeVariant::Dark);
+        let ctx = Context::new(&theme);
+        let root = Node::from_element(&g.view(&ctx));
+        let win = WindowInfo {
+            name: "Zephyra Gallery".into(),
+            client: Rect::new(0.0, 0.0, 1400.0, 800.0),
+        };
+        let snap = zephyra_uia::rules::build(&root, &win);
+        snap.find_by_key(key)
+            .unwrap_or_else(|| panic!("{route}/{family}（lang={lang}）：{key} 必须在无障碍树上"))
+            .name
+            .clone()
+    }
+
+    // (路由, 族下标, key, 英文, 简体中文)
+    let cases: &[(&str, usize, &str, &str, &str)] = &[
+        // 组头：控件层自带的默认译文（应用没写任何东西）
+        ("reference", 1, CHECK_GROUP_KEY, "Select all", "全选"),
+        // 子项：应用文案表
+        ("reference", 1, "check:alpha", "Enable feature", "启用功能"),
+        (
+            "reference",
+            1,
+            "check:locked",
+            "Locked option",
+            "锁定的选项",
+        ),
+        // 单个复选框（state 页）
+        ("state", 0, "state-check", "Toggle me", "切换我"),
+        // 按钮族
+        ("reference", 0, "act:standard", "Standard", "标准"),
+        ("reference", 0, "act:send", "Send", "发送"),
+    ];
+
+    for (route, family, key, en, zh) in cases {
+        let got_en = name_of(route, *family, 0, key);
+        let got_zh = name_of(route, *family, 1, key);
+        assert_eq!(&got_en, en, "{route}/{key} 的英文文案");
+        assert_eq!(&got_zh, zh, "{route}/{key} 的中文文案");
+        assert_ne!(got_en, got_zh, "{route}/{key} 切语言后文案没变");
+    }
 }

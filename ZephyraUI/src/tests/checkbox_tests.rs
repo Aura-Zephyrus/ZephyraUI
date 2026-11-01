@@ -89,7 +89,7 @@ fn aggregate_propagates_indeterminate() {
 
 #[test]
 fn checkbox_toggles_between_two_states() {
-    let mut cb = Checkbox::new("k", "标签");
+    let mut cb = Checkbox::new("k", "ui.label");
     assert_eq!(cb.state(), CheckState::Unchecked);
     cb.toggle();
     assert_eq!(cb.state(), CheckState::Checked);
@@ -100,7 +100,7 @@ fn checkbox_toggles_between_two_states() {
 /// 禁用的框点了没反应 —— 否则「禁用」只是画成灰的，点下去还会变。
 #[test]
 fn disabled_checkbox_does_not_toggle() {
-    let mut cb = Checkbox::new("k", "标签").with_disabled(true);
+    let mut cb = Checkbox::new("k", "ui.label").with_disabled(true);
     cb.toggle();
     assert_eq!(cb.state(), CheckState::Unchecked);
     assert!(cb.is_disabled());
@@ -109,10 +109,10 @@ fn disabled_checkbox_does_not_toggle() {
 // ─────────────────────────────── 组 ───────────────────────────────
 
 fn group_of_three() -> CheckboxGroup {
-    let mut g = CheckboxGroup::new("group", "全选");
-    g.push("a", "A");
-    g.push("b", "B");
-    g.push("c", "C");
+    let mut g = CheckboxGroup::new("group");
+    g.push("a", "ui.a");
+    g.push("b", "ui.b");
+    g.push("c", "ui.c");
     g
 }
 
@@ -167,7 +167,7 @@ fn toggle_all_covers_all_deselect_all_and_the_middle_case() {
 /// 空组：组头未选中，且「全选」无副作用。
 #[test]
 fn empty_group_is_unchecked_and_toggle_all_is_a_no_op() {
-    let mut g = CheckboxGroup::new("group", "全选");
+    let mut g = CheckboxGroup::new("group");
     assert!(g.is_empty());
     assert_eq!(g.header_state(), CheckState::Unchecked);
     g.toggle_all();
@@ -188,7 +188,7 @@ fn unknown_key_is_reported_not_ignored() {
 #[test]
 fn disabled_item_is_neither_clickable_nor_bulk_toggled() {
     let mut g = group_of_three();
-    g.push("d", "D").set_disabled(true);
+    g.push("d", "ui.d").set_disabled(true);
 
     assert!(!g.toggle_item("d"));
     assert_eq!(g.item("d").unwrap().state(), CheckState::Unchecked);
@@ -205,7 +205,7 @@ fn disabled_item_is_neither_clickable_nor_bulk_toggled() {
 #[test]
 fn disabled_item_does_not_freeze_the_group_header() {
     let mut g = group_of_three();
-    g.push("d", "D").set_disabled(true);
+    g.push("d", "ui.d").set_disabled(true);
 
     // 聚合只看两个可切换的子项 → 未选中（不是半选）。
     assert_eq!(g.header_state(), CheckState::Unchecked);
@@ -222,9 +222,9 @@ fn disabled_item_does_not_freeze_the_group_header() {
 /// 全组都禁用时，组头是未选中，「全选」无副作用。
 #[test]
 fn all_disabled_group_is_inert() {
-    let mut g = CheckboxGroup::new("group", "全选");
-    g.push("a", "A").set_disabled(true);
-    g.push("b", "B").set_disabled(true);
+    let mut g = CheckboxGroup::new("group");
+    g.push("a", "ui.a").set_disabled(true);
+    g.push("b", "ui.b").set_disabled(true);
 
     assert_eq!(g.header_state(), CheckState::Unchecked);
     g.toggle_all();
