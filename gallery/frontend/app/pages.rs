@@ -8,10 +8,11 @@
 //! 真相。画面上的标题走 [`crate::app::Gallery::tr`]（本地化），不走这里的
 //! 英文原名 —— 两者分开是为了让「路由元数据」不依赖「用户的语言」。
 //!
-//! # 顺序即导航栏从上到下的顺序；Settings 在最后
+//! # 顺序即导航栏从上到下的顺序
 //!
-//! Settings 不在 `ROUTES` 里（它由 shell 置底），但它仍是一个页面，所以
-//! 仍在这里。两份表的分工与门禁见 `mod.rs` 的 `ROUTES` 说明。
+//! 2026-11-01 起设置页整页撤下（它演示的全是「只画得出样子」的控件），
+//! 于是 `ROUTES` 与本表重新变成**同一份页面清单**。两份表的分工与门禁见
+//! `mod.rs` 的 `ROUTES` 说明。
 
 /// `(id, 英文标题, 图标名)`。图标名来自 core 的内置图标集 —— 拼错时
 /// `ICON_NAME` 解析不到、图标**静默**消失，由门禁
@@ -24,10 +25,8 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     ("layout", "Layout", "grid"),
     ("theme", "Theme & i18n", "settings"),
     ("testing", "Testing", "bell"),
-    // ---- 附录：控件参考（一页内 segmented 切九族）----
+    // ---- 附录：控件参考（一页内 segmented 切两族）----
     ("reference", "Controls", "doc"),
     // 液态玻璃：一等路由（四个 `[−]/[+]` 步进器调折射参数）。
     ("glass", "Liquid Glass", "sliders"),
-    // Settings 排在最后，但**不是** `ROUTES` 的一员（它由 shell 置底）。
-    ("settings", "Settings", "settings"),
 ];

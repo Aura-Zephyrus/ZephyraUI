@@ -15,7 +15,7 @@ use zephyra_fx::View;
 use zephyra_style::ir::StyleSheet;
 
 use zephyra_gallery::app::pages::PAGES;
-use zephyra_gallery::app::{Gallery, BASE_COLUMNS, REF_FAMILIES, ROUTES, SETTINGS_ROUTE};
+use zephyra_gallery::app::{Gallery, BASE_COLUMNS, REF_FAMILIES, ROUTES};
 use zephyra_ui::tokens::ALL as TOKENS;
 
 // ---------------------------------------------------------------- 公共帮手
@@ -121,72 +121,21 @@ fn interaction_scripts() -> GateScripts {
         }),
         // 组头点一下 = 全选 / 全部不选。半选时点它 → 全选。
         ("组头全选", |g| g.check_group.toggle_all()),
-        ("选中第三个单选项", |g| g.radio = 2),
-        ("选中第一个单选项", |g| g.radio = 0),
-        ("开主开关", |g| g.switch_on = true),
-        ("关掉主开关", |g| g.switch_on = false),
-        ("切到 list 分段", |g| g.seg = "seg:list"),
-        ("切回 grid 分段", |g| g.seg = "seg:grid"),
-        ("展开 expander", |g| g.expanded = true),
-        ("收起 expander", |g| g.expanded = false),
-        ("ComboBox 前进一项", |g| g.combo = (g.combo + 1) % 4),
-        ("ComboBox 前进第二项", |g| g.combo = (g.combo + 1) % 4),
-        ("SpinBox 加一", |g| g.spin += 1),
-        ("SpinBox 减一", |g| g.spin -= 1),
-        ("打开菜单", |g| g.menu_open = Some(1)),
-        ("关掉菜单", |g| g.menu_open = None),
-        ("展开下拉", |g| g.dd_open = true),
-        ("收起下拉", |g| g.dd_open = false),
         ("切到 reference", |g| g.route = "reference"),
         ("切到 styling", |g| g.route = "styling"),
         ("切到 layout", |g| g.route = "layout"),
-        ("切到 settings", |g| g.route = "settings"),
         ("切回 guide", |g| g.route = "guide"),
-        ("参考页切到玻璃族", |g| {
-            g.route = "reference";
-            g.ref_family = 8;
-        }),
-        ("参考页切到选择族", |g| {
-            g.route = "reference";
-            g.ref_family = 1;
-        }),
-        // ⚠ 十族**每族一个脚本**：族内容只在对应分段被选中时出现在树上，
+        // ⚠ **每一族一个脚本**：族内容只在对应分段被选中时出现在树上，
         // 而 `every_stylesheet_rule_matches_something` 按全部脚本扫形状 ——
-        // 少一个族的脚本，那一族的分类名（`.page-menus` 等）就会被误判成
+        // 少一个族的脚本，那一族的分类名（`.page-checkbox` 等）就会被误判成
         // 死规则，然后有人会去删规则。第一次就踩了这个坑。
-        ("参考页切到布局族", |g| {
-            g.route = "reference";
-            g.ref_family = 2;
-        }),
-        ("参考页切到集合族", |g| {
-            g.route = "reference";
-            g.ref_family = 3;
-        }),
-        ("参考页切到菜单族", |g| {
-            g.route = "reference";
-            g.ref_family = 4;
-        }),
-        ("参考页切到导航族", |g| {
-            g.route = "reference";
-            g.ref_family = 5;
-        }),
-        ("参考页切到状态族", |g| {
-            g.route = "reference";
-            g.ref_family = 6;
-        }),
-        ("参考页切到对话框族", |g| {
-            g.route = "reference";
-            g.ref_family = 7;
-        }),
-        ("参考页切回输入族", |g| {
+        //
+        // 2026-11-01 起参考页只剩两族（Button 族与复选框族）。
+        ("参考页切到按钮族", |g| {
             g.route = "reference";
             g.ref_family = 0;
         }),
-        // ⚠ **每一族一个脚本**（含新增的 `paging`）：族内容只在对应分段被选中
-        // 时出现在树上，而 `every_stylesheet_rule_matches_something` 按全部脚本
-        // 扫形状 —— 少一个族的脚本，那一族的分类名（`.page-paging` 等）就会被
-        // 误判成死规则，然后有人会去删规则。
-        ("参考页切到分页族", |g| {
+        ("参考页切到复选框族", |g| {
             g.route = "reference";
             g.ref_family = REF_FAMILIES.len() - 1;
         }),
@@ -274,11 +223,7 @@ fn the_whole_tree_writes_no_appearance_in_source() {
         &zephyra_core::props::OPACITY,
     ];
 
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let mut seen_nodes = 0;
     for route in routes {
         // hover / pressed 各造一次：某些外观只在某个状态下才泄漏。
@@ -348,11 +293,7 @@ fn every_class_name_the_source_emits_exists_in_the_stylesheet() {
         .iter()
         .flat_map(|r| r.selector.names.iter().copied())
         .collect();
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let mut emitted = 0;
     let mut missing: Vec<String> = Vec::new();
     for route in routes {
@@ -402,11 +343,7 @@ fn every_element_is_reachable_by_the_stylesheet() {
         .filter(|r| r.selector.names.is_empty())
         .filter_map(|r| r.selector.tag)
         .collect();
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let mut total = 0;
     let mut unreachable: Vec<String> = Vec::new();
     for route in routes {
@@ -492,11 +429,7 @@ fn every_token_the_stylesheet_uses_exists_in_theme() {
 /// 每个路由目标页都能造出一棵有规模的树。
 #[test]
 fn every_page_builds_a_real_tree() {
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     for route in routes {
         let root = laid_out(route);
         let n = count_nodes(&root);
@@ -531,11 +464,6 @@ fn shell_metrics_match_stylesheet() {
             "Container.nav-pane",
             "height",
             zephyra_gallery::app::shell::NAV_H,
-        ),
-        (
-            "Container.nav-spacer",
-            "height",
-            zephyra_gallery::app::shell::NAV_SPACER,
         ),
         (
             "Container.content-card",
@@ -668,17 +596,30 @@ fn shell_layout_geometry() {
         rc.height
     );
 
-    // 置底项：底部落在画布内 24px 以内。
+    // 导航栏的最后一项不得溢出导航容器。
     //
-    // ⚠ 期望值随导航栏项数变化：每多一项，Settings 下移一项的高度（≈46px），
-    // 而 `.nav-spacer` 必须同步减少同样的量才能让 Settings 保持在容器底部。
-    // 基准 9 项时落在 794（spacer 324）。改导航栏或 spacer 时同步改这里的数字。
-    let settings = find_by_key(&root, "settings").expect("settings nav item");
-    let rs = settings.rect();
-    let bottom = rs.y + rs.height;
+    // 2026-11-01 起没有「置底项」了（设置页整页撤下），所以不再断言
+    // 「某一项贴在底部」—— 那是置底项特有的性质。现在只守住**不溢出**：
+    // 项数变多而容器高度不变时，最后一项会掉出容器，而症状在画面上只是
+    // 「导航栏最后一项看不见了」。
+    let nav = find_by_key(&root, "nav").expect("nav pane");
+    let nr = nav.rect();
+    let last = ROUTES
+        .iter()
+        .map(|(id, _, _)| *id)
+        .filter_map(|id| find_by_key(&root, id))
+        .map(|n| n.rect())
+        .max_by(|a, b| {
+            (a.y + a.height)
+                .partial_cmp(&(b.y + b.height))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .expect("导航栏至少有一项");
+    let last_bottom = last.y + last.height;
     assert!(
-        (bottom - 794.0).abs() < 24.0,
-        "Settings 应落在导航栏底部附近（约 794），实测 {bottom:.1}"
+        last_bottom <= nr.y + nr.height + 0.5,
+        "导航栏最后一项底部 {last_bottom:.1} 溢出了导航容器（底 {:.1}）",
+        nr.y + nr.height
     );
 }
 
@@ -690,11 +631,7 @@ fn shell_layout_geometry() {
 /// 必须显式命名，而不是悄悄加进一个清单里。
 #[test]
 fn only_fill_nodes_carry_local_width() {
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let mut bad: Vec<String> = Vec::new();
     let mut fills = 0;
     for route in routes {
@@ -721,9 +658,18 @@ fn only_fill_nodes_carry_local_width() {
             }
         });
     }
-    // basic-input 有 2 个滑条、status 有 3 个进度条、settings 有 1 个 ——
-    // 少于 5 说明某页的填充没造出来，这条可能恒真。
-    assert!(fills >= 4, "fill:* 只有 {fills} 个 —— 这条可能恒真");
+    // 2026-11-01 起 gallery 不再演示 Slider / ProgressBar —— 那两个是
+    // 唯一带 `fill:` 局部宽度的控件，于是「fill:* 至少 4 个」这条判据
+    // 永远不成立（恒真 = 这条门禁失去作用）。
+    //
+    // 改成**反向**的更强判据：源码里**一个局部 WIDTH 都不该有**。
+    // 若将来重新引入带填充的控件，把这条改回「WIDTH 只能出现在 key 以
+    // `fill:` 开头的节点上」并恢复计数下界。
+    assert_eq!(
+        fills, 0,
+        "gallery 里不该再有 fill:* 节点 —— 有的话说明某个控件带着局部宽度回来了，\
+         而本条门禁的判据需要按上面的说明改回去"
+    );
     assert!(
         bad.is_empty(),
         "这些节点在源码里写了 WIDTH 但 key 不是 fill:*：\n  {}",
@@ -757,11 +703,7 @@ fn every_icon_name_the_tree_emits_is_registered() {
     // 按文件名去查会把「用词不同」误判成「没登记」，反过来也会把真故障放过去 ——
     // 本条在落地当天就抓到过一次：应用按文件名写了 `dismiss`，而登记名是
     // `close`，于是那个图标位一直是空的。
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let mut used: Vec<String> = Vec::new();
     let mut bad: Vec<String> = Vec::new();
     for route in routes {
@@ -903,8 +845,8 @@ fn hit_test_agrees_with_the_painted_rects() {
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
 
-    // 参考层的十族各有各的排版，`--route reference` 只出第 0 族 ——
-    // 要逐族量，否则另外八族的掉出完全看不见。
+    // 参考层两族各有各的排版，`--route reference` 只出第 0 族 ——
+    // 要逐族量，否则第 1 族的掉出完全看不见。
     let mut pages: Vec<(String, Node)> = zephyra_gallery::app::list_routes()
         .into_iter()
         .map(|route| (route.to_string(), laid_out(route)))
@@ -1275,26 +1217,14 @@ fn the_app_always_asks_for_the_mica_look() {
 /// 正常，所以肉眼与截图都发现不了。
 #[test]
 fn route_table_and_page_table_agree() {
-    // `ROUTES` 是导航项（不含 Settings，它由 shell 置底），`PAGES` 是**全部**
-    // 可构造页面（含 Settings）。所以比较的一边要补上 Settings。
-    let mut from_routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
-    from_routes.push(SETTINGS_ROUTE.0);
+    // 2026-11-01 设置页整页撤下后，`ROUTES`（导航项）与 `PAGES`（全部可构造
+    // 页面）重新变成**同一份清单** —— 之前是 ROUTES + Settings 与 PAGES 比。
+    let from_routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
     let from_pages: Vec<&str> = PAGES.iter().map(|p| p.0).collect();
 
     assert_eq!(
         from_routes, from_pages,
-        "ROUTES+settings 与 PAGES 的 id 集合或顺序不一致 —— 两份表漂了"
-    );
-
-    // Settings 单独置底，不在 ROUTES 里 —— 重复渲染会出两项。
-    assert!(
-        !ROUTES.iter().any(|(id, _, _)| *id == SETTINGS_ROUTE.0),
-        "Settings 不该出现在 ROUTES 里（它由 shell 单独置底）"
-    );
-    assert_eq!(
-        zephyra_gallery::app::resolve_route(SETTINGS_ROUTE.0),
-        Some(SETTINGS_ROUTE.0),
-        "Settings 必须在 resolve_route 的表里，否则侧栏那一项点了没反应"
+        "ROUTES 与 PAGES 的 id 集合或顺序不一致 —— 两份表漂了"
     );
 }
 
@@ -1462,11 +1392,7 @@ fn every_route_id_is_translated_in_every_supported_language() {
     let default = SUPPORTED[0];
 
     let mut problems: Vec<String> = Vec::new();
-    for id in ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain([SETTINGS_ROUTE.0])
-    {
+    for id in ROUTES.iter().map(|(id, _, _)| *id) {
         let key = format!("route.{id}");
         // 键本身必须存在：`route_key()` 找不到 `route.<id>` 时回落到
         // `route.unknown`，而那是个**合法**的 `&'static str` —— 不崩、只显示字面量。
@@ -1733,14 +1659,14 @@ fn the_system_language_is_negotiated_at_most_once() {
     );
 }
 
-/// 控件参考页的**族切换**必须接线：九个 segmented key 都在树上，且真的点了
+/// 控件参考页的**族切换**必须接线：两个 segmented key 都在树上，且真的点了
 /// 都会改 `Gallery::ref_family`。
 ///
 /// # 为什么取代了旧的 `segment_keys_are_all_wired`
 ///
-/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
+/// 参考族不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
 /// `seg:grid` / `seg:list` / `seg:card` 分段随 toggles 路由一起消失。
-/// 新的分段是 `ref:basics` … `ref:paging` 九族，走 [`crate::app::REF_FAMILIES`]
+/// 新的分段是 `ref:buttons` / `ref:checkbox` 两族，走 [`crate::app::REF_FAMILIES`]
 /// 查表 —— 加一族只改那张表，而这条门禁**真的点一遍**证明接线。
 /// （液态玻璃 `ref:effects` 已提升为一等路由 `glass`，不在此表中。）
 ///
@@ -1788,8 +1714,9 @@ fn reference_page_has_all_families() {
     // 内容没跟上」。
     assert_eq!(
         REF_FAMILIES.len(),
-        9,
-        "参考页当前是九族 —— 加族时同步改这里的数字，并确认新族一屏装得下"
+        2,
+        "参考页当前是**两族**（Button 族与复选框族）—— 加族时同步改这里的数字，\
+         并确认新族一屏装得下"
     );
     for (i, fam) in REF_FAMILIES.iter().enumerate() {
         let mut g = Gallery::default();
@@ -1802,15 +1729,8 @@ fn reference_page_has_all_families() {
         // 每族树里必须有该族的特征 key —— 特征 key 是各族组件里第一个
         // 可辨识控件的 key，改控件时同步改这里。
         let probe = match *fam {
-            "basics" => "combo-material",
-            "toggles" => "check:alpha",
-            "layout" => "card-a",
-            "collections" => "list",
-            "menus" => "menubar",
-            "navigation" => "subdemo:a",
-            "status" => "progress",
-            "dialogs" => "dp",
-            "paging" => "swipe",
+            "buttons" => "act:standard",
+            "checkbox" => "group:checks",
             _ => panic!("未知族 {fam}"),
         };
         assert!(
@@ -2839,11 +2759,7 @@ fn every_stylesheet_rule_matches_something() {
         keys
     }
 
-    let routes: Vec<&str> = ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect();
+    let routes: Vec<&str> = ROUTES.iter().map(|(id, _, _)| *id).collect();
 
     let mut seen: Shapes = HashSet::new();
     let mut elements = 0usize;
@@ -3055,7 +2971,7 @@ const DISPLAY_ONLY: &[&str] = &[
 ///
 /// # 判据
 ///
-/// 对全部路由 × 参考页九族构造树，收集每个 `INTERACTIVE` 节点的 key；然后
+/// 对全部路由 × 参考页两族构造树，收集每个 `INTERACTIVE` 节点的 key；然后
 /// 对每个 key **真的点一遍**，比较点击前后树的形状指纹（类型/key/分类名/文本）。
 /// 有差异 = 接线了；无差异则必须在 [`DISPLAY_ONLY`] 里。
 ///
@@ -3111,11 +3027,7 @@ fn every_interactive_key_is_wired_or_whitelisted() {
             });
         };
 
-    for route in ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain([SETTINGS_ROUTE.0])
-    {
+    for route in ROUTES.iter().map(|(id, _, _)| *id) {
         let mut g = Gallery::default();
         g.route = route;
         collect(&g, &mut found);
@@ -3244,42 +3156,15 @@ fn other_route(route: &str) -> &'static str {
 /// 它只会漏判，不会误报，所以这条注释是唯一的提醒）。
 fn perturb(g: &mut Gallery, phase: usize, perturb_family: bool) {
     let p = phase % 2;
-    g.seg = if p == 0 { "seg:list" } else { "seg:card" };
-    g.demo_seg = if p == 0 { "stseg:a" } else { "stseg:c" };
-    g.subsel = if p == 0 { "subdemo:b" } else { "subdemo:a" };
-    g.selbar_sel = if p == 0 {
-        "seldemo:day"
-    } else {
-        "seldemo:month"
-    };
-    g.list_sel = if p == 0 { 0 } else { 2 };
-    g.radio = if p == 0 { 1 } else { 2 };
     g.lang = if p == 0 { 1 } else { 2 };
-    g.table_cell = if p == 0 { 0 } else { 8 };
-    g.swipe_page = if p == 0 { 0 } else { 2 };
-    g.date_sel = if p == 0 { 1 } else { 21 };
-    g.time_hour = if p == 0 { "13" } else { "15" };
-    g.time_minute = if p == 0 { "00" } else { "10" };
-    g.combo = if p == 0 { 1 } else { 2 };
-    g.demo_combo = if p == 0 { 1 } else { 2 };
-    g.color_idx = if p == 0 { 0 } else { 15 };
-    g.spin = if p == 0 { 5 } else { 15 };
     g.demo_check.set_state(if p == 1 {
         zephyra_ui::CheckState::Checked
     } else {
         zephyra_ui::CheckState::Unchecked
     });
-    g.switch_on = p == 1;
     g.pill_on = p == 1;
-    g.notify_on = p == 1;
-    g.expanded = p == 1;
-    g.adv_expanded = p == 1;
-    g.ref_exp = p == 1;
     g.mica = p == 1;
     g.wants_dark = p == 1;
-    g.menu_open = if p == 0 { None } else { Some(0) };
-    g.dd_open = p == 1;
-    g.infobar_open = p == 0;
     if perturb_family {
         // 族切换器（`ref:*`）常驻 reference 页，所以扰动族不会让它的 key
         // 消失；同时它让「点当前族」有可见变化。其它页的 key 依赖原族

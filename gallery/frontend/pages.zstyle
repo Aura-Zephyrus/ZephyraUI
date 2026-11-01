@@ -30,12 +30,6 @@ Container.section-body {
     spacing: 12px;
 }
 
-/* 控件样例行：左标签固定 132px，右控件靠左排开。 */
-Container.stack {
-    direction: vertical;
-    spacing: 8px;
-}
-
 Container.demo-row {
     direction: horizontal;
     cross-align: center;
@@ -87,14 +81,14 @@ Container.page-reference {
     spacing: 24px;
     cross-align: stretch;
 }
-/* 参考层九族：不再是路由，但各族的 page() 仍发这些分类名（嵌在
+/* 参考层两族：不再是路由，但各族的 page() 仍发这些分类名（嵌在
  * reference 页里）。少一条就是「那一族嵌进来没有间距」。 */
-Container.page-basics {
+Container.page-buttons {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-toggles {
+Container.page-checkbox {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
@@ -109,48 +103,12 @@ Container.page-layout {
     spacing: 16px;
     cross-align: stretch;
 }
-Container.page-collections {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
-Container.page-menus {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
-Container.page-navigation {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
-Container.page-status {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
-Container.page-dialogs {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
 /* 液态玻璃页提升为一等路由后，根容器分类名从 .page-effects 改成 .page-glass。 */
 Container.page-glass {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-paging {
-    direction: vertical;
-    spacing: 24px;
-    cross-align: stretch;
-}
-Container.page-settings {
-    direction: vertical;
-    spacing: 20px;
-    cross-align: stretch;
-}
-
 /* ⚠ 这里**没有**旧 `home` 页的样式（`Container.hero` / `Text.hero-*` /
  * `Control.button.category` / `Container.category-row`）。home 页随
  * 「示例项目」重写一起删除——它被指南层的 `guide` 章取代，那些规则成了
@@ -159,22 +117,6 @@ Container.page-settings {
  * 旧注释里「横幅压到 180」「分类入口不要大卡片」的取舍仍有参考价值：
  * 那两条讲的是**信息密度**（一屏里视觉重量怎么分），与 home 页是否存在无关。
  */
-
-/* ---- 布局页：卡片网格 ---- */
-
-Container.card-grid {
-    direction: horizontal;
-    spacing: 14px;
-    cross-align: stretch;
-}
-
-Container.nav-list {
-    direction: vertical;
-    spacing: 4px;
-    width: 260px;
-}
-
-/* ---- 菜单页 ---- */
 
 /* ---- 液态玻璃页 ---- */
 

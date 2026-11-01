@@ -87,7 +87,7 @@ fn main() {
     }
 
     if args.iter().any(|a| a == "--list-families") {
-        // 参考层九族的**下标 → 名字**。`--family` 收下标（名字不是稳定契约），
+        // 参考层两族的**下标 → 名字**。`--family` 收下标（名字不是稳定契约），
         // 所以必须有一条命令把两者对上。
         eprintln!("[gallery] {} 个参考族：", REF_FAMILIES.len());
         for (i, f) in REF_FAMILIES.iter().enumerate() {
@@ -180,7 +180,7 @@ fn run_window_path(want_light: bool) {
     // [`dump_cpu`] 里被消费，窗口路读不到 —— 于是「`--route reference
     // --family 1`」开窗口，看到的仍是第 0 族（basics）。
     //
-    // 这一条对**无障碍**尤其要紧：复选框组在 `toggles` 族里，要验 UIA 的
+    // 这一条对**无障碍**尤其要紧：复选框组在 `checkbox` 族里，要验 UIA 的
     // 树就必须能开到那一族。
     if let Some(fam) = flag_value(&args, "--family") {
         match fam.parse::<usize>() {
@@ -602,12 +602,12 @@ fn dump_cpu(light: bool) {
             }
         }
     }
-    // `--family <n>`：选参考页的族（0..9）。**只有 dump 路需要** ——
-    // 参考层九族收在 reference 页的 segmented 里，窗口路点一下就能切，
-    // 而静态出图必须能从命令行指定，否则九族里只有第 0 族被看见。
+    // `--family <n>`：选参考页的族（0..1）。**只有 dump 路需要** ——
+    // 参考层两族收在 reference 页的 segmented 里，窗口路点一下就能切，
+    // 而静态出图必须能从命令行指定，否则两族里只有第 0 族被看见。
     //
-    // ⚠ 这个开关是补回来的：族化之后 `--route reference` 永远只出 Basic Input，
-    // 另外八族的排版（尤其「内容超出固定页高被裁」）在静态自验里**看不见** ——
+    // ⚠ 这个开关是补回来的：族化之后 `--route reference` 永远只出第 0 族，
+    // 第 1 族的排版（尤其「内容超出固定页高被裁」）在静态自验里**看不见** ——
     // 而本仓的页高固定、无滚动，裁切是唯一的表现形式。
     if let Some(fam) = flag_value(&args, "--family") {
         match fam.parse::<usize>() {

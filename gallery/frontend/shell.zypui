@@ -62,26 +62,6 @@
       <DemoRow label="{tr('ui.checkbox')}">
         <CheckBox key="state-check" label="Toggle me" state="{@demo_check}"/>
       </DemoRow>
-      <DemoRow label="{tr('ui.toggle')}">
-        <ToggleSwitch key="state-switch" checked="{@switch_on}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.segmented')}">
-        <Segmented key="state-seg" items="{@demo_segs}" sel="{@demo_seg}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.combobox')}">
-        <ComboBox key="state-combo" value="{@demo_combo_text}"/>
-      </DemoRow>
-    </Section>
-    <Section key="state-display" title="Display-only (core boundary)">
-      <DemoRow label="{tr('ui.slider')}">
-        <Slider key="state-slider" value01="{0.5}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.progressbar')}">
-        <ProgressBar key="state-progress" value01="{0.65}" state="running"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.tooltip')}">
-        <ToolTip key="state-tip" text="I appear on hover"/>
-      </DemoRow>
     </Section>
   </PageRoot>
 </component>
@@ -119,41 +99,21 @@
     <Section key="layout-flex" title="{tr('ui.flexbox-rows-that-grow-and-wrap')}">
       <DemoRow label="{tr('ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines')}">
         <PageRoot key="fx-grow-demo" cls="fx-row">
-          <Card key="fx-fixed" extra="fx-cell">
+          <container key="fx-fixed" class="fx-cell">
             <TextLabel key="fx-fixed-t" text="{tr('ui.fixed')}" level="text-caption"/>
-          </Card>
-          <Card key="fx-grow-cell" extra="fx-grow">
+          </container>
+          <container key="fx-grow-cell" class="fx-grow">
             <TextLabel key="fx-grow-t" text="{tr('ui.grows')}" level="text-caption"/>
-          </Card>
+          </container>
         </PageRoot>
         <PageRoot key="fx-wrap-demo" cls="fx-wrap">
-          <Card key="fx-w1" extra="fx-cell"/>
-          <Card key="fx-w2" extra="fx-cell"/>
-          <Card key="fx-w3" extra="fx-cell"/>
-          <Card key="fx-w4" extra="fx-cell"/>
-          <Card key="fx-w5" extra="fx-cell"/>
-          <Card key="fx-w6" extra="fx-cell"/>
+          <container key="fx-w1" class="fx-cell"/>
+          <container key="fx-w2" class="fx-cell"/>
+          <container key="fx-w3" class="fx-cell"/>
+          <container key="fx-w4" class="fx-cell"/>
+          <container key="fx-w5" class="fx-cell"/>
+          <container key="fx-w6" class="fx-cell"/>
         </PageRoot>
-      </DemoRow>
-    </Section>
-    <Section key="layout-noscroll" title="{tr('ui.no-scroll-overflow-is-clipped')}">
-      <DemoRow label="{tr('ui.card-1')}">
-        <Card key="lc-1" extra="card">
-          <TextLabel key="lc-1-t" text="{tr('ui.first')}" level="text-body-strong"/>
-          <TextLabel key="lc-1-d" text="{tr('ui.fits-inside-the-card')}" level="text-caption"/>
-        </Card>
-      </DemoRow>
-      <DemoRow label="{tr('ui.card-2')}">
-        <Card key="lc-2" extra="card">
-          <TextLabel key="lc-2-t" text="{tr('ui.second')}" level="text-body-strong"/>
-          <TextLabel key="lc-2-d" text="{tr('ui.also-fits')}" level="text-caption"/>
-        </Card>
-      </DemoRow>
-      <DemoRow label="{tr('ui.card-3')}">
-        <Card key="lc-3" extra="card">
-          <TextLabel key="lc-3-t" text="{tr('ui.third')}" level="text-body-strong"/>
-          <TextLabel key="lc-3-d" text="{tr('ui.watch-me-when-the-window-shrinks')}" level="text-caption"/>
-        </Card>
       </DemoRow>
     </Section>
     <Section key="layout-breakpoints" title="Breakpoints: small / medium / large">
@@ -175,11 +135,6 @@
 <component name="PageTheme">
   <PageRoot key="theme" cls="page-theme">
     <TextLabel key="theme-blurb" text="Theme is an intent, not a reference. Language negotiates from system prefs, then manual choice wins." level="text-body"/>
-    <Section key="theme-darklight" title="Dark / Light">
-      <DemoRow label="{tr('ui.toggle-theme')}">
-        <ToggleSwitch key="theme-toggle" checked="{@wants_dark}"/>
-      </DemoRow>
-    </Section>
     <Section key="theme-i18n" title="Language (en / zh-Hans / ja)">
       <DemoRow label="English">
         <PillButton key="lang:en" label="English" checked="{@lang == 0}"/>
@@ -189,11 +144,6 @@
       </DemoRow>
       <DemoRow label="日本語">
         <PillButton key="lang:ja" label="日本語" checked="{@lang == 2}"/>
-      </DemoRow>
-    </Section>
-    <Section key="theme-mica" title="Mica backdrop">
-      <DemoRow label="{tr('ui.toggle-mica')}">
-        <ToggleSwitch key="theme-mica" checked="{@mica}"/>
       </DemoRow>
     </Section>
     <Section key="theme-current" title="Current locale">
@@ -252,44 +202,23 @@
   </PageRoot>
 </component>
 
-<!-- ───────────────────────── 参考层（九族） ───────────────────────── -->
+<!-- ───────────────────────── 参考层（两族） ───────────────────────── -->
 
 <component name="PageReference">
   <PageRoot key="reference" cls="page-reference">
     <TextLabel key="reference-blurb" text="Control reference — pick a family to see its controls." level="text-body"/>
     <Segmented key="ref-family" items="{@ref_segs}" sel="{@ref_sel}"/>
     <if cond="@ref_family == 0">
-      <PageBasics/>
+      <PageButtons/>
     </if>
     <if cond="@ref_family == 1">
-      <PageToggles/>
-    </if>
-    <if cond="@ref_family == 2">
-      <PageLayoutFamily/>
-    </if>
-    <if cond="@ref_family == 3">
-      <PageCollections/>
-    </if>
-    <if cond="@ref_family == 4">
-      <PageMenus/>
-    </if>
-    <if cond="@ref_family == 5">
-      <PageNavigation/>
-    </if>
-    <if cond="@ref_family == 6">
-      <PageStatus/>
-    </if>
-    <if cond="@ref_family == 7">
-      <PageDialogs/>
-    </if>
-    <if cond="@ref_family == 8">
-      <PagePaging/>
+      <PageCheckbox/>
     </if>
   </PageRoot>
 </component>
 
-<component name="PageBasics">
-  <PageRoot key="basics" cls="page-basics">
+<component name="PageButtons">
+  <PageRoot key="buttons" cls="page-buttons">
     <Section key="sec-btns" title="{tr('ui.button')}">
       <DemoRow label="{tr('ui.variants')}">
         <Button key="act:standard" label="{tr('ui.standard')}" variant="standard"/>
@@ -308,235 +237,14 @@
         <Button key="act:glass" label="{tr('ui.glass')}" variant="subtle" material="glass"/>
       </DemoRow>
     </Section>
-    <Section key="sec-text" title="{tr('ui.text-input')}">
-      <DemoRow label="{tr('ui.text-input-display')}">
-        <TextField key="field-name" value="" placeholder="{tr('ui.your-name')}"/>
-        <TextArea key="area-notes" lines="{@area_lines}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-choice" title="{tr('ui.value-pickers')}">
-      <DemoRow label="{tr('ui.value')}">
-        <ComboBox key="combo-material" value="{@combo_text}"/>
-        <SpinBox key="spin-count" value="{@spin_text}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.slider-display')}">
-        <Slider key="slider-volume" value01="{@volume}" label="{@slider_text}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.colorpicker')}">
-        <ColorPicker key="picker-color" sel="{@color_idx}"/>
-      </DemoRow>
-    </Section>
   </PageRoot>
 </component>
 
-<component name="PageToggles">
-  <PageRoot key="toggles" cls="page-toggles">
+<component name="PageCheckbox">
+  <PageRoot key="checkbox" cls="page-checkbox">
     <Section key="sec-check" title="Checkbox">
       <DemoRow label="{tr('ui.multiple')}">
         <CheckBoxGroup gkey="group:checks" label="Select all" items="{@check_group_items}" state="{@check_group_state}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-radio" title="Radio">
-      <DemoRow label="{tr('ui.single')}">
-        <for var="e" index="i" list="@radio_items">
-          <RadioButton key="{e.id}" label="{e.label}" checked="{@radio == i}"/>
-        </for>
-      </DemoRow>
-    </Section>
-    <Section key="sec-switch" title="Switch">
-      <DemoRow label="{tr('ui.one-state')}">
-        <ToggleSwitch key="switch:master" checked="{@switch_on}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-seg" title="Segmented">
-      <DemoRow label="{tr('ui.pick-one')}">
-        <Segmented key="segbar" items="{@toggles_segs}" sel="{@seg}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
-<!-- reference 页的 layout 族：**容器用法示范页**（pages/layout.rs）——
-     与 guide 层的 PageLayout（flex 章）是两个页面，同 id 不同内容。 -->
-<component name="PageLayoutFamily">
-  <PageRoot key="layout" cls="page-layout">
-    <Section key="sec-card" title="Card">
-      <PageRoot key="cards" cls="card-grid">
-        <Card key="card-a" extra="card">
-          <TextLabel key="ca-t" text="{tr('ui.card')}" level="text-body-strong"/>
-          <Caption key="ca-d" text="{tr('ui.a-plain-surface')}"/>
-        </Card>
-        <Card key="card-b" extra="card">
-          <TextLabel key="cb-t" text="{tr('ui.card')}" level="text-body-strong"/>
-          <Caption key="cb-d" text="{tr('ui.same-class-other-content')}"/>
-        </Card>
-      </PageRoot>
-    </Section>
-    <Section key="sec-expander" title="Expander">
-      <Expander key="exp:details" title="Advanced" expanded="{@expanded}">
-        <TextLabel key="exp-l1" text="{tr('ui.hidden-until-expanded')}" level="text-caption"/>
-        <TextLabel key="exp-l2" text="{tr('ui.second-line')}" level="text-caption"/>
-      </Expander>
-    </Section>
-    <Section key="sec-setting" title="Setting rows">
-      <SettingItem key="set-item-a" icon="bell" title="Notifications" desc="A row with an icon and a description."/>
-      <SettingExpander key="set-exp" title="Advanced" desc="Collapsible group" expanded="{@ref_exp}">
-        <SettingItem key="set-item-b" icon="settings" title="Experimental" desc="Inside the expander."/>
-      </SettingExpander>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PageCollections">
-  <PageRoot key="collections" cls="page-collections">
-    <Section key="sec-list" title="{tr('ui.list')}">
-      <ListView key="list" items="{@list_items}" sel="{@list_sel_id}"/>
-    </Section>
-    <Section key="sec-table" title="{tr('ui.table')}">
-      <TableView key="table" headers="{@table_heads}" rows="{@table_rows}"/>
-      <DemoRow label="{tr('ui.selected-cell')}">
-        <TextLabel key="table-cell" text="{@td_text}" level="text-body-strong"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-avatar" title="{tr('ui.avatar')}">
-      <DemoRow label="{tr('ui.sizes')}">
-        <Avatar key="avatar:a" initials="ZY"/>
-        <Avatar key="avatar:b" initials="AB" accent="{true}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PageMenus">
-  <PageRoot key="menus" cls="page-menus">
-    <Section key="sec-bar" title="Menu bar">
-      <MenuBar key="menubar" labels="{@bar_labels}" open="{@menu_open}"/>
-    </Section>
-    <if cond="@menu_open >= 0">
-      <Menu key="menu" entries="{@menu_entries}"/>
-      <else>
-        <PageRoot key="menu-hint" cls="stack">
-          <Caption key="menu-hint" text="Click a menu bar item to open it."/>
-        </PageRoot>
-      </else>
-    </if>
-    <Section key="sec-tools" title="Toolbar">
-      <DemoRow label="{tr('ui.tools')}">
-        <for var="t" list="@tools">
-          <ToolButton key="{t.id}" icon="{t.icon}"/>
-        </for>
-      </DemoRow>
-    </Section>
-    <Section key="sec-dd" title="Drop-down">
-      <DemoRow label="{tr('ui.button')}">
-        <DropDownButton key="dd:demo" label="Options" icon="menu" open="{@dd_open}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PageDialogs">
-  <PageRoot key="dialogs" cls="page-dialogs">
-    <Section key="sec-dialog" title="{tr('ui.dialog')}">
-      <Caption key="dlg-note" text="{tr('ui.rendered-inline-the-core-has-no-overlay-layer-yet')}"/>
-    </Section>
-    <Section key="sec-picker" title="{tr('ui.pickers')}">
-      <DemoRow label="{tr('ui.date')}">
-        <DatePicker key="dp" heads="{@week_heads}" cells="{@dp_cells}" rows="{@dp_rows}" sel="{@date_sel}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.time')}">
-        <TimePicker key="tp" hours="{@tp_hours}" hour="{@time_hour}" minutes="{@tp_minutes}" minute="{@time_minute}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-tip" title="{tr('ui.tool-tip')}">
-      <DemoRow label="{tr('ui.sample')}">
-        <ToolTip key="tip" text="{tr('ui.a-tooltip')}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-acrylic" title="{tr('ui.translucent-card')}">
-      <AcrylicCard key="acrylic">
-        <TextLabel key="acr-t" text="{tr('ui.translucent')}" level="text-body-strong"/>
-        <Caption key="acr-d" text="{tr('ui.see-the-effects-page')}"/>
-      </AcrylicCard>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PagePaging">
-  <PageRoot key="paging" cls="page-paging">
-    <Section key="sec-swipe" title="Swipe">
-      <SwipeView key="swipe" pages="{@swipe_pages}" idx="{@swipe_idx}"/>
-    </Section>
-    <Section key="sec-pages" title="Page indicator">
-      <DemoRow label="{tr('ui.position')}">
-        <PageIndicator key="pips" count="{@swipe_count}" current="{@swipe_idx}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PageNavigation">
-  <PageRoot key="navigation" cls="page-navigation">
-    <Section key="sec-nav" title="Nav item">
-      <PageRoot key="navs" cls="nav-list">
-        <for var="e" list="@navdemo">
-          <NavItem key="{e.id}" label="{e.label}" icon="{e.icon}" selected="{e.id == 'navdemo:home'}"/>
-        </for>
-      </PageRoot>
-    </Section>
-    <Section key="sec-sub" title="Sub item">
-      <PageRoot key="subs" cls="nav-list">
-        <NavSubItem key="subdemo:a" label="Sub A" icon="menu" selected="{@subsel == 'subdemo:a'}"/>
-        <NavSubItem key="subdemo:b" label="Sub B" selected="{@subsel == 'subdemo:b'}"/>
-      </PageRoot>
-    </Section>
-    <Section key="sec-sel" title="Selector bar">
-      <DemoRow label="{tr('ui.range')}">
-        <SelectorBar key="selbar" items="{@sel_items}" sel="{@selbar_sel}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
-<component name="PageStatus">
-  <PageRoot key="status" cls="page-status">
-    <Section key="sec-badge" title="Badge">
-      <DemoRow label="{tr('ui.severities')}">
-        <InfoBadge key="badge-info" text="12" severity="info" solid="{true}"/>
-        <InfoBadge key="badge-ok" text="OK" severity="success" solid="{true}"/>
-        <InfoBadge key="badge-warn" text="!" severity="caution" solid="{true}"/>
-        <InfoBadge key="badge-err" text="×" severity="error" solid="{true}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-bar" title="Info bar">
-      <if cond="@infobar_open">
-        <InfoBar key="infobar" title="Update available" text="Version 0.2 is ready to install." severity="info" closable="{true}"/>
-      </if>
-      <InfoBar key="infobar-err" title="Disk almost full" text="Less than 100 MB remaining." severity="error" closable="{false}"/>
-      <DemoRow label="{tr('ui.restore')}">
-        <PillButton key="infobar-restore" label="Show info bar"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-toast" title="Toast">
-      <PageRoot key="toasts" cls="card-grid">
-        <for var="t" index="i" list="@toasts">
-          <Toast key="{'toast:' + str(i)}" title="{t.title}" text="{t.text}" severity="{t.severity}"/>
-        </for>
-      </PageRoot>
-    </Section>
-    <Section key="sec-progress" title="Progress">
-      <DemoRow label="{tr('ui.bar')}">
-        <ProgressBar key="progress" value01="{@volume}" state="running"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.states')}">
-        <ProgressBar key="progress-p" value01="{0.4}" state="paused"/>
-        <ProgressBar key="progress-e" value01="{0.8}" state="error"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.ring')}">
-        <ProgressRing key="ring" value="62%" state="running" show_value="{true}"/>
-      </DemoRow>
-      <DemoRow label="{tr('ui.busy')}">
-        <BusyIndicator key="busy" frame="{1}"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -605,41 +313,9 @@
   </PageRoot>
 </component>
 
-<!-- ───────────────────────── 设置页 ───────────────────────── -->
-
-<component name="PageSettings">
-  <PageRoot key="settings" cls="page-settings">
-    <Section key="sec-theme" title="Appearance">
-      <SettingCard key="set-theme" title="{tr('set.theme.title')}" desc="{tr('set.theme.desc')}">
-        <ToggleSwitch key="switch:master" checked="{@wants_dark}"/>
-      </SettingCard>
-    </Section>
-    <Section key="sec-notify" title="Notifications">
-      <SettingCard key="set-notify" title="{tr('set.notify.title')}" desc="{tr('set.notify.desc')}">
-        <ToggleSwitch key="switch:notify" checked="{@notify_on}"/>
-      </SettingCard>
-      <SettingExpander key="set-adv" title="{tr('set.adv.title')}" desc="{tr('set.adv.hwaccel')}" expanded="{@adv_expanded}">
-        <SettingItem key="set-adv-log" icon="sliders" title="{tr('set.adv.logging')}" desc="Diagnostic logging"/>
-        <SettingItem key="set-adv-hw" icon="camera" title="{tr('set.adv.hwaccel')}" desc="Hardware acceleration"/>
-        <SettingItem key="set-adv-keys" icon="menu" title="{tr('set.adv.shortcuts')}" desc="Keyboard shortcuts"/>
-      </SettingExpander>
-    </Section>
-    <Section key="sec-audio" title="Volume">
-      <DemoRow label="Level (display)">
-        <Slider key="slider-volume" value01="{@volume}" label="{@slider_text}"/>
-      </DemoRow>
-    </Section>
-    <Section key="sec-lang" title="Language">
-      <DemoRow label="{tr('ui.interface')}">
-        <Segmented key="langbar" items="{@lang_segs}" sel="{@locale}"/>
-      </DemoRow>
-    </Section>
-  </PageRoot>
-</component>
-
 <!-- ───────────────────────── 整窗 ───────────────────────── -->
 <!-- shell::window 的翻译：标题栏 + 主体（导航 + 内容卡）。page 的 key 上
-     挂 enter-* 入场档；route 分发用 9 个 if（与 PAGES 表对齐）。 -->
+     挂 enter-* 入场档；route 分发用 8 个 if（与 PAGES 表对齐）。 -->
 
 <page name="Window">
   <container key="window" class="window">
@@ -662,8 +338,6 @@
         <for var="r" list="@routes">
           <NavItem key="{r.id}" label="{r.label}" icon="{r.icon}" selected="{r.id == @route}" compact="{@compact}"/>
         </for>
-        <container key="nav-spacer" class="nav-spacer"/>
-        <NavItem key="{@settings_item.id}" label="{@settings_item.label}" icon="{@settings_item.icon}" selected="{@settings_item.id == @route}" compact="{@compact}"/>
       </container>
       <container key="content" class="content-card">
         <container key="header" class="page-header">
@@ -701,9 +375,6 @@
           </if>
           <if cond="@route == 'glass'">
             <PageGlass/>
-          </if>
-          <if cond="@route == 'settings'">
-            <PageSettings/>
           </if>
         </container>
       </container>

@@ -112,14 +112,6 @@ Container.nav-pane {
     background: @surface_alt;
 }
 
-Container.nav-spacer {
-    /* ⚠ 与 `shell::NAV_SPACER` 常量必须一致。9 项时占 324（9×40 项高 + 8×6 间距
-     * = 408，容器 756 − padding 24 − 408 = 324）。差一项（46）时
-     * `shell_metrics_match_stylesheet` 立刻红，而画面上的症状只是「置底项浮在半空」。
-     * 改导航项数量时两处一起改。 */
-    height: 324px;
-}
-
 /* ---- 内容卡 ---- */
 
 Container.content-card {
@@ -163,11 +155,6 @@ Container.section {
 Container.section-body {
     direction: vertical;
     spacing: 14px;
-}
-
-Container.stack {
-    direction: vertical;
-    spacing: 10px;
 }
 
 /* ---- 入场动画 ---- */

@@ -75,25 +75,18 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
 ///
 /// 参考层不再是**路由**（9 条路由平铺进导航栏装不下 —— 二级导航
 /// `nav_sub_item` 不折叠，9 个子项常驻会把 756 高的导航栏撑爆），而是
-/// `reference` **页内**的 segmented 切换。十族内容复用 `frontend/shell.zypui` 里各页面组件的
+/// `reference` **页内**的 segmented 切换。两族内容复用 `frontend/shell.zypui` 里各页面组件的
 /// 组件，每族独立一屏，一屏装得下。
 pub const REF_FAMILIES: &[&str] = &[
-    "basics",
-    "toggles",
-    "layout",
-    "collections",
-    "menus",
-    "navigation",
-    "status",
-    "dialogs",
+    // ⚠ 2026-11-01：gallery 只演示**真正接了原生交互行为**的控件 ——
+    // Button 族与复选框族。其余控件（Dialog / Menu / DatePicker / TableView …）
+    // 仍是控件库的一部分，但不再在这里演示：它们多数只画得出样子、交互不成立，
+    // 摆在「控件参考」里等于教错。
+    //
     // ⚠ 新族一律**追加在末尾**，不要插在中间：`ref_family` 是下标，
     // 门禁与 `--family` 都用下标引用（插中间会静默改掉已有序号的含义，
     // 而画面上只是「点了这一族出现那族」）。
-    //
-    // ⚠ `effects`（液态玻璃）已不在其中 —— 它提升为一等路由（见 [`ROUTES`]）：
-    // 四个 `[−]/[+]` 步进器是运行期调折射参数的实验台，藏在第 8 族要点两下
-    // 才看得到，而那是本页最不该藏的东西。现在 9 族。
-    "paging",
+    "buttons", "checkbox",
 ];
 
 /// 基准画布尺寸（物理像素）= 宿主建窗口时的初值。
@@ -162,7 +155,6 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 /// （它扫源码里每个 `g.tr("…")`，再反查 `catalog_keys()` —— 两个方向都查）。
 const CATALOG: &[(&str, &str, &str)] = &[
     // ---- en（默认语言）----
-    ("en", "app.title", "ZephyraUI Gallery"),
     ("en", "route.guide", "Quick start"),
     ("en", "route.state", "State"),
     ("en", "route.styling", "Styling"),
@@ -182,27 +174,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "Medium — nav shows labels",
     ),
     ("en", "ui.large-full-layout", "Large — full layout"),
-    ("en", "route.settings", "Settings"),
     ("en", "action.feedback", "Feedback"),
-    ("en", "action.language", "Language"),
-    ("en", "set.theme.title", "Dark mode"),
-    (
-        "en",
-        "set.theme.desc",
-        "Switching theme only swaps token values",
-    ),
-    ("en", "set.volume.title", "Volume"),
-    ("en", "set.volume.desc", "Fill width = value x track width"),
-    ("en", "set.notify.title", "Notifications"),
-    (
-        "en",
-        "set.notify.desc",
-        "Selected state travels as a class name",
-    ),
-    ("en", "set.adv.title", "Advanced"),
-    ("en", "set.adv.logging", "Diagnostic logging"),
-    ("en", "set.adv.hwaccel", "Hardware acceleration"),
-    ("en", "set.adv.shortcuts", "Shortcuts"),
     // ---- 页面正文（各页 demo 标签 / 控件标签 / 分区标题）----
     //
     // 键名是英文原文的 slug：`tr()` 找不到键时**回退显示键名本身**，于是
@@ -214,7 +186,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.search-controls-and-samples",
         "Search controls and samples...",
     ),
-    ("en", "ui.interface", "Interface"),
     ("en", "ui.language", "Language"),
     ("en", "ui.theme", "Theme"),
     ("en", "ui.route", "Route"),
@@ -233,63 +204,12 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.send", "Send"),
     ("en", "ui.click-me", "Click me"),
     ("en", "ui.counter", "Counter"),
-    ("en", "ui.one-state", "One state"),
     ("en", "ui.multiple", "Multiple"),
-    ("en", "ui.single", "Single"),
-    ("en", "ui.pick-one", "Pick one"),
-    ("en", "ui.text-input", "Text input"),
-    ("en", "ui.text-input-display", "Text input (display)"),
-    ("en", "ui.your-name", "Your name"),
-    ("en", "ui.multi-line-notes", "Multi-line notes"),
-    ("en", "ui.second-line", "second line"),
-    ("en", "ui.third-line", "third line"),
-    ("en", "ui.value-pickers", "Value pickers"),
-    ("en", "ui.value", "Value"),
-    ("en", "ui.slider", "Slider"),
-    ("en", "ui.slider-display", "Slider (display)"),
-    ("en", "ui.colorpicker", "ColorPicker"),
-    ("en", "ui.combobox", "ComboBox"),
     ("en", "ui.checkbox", "CheckBox"),
-    ("en", "ui.toggle", "Toggle"),
-    ("en", "ui.progressbar", "ProgressBar"),
-    ("en", "ui.ring", "Ring"),
-    ("en", "ui.bar", "Bar"),
-    ("en", "ui.busy", "Busy"),
-    ("en", "ui.list", "List"),
-    ("en", "ui.table", "Table"),
-    ("en", "ui.selected-cell", "Selected cell"),
-    ("en", "ui.avatar", "Avatar"),
-    ("en", "ui.sizes", "Sizes"),
-    ("en", "ui.dialog", "Dialog"),
-    ("en", "ui.pickers", "Pickers"),
-    ("en", "ui.date", "Date"),
-    ("en", "ui.time", "Time"),
-    ("en", "ui.segmented", "Segmented"),
-    ("en", "ui.states", "States"),
-    ("en", "ui.position", "Position"),
-    ("en", "ui.range", "Range"),
-    ("en", "ui.tools", "Tools"),
-    ("en", "ui.severities", "Severities"),
-    ("en", "ui.sample", "Sample"),
-    ("en", "ui.backdrop", "Backdrop"),
-    ("en", "ui.cost", "Cost"),
-    ("en", "ui.available", "Available"),
-    ("en", "ui.card", "Card"),
-    ("en", "ui.translucent-card", "Translucent card"),
-    ("en", "ui.translucent", "Translucent"),
-    ("en", "ui.a-plain-surface", "A plain surface."),
-    (
-        "en",
-        "ui.same-class-other-content",
-        "Same class, other content.",
-    ),
     ("en", "ui.token-colored-text", "Token-colored text"),
     ("en", "ui.spacing-demo", "Spacing demo"),
     ("en", "ui.what-they-guard", "What they guard"),
     ("en", "ui.you-are-here", "You are here"),
-    ("en", "ui.tooltip", "ToolTip"),
-    ("en", "ui.tool-tip", "Tool tip"),
-    ("en", "ui.a-tooltip", "A tooltip"),
     ("en", "ui.check-a-stylesheet", "Check a stylesheet"),
     (
         "en",
@@ -299,29 +219,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.dump-current-route", "Dump current route"),
     ("en", "ui.dump-a-specific-route", "Dump a specific route"),
     ("en", "ui.run-all-gallery-gates", "Run all gallery gates"),
-    ("en", "ui.toggle-theme", "Toggle theme"),
-    ("en", "ui.toggle-mica", "Toggle Mica"),
-    ("en", "ui.restore", "Restore"),
     ("en", "ui.current-breakpoint", "Current breakpoint"),
-    ("en", "ui.card-1", "Card 1"),
-    ("en", "ui.card-2", "Card 2"),
-    ("en", "ui.card-3", "Card 3"),
-    ("en", "ui.first", "First"),
-    ("en", "ui.second", "Second"),
-    ("en", "ui.third", "Third"),
-    ("en", "ui.fits-inside-the-card", "Fits inside the card"),
-    ("en", "ui.also-fits", "Also fits"),
-    (
-        "en",
-        "ui.watch-me-when-the-window-shrinks",
-        "Watch me when the window shrinks",
-    ),
-    ("en", "ui.hidden-until-expanded", "Hidden until expanded."),
-    (
-        "en",
-        "ui.no-scroll-overflow-is-clipped",
-        "No scroll — overflow is clipped",
-    ),
     ("en", "ui.44-epx-correct", "44 epx (correct)"),
     ("en", "ui.28-epx-too-small", "28 epx (too small)"),
     (
@@ -339,12 +237,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.remove-these-lines-and-the-glass-looks-broken",
         "Remove these lines and the glass looks broken.",
     ),
-    (
-        "en",
-        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
-        "Rendered inline — the core has no overlay layer yet.",
-    ),
-    ("en", "ui.see-the-effects-page", "See the effects page."),
     (
         "en",
         "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
@@ -373,7 +265,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.fixed", "Fixed"),
     ("en", "ui.grows", "Grows"),
     // ---- zh-Hans ----
-    ("zh-Hans", "app.title", "ZephyraUI 示例库"),
     ("zh-Hans", "route.guide", "快速开始"),
     ("zh-Hans", "route.state", "状态"),
     ("zh-Hans", "route.styling", "样式"),
@@ -389,19 +280,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("zh-Hans", "ui.medium-nav-shows-labels", "中 — 导航显示文字"),
     ("zh-Hans", "ui.large-full-layout", "大 — 完整布局"),
-    ("zh-Hans", "route.settings", "设置"),
     ("zh-Hans", "action.feedback", "反馈"),
-    ("zh-Hans", "action.language", "语言"),
-    ("zh-Hans", "set.theme.title", "深色模式"),
-    ("zh-Hans", "set.theme.desc", "换主题只换令牌值"),
-    ("zh-Hans", "set.volume.title", "音量"),
-    ("zh-Hans", "set.volume.desc", "填充宽度 = 值 × 轨道宽"),
-    ("zh-Hans", "set.notify.title", "通知"),
-    ("zh-Hans", "set.notify.desc", "选中态走分类名"),
-    ("zh-Hans", "set.adv.title", "高级"),
-    ("zh-Hans", "set.adv.logging", "诊断日志"),
-    ("zh-Hans", "set.adv.hwaccel", "硬件加速"),
-    ("zh-Hans", "set.adv.shortcuts", "快捷键"),
     // ---- 页面正文（同 en 组，键序一致）----
     ("zh-Hans", "ui.zephyraui-gallery", "ZephyraUI 示例库"),
     (
@@ -409,7 +288,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.search-controls-and-samples",
         "搜索控件与示例……",
     ),
-    ("zh-Hans", "ui.interface", "界面"),
     ("zh-Hans", "ui.language", "语言"),
     ("zh-Hans", "ui.theme", "主题"),
     ("zh-Hans", "ui.route", "路由"),
@@ -428,63 +306,12 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.send", "发送"),
     ("zh-Hans", "ui.click-me", "点我"),
     ("zh-Hans", "ui.counter", "计数器"),
-    ("zh-Hans", "ui.one-state", "单选"),
     ("zh-Hans", "ui.multiple", "多选"),
-    ("zh-Hans", "ui.single", "单选"),
-    ("zh-Hans", "ui.pick-one", "选一个"),
-    ("zh-Hans", "ui.text-input", "文本输入"),
-    ("zh-Hans", "ui.text-input-display", "文本输入（展示）"),
-    ("zh-Hans", "ui.your-name", "你的名字"),
-    ("zh-Hans", "ui.multi-line-notes", "多行笔记"),
-    ("zh-Hans", "ui.second-line", "第二行"),
-    ("zh-Hans", "ui.third-line", "第三行"),
-    ("zh-Hans", "ui.value-pickers", "取值选择器"),
-    ("zh-Hans", "ui.value", "值"),
-    ("zh-Hans", "ui.slider", "滑块"),
-    ("zh-Hans", "ui.slider-display", "滑块（展示）"),
-    ("zh-Hans", "ui.colorpicker", "颜色选择器"),
-    ("zh-Hans", "ui.combobox", "组合框"),
     ("zh-Hans", "ui.checkbox", "复选框"),
-    ("zh-Hans", "ui.toggle", "开关"),
-    ("zh-Hans", "ui.progressbar", "进度条"),
-    ("zh-Hans", "ui.ring", "环形"),
-    ("zh-Hans", "ui.bar", "条"),
-    ("zh-Hans", "ui.busy", "忙碌"),
-    ("zh-Hans", "ui.list", "列表"),
-    ("zh-Hans", "ui.table", "表格"),
-    ("zh-Hans", "ui.selected-cell", "选中单元格"),
-    ("zh-Hans", "ui.avatar", "头像"),
-    ("zh-Hans", "ui.sizes", "尺寸"),
-    ("zh-Hans", "ui.dialog", "对话框"),
-    ("zh-Hans", "ui.pickers", "选择器"),
-    ("zh-Hans", "ui.date", "日期"),
-    ("zh-Hans", "ui.time", "时间"),
-    ("zh-Hans", "ui.segmented", "分段"),
-    ("zh-Hans", "ui.states", "状态"),
-    ("zh-Hans", "ui.position", "位置"),
-    ("zh-Hans", "ui.range", "区间"),
-    ("zh-Hans", "ui.tools", "工具"),
-    ("zh-Hans", "ui.severities", "严重级别"),
-    ("zh-Hans", "ui.sample", "示例"),
-    ("zh-Hans", "ui.backdrop", "背景"),
-    ("zh-Hans", "ui.cost", "成本"),
-    ("zh-Hans", "ui.available", "可用"),
-    ("zh-Hans", "ui.card", "卡片"),
-    ("zh-Hans", "ui.translucent-card", "半透明卡片"),
-    ("zh-Hans", "ui.translucent", "半透明"),
-    ("zh-Hans", "ui.a-plain-surface", "一块纯色底板。"),
-    (
-        "zh-Hans",
-        "ui.same-class-other-content",
-        "同一个分类名，另一段内容。",
-    ),
     ("zh-Hans", "ui.token-colored-text", "令牌着色的文字"),
     ("zh-Hans", "ui.spacing-demo", "间距演示"),
     ("zh-Hans", "ui.what-they-guard", "它们守住什么"),
     ("zh-Hans", "ui.you-are-here", "你在这里"),
-    ("zh-Hans", "ui.tooltip", "提示"),
-    ("zh-Hans", "ui.tool-tip", "提示气泡"),
-    ("zh-Hans", "ui.a-tooltip", "一个提示气泡"),
     ("zh-Hans", "ui.check-a-stylesheet", "校验样式表"),
     (
         "zh-Hans",
@@ -494,29 +321,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.dump-current-route", "导出当前路由"),
     ("zh-Hans", "ui.dump-a-specific-route", "导出指定路由"),
     ("zh-Hans", "ui.run-all-gallery-gates", "跑全部画廊门禁"),
-    ("zh-Hans", "ui.toggle-theme", "切换主题"),
-    ("zh-Hans", "ui.toggle-mica", "切换 Mica"),
-    ("zh-Hans", "ui.restore", "恢复"),
     ("zh-Hans", "ui.current-breakpoint", "当前断点"),
-    ("zh-Hans", "ui.card-1", "卡片 1"),
-    ("zh-Hans", "ui.card-2", "卡片 2"),
-    ("zh-Hans", "ui.card-3", "卡片 3"),
-    ("zh-Hans", "ui.first", "第一"),
-    ("zh-Hans", "ui.second", "第二"),
-    ("zh-Hans", "ui.third", "第三"),
-    ("zh-Hans", "ui.fits-inside-the-card", "装得进卡片"),
-    ("zh-Hans", "ui.also-fits", "也放得下"),
-    (
-        "zh-Hans",
-        "ui.watch-me-when-the-window-shrinks",
-        "窗口变小时看我",
-    ),
-    ("zh-Hans", "ui.hidden-until-expanded", "展开前看不到。"),
-    (
-        "zh-Hans",
-        "ui.no-scroll-overflow-is-clipped",
-        "无滚动 — 超出即裁剪",
-    ),
     ("zh-Hans", "ui.44-epx-correct", "44 epx（正确）"),
     ("zh-Hans", "ui.28-epx-too-small", "28 epx（太小）"),
     (
@@ -534,12 +339,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.remove-these-lines-and-the-glass-looks-broken",
         "删掉这几行，玻璃就像坏了一样。",
     ),
-    (
-        "zh-Hans",
-        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
-        "内联渲染 —— core 还没有覆盖层。",
-    ),
-    ("zh-Hans", "ui.see-the-effects-page", "看效果页。"),
     (
         "zh-Hans",
         "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
@@ -568,7 +367,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.fixed", "固定"),
     ("zh-Hans", "ui.grows", "填充"),
     // ---- ja ----
-    ("ja", "app.title", "ZephyraUI ギャラリー"),
     ("ja", "route.guide", "クイックスタート"),
     ("ja", "route.state", "状態"),
     ("ja", "route.styling", "スタイリング"),
@@ -584,23 +382,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("ja", "ui.medium-nav-shows-labels", "中 — ナビにラベル表示"),
     ("ja", "ui.large-full-layout", "大 — フルレイアウト"),
-    ("ja", "route.settings", "設定"),
     ("ja", "action.feedback", "フィードバック"),
-    ("ja", "action.language", "言語"),
-    ("ja", "set.theme.title", "ダークモード"),
-    (
-        "ja",
-        "set.theme.desc",
-        "テーマを切り替えてもトークンの値だけが変わる",
-    ),
-    ("ja", "set.volume.title", "音量"),
-    ("ja", "set.volume.desc", "塗りの幅 = 値 x トラックの幅"),
-    ("ja", "set.notify.title", "通知"),
-    ("ja", "set.notify.desc", "選択状態はクラス名で表す"),
-    ("ja", "set.adv.title", "詳細"),
-    ("ja", "set.adv.logging", "診断ログ"),
-    ("ja", "set.adv.hwaccel", "ハードウェアアクセラレーション"),
-    ("ja", "set.adv.shortcuts", "ショートカット"),
     // ---- ページ本文（en と同順）----
     ("ja", "ui.zephyraui-gallery", "ZephyraUI ギャラリー"),
     (
@@ -608,7 +390,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.search-controls-and-samples",
         "コントロールとサンプルを検索…",
     ),
-    ("ja", "ui.interface", "インターフェース"),
     ("ja", "ui.language", "言語"),
     ("ja", "ui.theme", "テーマ"),
     ("ja", "ui.route", "ルート"),
@@ -627,63 +408,12 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.send", "送信"),
     ("ja", "ui.click-me", "クリックして"),
     ("ja", "ui.counter", "カウンター"),
-    ("ja", "ui.one-state", "単一選択"),
     ("ja", "ui.multiple", "複数選択"),
-    ("ja", "ui.single", "単一"),
-    ("ja", "ui.pick-one", "ひとつ選択"),
-    ("ja", "ui.text-input", "テキスト入力"),
-    ("ja", "ui.text-input-display", "テキスト入力（表示）"),
-    ("ja", "ui.your-name", "お名前"),
-    ("ja", "ui.multi-line-notes", "複数行のメモ"),
-    ("ja", "ui.second-line", "2行目"),
-    ("ja", "ui.third-line", "3行目"),
-    ("ja", "ui.value-pickers", "値のピッカー"),
-    ("ja", "ui.value", "値"),
-    ("ja", "ui.slider", "スライダー"),
-    ("ja", "ui.slider-display", "スライダー（表示）"),
-    ("ja", "ui.colorpicker", "カラーピッカー"),
-    ("ja", "ui.combobox", "コンボボックス"),
     ("ja", "ui.checkbox", "チェックボックス"),
-    ("ja", "ui.toggle", "トグル"),
-    ("ja", "ui.progressbar", "プログレスバー"),
-    ("ja", "ui.ring", "リング"),
-    ("ja", "ui.bar", "バー"),
-    ("ja", "ui.busy", "ビジー"),
-    ("ja", "ui.list", "リスト"),
-    ("ja", "ui.table", "テーブル"),
-    ("ja", "ui.selected-cell", "選択したセル"),
-    ("ja", "ui.avatar", "アバター"),
-    ("ja", "ui.sizes", "サイズ"),
-    ("ja", "ui.dialog", "ダイアログ"),
-    ("ja", "ui.pickers", "ピッカー"),
-    ("ja", "ui.date", "日付"),
-    ("ja", "ui.time", "時刻"),
-    ("ja", "ui.segmented", "セグメント"),
-    ("ja", "ui.states", "状態"),
-    ("ja", "ui.position", "位置"),
-    ("ja", "ui.range", "範囲"),
-    ("ja", "ui.tools", "ツール"),
-    ("ja", "ui.severities", "重要度"),
-    ("ja", "ui.sample", "サンプル"),
-    ("ja", "ui.backdrop", "背景"),
-    ("ja", "ui.cost", "コスト"),
-    ("ja", "ui.available", "利用可能"),
-    ("ja", "ui.card", "カード"),
-    ("ja", "ui.translucent-card", "半透明カード"),
-    ("ja", "ui.translucent", "半透明"),
-    ("ja", "ui.a-plain-surface", "ただのサーフェス。"),
-    (
-        "ja",
-        "ui.same-class-other-content",
-        "同じクラス、別の内容。",
-    ),
     ("ja", "ui.token-colored-text", "トークンで着色した文字"),
     ("ja", "ui.spacing-demo", "間隔のデモ"),
     ("ja", "ui.what-they-guard", "何を守っているか"),
     ("ja", "ui.you-are-here", "現在地"),
-    ("ja", "ui.tooltip", "ツールヒント"),
-    ("ja", "ui.tool-tip", "ツールチップ"),
-    ("ja", "ui.a-tooltip", "ツールチップひとつ"),
     ("ja", "ui.check-a-stylesheet", "スタイルシートを検証"),
     (
         "ja",
@@ -697,29 +427,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.run-all-gallery-gates",
         "ギャラリーの全ゲートを実行",
     ),
-    ("ja", "ui.toggle-theme", "テーマを切り替え"),
-    ("ja", "ui.toggle-mica", "Mica を切り替え"),
-    ("ja", "ui.restore", "復元"),
     ("ja", "ui.current-breakpoint", "現在のブレークポイント"),
-    ("ja", "ui.card-1", "カード 1"),
-    ("ja", "ui.card-2", "カード 2"),
-    ("ja", "ui.card-3", "カード 3"),
-    ("ja", "ui.first", "1つ目"),
-    ("ja", "ui.second", "2つ目"),
-    ("ja", "ui.third", "3つ目"),
-    ("ja", "ui.fits-inside-the-card", "カードに収まる"),
-    ("ja", "ui.also-fits", "こちらも収まる"),
-    (
-        "ja",
-        "ui.watch-me-when-the-window-shrinks",
-        "ウィンドウを縮めると起きる",
-    ),
-    ("ja", "ui.hidden-until-expanded", "展開するまで隠れる。"),
-    (
-        "ja",
-        "ui.no-scroll-overflow-is-clipped",
-        "スクロールなし — はみ出しは切られる",
-    ),
     ("ja", "ui.44-epx-correct", "44 epx（正しい）"),
     ("ja", "ui.28-epx-too-small", "28 epx（小さすぎる）"),
     (
@@ -737,12 +445,6 @@ const CATALOG: &[(&str, &str, &str)] = &[
         "ui.remove-these-lines-and-the-glass-looks-broken",
         "この行を消すとガラスが壊れて見える。",
     ),
-    (
-        "ja",
-        "ui.rendered-inline-the-core-has-no-overlay-layer-yet",
-        "インライン描画 — core にはまだオーバーレイ層がない。",
-    ),
-    ("ja", "ui.see-the-effects-page", "エフェクトページを見る。"),
     (
         "ja",
         "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
@@ -824,47 +526,30 @@ pub fn route_key(id: &str) -> &'static str {
             }
         }
     }
-    // 静态回退：id 是 `&'static`（来自 `ROUTES` / `SETTINGS_ROUTE`），
+    // 静态回退：id 是 `&'static`（来自 `ROUTES`），
     // 所以这里不需要额外分配。若调用方传了非静态串，门禁会先拦住。
     ROUTES
         .iter()
-        .chain(std::iter::once(&SETTINGS_ROUTE))
         .find(|(rid, _, _)| *rid == id)
         .map(|(rid, _, _)| *rid)
         .unwrap_or("route.unknown")
 }
 
-/// 解析一个 key 是否为合法路由，是则返回该路由 id（`&'static`）。
-///
-/// # 路由来源有三处，缺一不可
-///
-/// 1. 10 个页面路由（[`ROUTES`]）—— 导航栏项；
-/// 2. 14 个分组索引路由（`catalog::GROUP_ROUTES`）—— All 页的分组条；
-/// 3. 44 个控件卡（`catalog::ENTRIES` 的 `page`）—— 卡片点击进该控件页。
-///
-/// 三处都用**查表**而非 `match` 列举：任一处新增 id 都只改那一处表，
-/// 不用回来改这个函数（枚举式会把新路由漏在 match 的 `_` 分支里，静默回 Home）。
-///
-/// 返回 `&'static str`：路由要存进 [`Gallery::route`]（`&'static`），
 /// 解析一个 key 是否为合法路由，是则返回该路由 id（`&'static str`）。
 ///
-/// # 路由来源只剩两处
+/// # 路由来源只剩一处
 ///
 /// 旧结构有三处（10 页 + 14 分组 + 44 控件页），后两处都来自
-/// `catalog.rs`。那个模块随重写一并删掉，所以这里只剩 [`ROUTES`] 与
-/// [`SETTINGS_ROUTE`] 两个来源。
+/// `catalog.rs`。那个模块随重写一并删掉，设置页也整页撤下，所以这里只剩
+/// [`ROUTES`] 一个来源。
 ///
-/// 两处都用**查表**：新增 id 只改那一个表，不用回来改这个函数。
+/// 一处也是**查表**：新增 id 只改那一张表，不用回来改这个函数。
 /// 枚举式（`match`）会把新路由漏在 `_ => home` 里，静默回首页。
 ///
 /// 返回 `&'static str`：路由要存进 [`Gallery::route`]（`&'static`），
 /// 不能在运行时拼字符串 —— 那会每帧泄漏。
 pub fn resolve_route(key: &str) -> Option<&'static str> {
-    ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .find(|id| *id == key)
+    ROUTES.iter().map(|(id, _, _)| *id).find(|id| *id == key)
 }
 
 /// 列出全部合法路由（`--list-routes` 用）。
@@ -872,17 +557,10 @@ pub fn resolve_route(key: &str) -> Option<&'static str> {
 /// 之所以要“列出来”而不是让人猜：出图/调试时拼错一个 id 的后果是
 /// **静默回到 home**（历史上已发生过）。把全集打印出来，拼错立刻可见。
 pub fn list_routes() -> Vec<&'static str> {
-    ROUTES
-        .iter()
-        .map(|(id, _, _)| *id)
-        .chain(std::iter::once(SETTINGS_ROUTE.0))
-        .collect()
+    ROUTES.iter().map(|(id, _, _)| *id).collect()
 }
 
-/// Settings 路由（置底那一项）。
-pub const SETTINGS_ROUTE: (&str, &str, &str) = ("settings", "Settings", "settings");
-
-// ---- 参考层与指南章的**交互 key 常量表** ----
+// ---- 交互 key 常量表 ----
 //
 // # 为什么这批 key 住在 mod.rs 而不是各页面
 //
@@ -891,13 +569,10 @@ pub const SETTINGS_ROUTE: (&str, &str, &str) = ("settings", "Settings", "setting
 // 定义在这里，页面发的是表里那几项、click 按表还原，**同一份常量**服务
 // 两处：key 表就是「哪些 key 会改状态」的清单，与门禁
 // `every_interactive_key_is_wired_or_whitelisted` 的白名单共用。
+//
+// ⚠ state 章的 segmented 与 navigation 族的子项常量已随控件退场删掉 ——
+// 那几族不再是演示内容，留着的常量会让「key 表 = 现存演示」的约定失真。
 
-/// state 章 segmented 的三段。
-pub const DEMO_SEGS: [&str; 3] = ["stseg:a", "stseg:b", "stseg:c"];
-/// navigation 族 nav_sub_item 的两个子项。
-pub const SUBDEMO_IDS: [&str; 2] = ["subdemo:a", "subdemo:b"];
-/// navigation 族 selector_bar 的三段。
-pub const SELDEMO_IDS: [&str; 3] = ["seldemo:day", "seldemo:week", "seldemo:month"];
 /// 触发类按钮（basics / layout / styling / menus / 外壳页头共用 `last_action`）。
 ///
 /// ⚠ 新增触发按钮时把 key 加进这张表——漏加的症状是「点了没反应」，
@@ -930,22 +605,6 @@ pub const ACT_IDS: [&str; 16] = [
 /// 「静默写进一个错误的值」好（字段内容仍是合法项，画面不出现怪态）。
 fn static_key<'a>(candidates: &[&'a str], key: &str) -> Option<&'a str> {
     candidates.iter().copied().find(|c| *c == key)
-}
-
-/// time_picker 的 item key（`tph:13` / `tpm:05`）→ 显示值（`"13"` / `"05"`）。
-///
-/// 与 dialogs.rs 的 `HOURS` / `MINUTES` 常量对齐：改那边必须改这里 ——
-/// 门禁 `reference_page_has_all_families` 与交互回归会踩到不一致。
-fn time_part(key: &str) -> &'static str {
-    match key {
-        "tph:13" => "13",
-        "tph:14" => "14",
-        "tph:15" => "15",
-        "tpm:00" => "00",
-        "tpm:05" => "05",
-        "tpm:10" => "10",
-        _ => "",
-    }
 }
 
 /// 复选框组的四个子项 id（选择页）。
@@ -997,8 +656,6 @@ pub struct Gallery {
     pub wants_dark: bool,
     /// 主题意图的共享格（窗口路用；dump 路直接读 `wants_dark`）。
     pub theme_intent: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
-    /// Home 页分段选中项。
-    pub seg: &'static str,
     /// 选择页的**复选框组**（组头全选 + 三个各自独立的子项）。
     ///
     /// # 为什么用控件层给的状态模型，而不是 `[bool; 3]`
@@ -1010,14 +667,6 @@ pub struct Gallery {
     /// 流转规则（半选点一下 = 全选、全不选 = 未选中、全选 = 已选中）
     /// 与聚合规则都住在 `zephyra_ui::checkbox` 里，本页只负责「点哪个 key」。
     pub check_group: zephyra_ui::CheckboxGroup,
-    /// 单选组的**选中下标**（落在 `RADIO_ITEMS` 里）。
-    ///
-    /// # 为什么单选还要单独一个字段，不能复用 `checked`
-    ///
-    /// 单选的语义是「**有且仅有一个**被选中」，多选是「多个独立开关」。若拿那个布尔
-    /// 数组表示单选，就得额外维护一套「什么时候清掉别的那个」规则，而规则一变就
-    /// 出现「两个同时选中」—— 那正是画面上可见、且不报错的失败。
-    pub radio: usize,
     /// 液态玻璃页的四个折射参数（**运行期可调**）。
     ///
     /// # 为什么它住在应用状态而不是样式表
@@ -1027,26 +676,9 @@ pub struct Gallery {
     /// 列表里是**有意的**：它的四个参数是物理量（厚度 / 折射率 / 色散 / 倒角
     /// 宽度），既没有 `@令牌` 对应物，也不随主题变化。
     pub glass: crate::app::glass::Glass,
-    /// 设置页主题总开关。
-    pub switch_on: bool,
-    /// 设置页通知开关。与主题开关**分开**：共用一个字段的话，勾掉通知会把
-    /// 深色模式一起关掉 —— 两个毫不相干的设置被绑在一起，而画面上毫无异样。
-    pub notify_on: bool,
-    /// 设置页滑条值（0..1）。
-    pub volume: f32,
-    /// 设置页展开器是否展开。
-    pub expanded: bool,
-    /// Basic Input 页：ComboBox 选中项下标。
-    pub combo: usize,
-    /// Basic Input 页：SpinBox 的数值。
-    pub spin: i32,
-    /// Basic Input 页：DropDownButton 的展开态。
-    pub dd_open: bool,
     /// 是否请求 Mica 材质外观（标题栏半透明）。true = 应用想要；false = 实色。
     /// 平台能不能真的开由 zephyra-platform-win 回答，不影响这里。
     pub mica: bool,
-    /// Menus 演示：菜单栏当前展开项（None = 全收起）。
-    pub menu_open: Option<usize>,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1084,39 +716,11 @@ pub struct Gallery {
     pub last_action: &'static str,
     /// basics 页 pill_button 的选中态（pill = 可保持按下的按钮）。
     pub pill_on: bool,
-    /// basics 页 color_picker 选中色格下标。
-    pub color_idx: usize,
     /// state 章 checkbox（独立于选择页的组：教学页要自证）。
     ///
     /// 用控件层给的 `Checkbox` 而不是裸 `bool`：这一章教的是「状态怎么存」，
     /// 而「复选框的状态是个枚举、两态框只会用到其中两个值」正是要教的事。
     pub demo_check: zephyra_ui::Checkbox,
-    /// state 章 segmented 选中段（`stseg:a` / `stseg:b` / `stseg:c`）。
-    pub demo_seg: &'static str,
-    /// state 章 combo 循环下标。
-    pub demo_combo: usize,
-    /// navigation 族 nav_sub_item 选中项（`subdemo:a` / `subdemo:b`）。
-    pub subsel: &'static str,
-    /// navigation 族 selector_bar 选中段（`seldemo:day/week/month`）。
-    pub selbar_sel: &'static str,
-    /// collections 族 list 选中行下标（落在 LIST_ITEMS 里）。
-    pub list_sel: usize,
-    /// collections 族 table 选中格下标（行 ×4 + 列）。
-    pub table_cell: usize,
-    /// collections 族 swipe 当前页下标。
-    pub swipe_page: usize,
-    /// dialogs 族 date_picker 选中日（`dpc:RC` 的格子序号）。
-    pub date_sel: u8,
-    /// dialogs 族 time_picker 小时（`tph:XX`）。
-    pub time_hour: &'static str,
-    /// dialogs 族 time_picker 分钟（`tpm:XX`）。
-    pub time_minute: &'static str,
-    /// status 族 info bar 是否展开（`bar:close` 关闭后 = false）。
-    pub infobar_open: bool,
-    /// layout 族 setting_expander 展开态。
-    pub ref_exp: bool,
-    /// settings 页「高级」区 expander 展开态。
-    pub adv_expanded: bool,
     /// 当前语言在 [SUPPORTED] 里的**下标**。
     ///
     /// 存下标而不是 Tag：Tag 每帧都要重新构造，而下标是 Copy 且能直接当
@@ -1355,27 +959,12 @@ impl Default for Gallery {
             focused: None,
             wants_dark: true,
             theme_intent: None,
-            seg: "seg:grid",
             ref_family: 0,
             guide_count: 0,
             last_action: "",
             pill_on: false,
-            color_idx: 0,
             demo_check: zephyra_ui::Checkbox::new("state-check", "Toggle me")
                 .with_state(zephyra_ui::CheckState::Checked),
-            demo_seg: "stseg:b",
-            demo_combo: 0,
-            subsel: "subdemo:a",
-            selbar_sel: "seldemo:week",
-            list_sel: 1,
-            table_cell: 0,
-            swipe_page: 1,
-            date_sel: 15,
-            time_hour: "14",
-            time_minute: "05",
-            infobar_open: true,
-            ref_exp: false,
-            adv_expanded: false,
             check_group: {
                 // 组头 + 四个子项。初始勾上第一个（对应老版本 `[true, false, false]`），
                 // 于是组头一开始就是「半选」—— 一进页面就看得见三态。
@@ -1394,17 +983,8 @@ impl Default for Gallery {
                 }
                 g
             },
-            radio: 0,
             glass: crate::app::glass::Glass::default(),
-            switch_on: true,
-            notify_on: false,
-            volume: 0.62,
-            expanded: false,
-            combo: 0,
-            spin: 7,
-            dd_open: false,
             mica: true,
-            menu_open: None,
             // dump 路默认走基准画布：静态图必须与 1400×800 窗口路同基准，
             // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
             viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
@@ -1508,12 +1088,10 @@ impl Gallery {
         }
         // ---- 3) 其余按 key 分派 ----
         match key {
-            // 主题意图有两个入口：页头的 tool_button（`theme-toggle`）与设置页
-            // 的总开关（`switch:master`）。两者必须改**同一个**字段 ——
-            // 设置页的开关绑的是 `wants_dark`，这里若改别的字段，开关点了
-            // 视觉不动（门禁 `every_interactive_key_is_wired_or_whitelisted`
-            // 正是抓到这一处的）。
-            "theme-toggle" | "switch:master" => {
+            // 主题意图的入口是页头的 tool_button（`theme-toggle`）——
+            // 2026-11-01 之前还有设置页的总开关（`switch:master`），
+            // 随设置页一起撤下了。
+            "theme-toggle" => {
                 self.wants_dark = !self.wants_dark;
                 // 窗口路：把意图写进共享格，Bootstrap 每帧对账后执行。
                 if let Some(cell) = &self.theme_intent {
@@ -1523,11 +1101,6 @@ impl Gallery {
                     );
                 }
             }
-            // 选择页的分段。段 id 与 `app::data::SEGS` 一一对应（模板经 @toggles_segs 引用），
-            // 门禁 `segment_keys_are_all_wired` 就是钉这一条，改漏了它立刻红。
-            "seg:grid" => self.seg = "seg:grid",
-            "seg:list" => self.seg = "seg:list",
-            "seg:card" => self.seg = "seg:card",
             // 复选框组：组头 = 全选 / 全部不选；子项 = 只改自己。
             //
             // ⚠ 子项走**前缀分支**：`toggle_item` 认 key，找不到就返回 false
@@ -1537,50 +1110,6 @@ impl Gallery {
             _ if key.starts_with("check:") => {
                 self.check_group.toggle_item(key);
             }
-            // 单选：点哪个就选哪个。
-            //
-            // ⚠️ 写成 `self.radio = if self.radio == i { usize::MAX } else { i }`
-            // 会得到「点当前选中的那个可以取消」，而真实的单选组不允许选中项被取消
-            // —— 画面上这不会报错，只是永远做不到「一个都不选」。
-            "radio:a" => self.radio = 0,
-            "radio:b" => self.radio = 1,
-            "radio:c" => self.radio = 2,
-            // toggles 页的演示开关（首页旧 `live-switch` 已随首页删除）。
-            "switch:notify" => self.notify_on = !self.notify_on,
-            "exp:details" => self.expanded = !self.expanded,
-            // ---- 值输入类演示 ----
-            // ⚠ key 是 `combo-material`（连字符），不是 `combo:material`——
-            // 页面发的就是连字符版。两者差一个冒号时点击**静默**不切换，
-            // 而画面上 ComboBox 完全正常（它一直显示第一项看起来像默认值）。
-            // 这正是 `every_interactive_key_is_wired_or_whitelisted` 要消灭的
-            // 失效类别：key 在树上、分派不认识。
-            "combo-material" => self.combo = (self.combo + 1) % COMBO_OPTIONS.len(),
-            // 值域与 `app::data::spin_text` 的查表同步：表的末项就是
-            // 上限，越界回落会让「点 ＋」显示不变。（默认值也在这段值域内。）
-            "spin:up" => self.spin = (self.spin + 1).min(20),
-            "spin:down" => self.spin = (self.spin - 1).max(0),
-            // round-a / round-b 是 round_button 的**两种外观**（普通 / checked），
-            // 演示的是「同一个按钮的长相」，不是可切换状态 —— 没有分派分支，
-            // 门禁白名单里注明。
-            "dd:demo" => self.dd_open = !self.dd_open,
-            // ---- 菜单栏 ----
-            "bar:0" | "bar:1" | "bar:2" => {
-                let idx = match key {
-                    "bar:0" => 0,
-                    "bar:1" => 1,
-                    _ => 2,
-                };
-                // 再点一次当前项 = 收起（MenuBar 的常规行为）。
-                self.menu_open = if self.menu_open == Some(idx) {
-                    None
-                } else {
-                    Some(idx)
-                };
-            }
-            // 菜单条目：core 的菜单是**内联卡**而不是浮层（见 `frontend/shell.zypui` 的 PageMenus），
-            // 所以「点一项」的最小诚实语义就是收起菜单。菜单里没有真动作，
-            // 点完不收起才是看起来"点了没反应"。
-            _ if key.starts_with("m:") => self.menu_open = None,
             // 窗口按钮（win:*）在这个构建里只做悬停/按下视觉：宿主没有把
             // 最小化/最大化/关闭暴露给 View（那是窗口能力，不是样式能力）。
             //
@@ -1609,86 +1138,20 @@ impl Gallery {
                     self.last_action = s;
                 }
             }
-            // basics 页的 pill（可保持按下）与色格（color_picker 的格子）。
+            // basics 页的 pill（可保持按下）。
+            //
+            // round-a / round-b 是 round_button 的**两种外观**（普通 / checked），
+            // 演示的是「同一个按钮的长相」，不是可切换状态 —— 没有分派分支，
+            // 门禁白名单里注明。
             "pill-a" => self.pill_on = !self.pill_on,
-            _ if key.starts_with("swatch:") => {
-                // `swatch:0..15` 是常量表（`gen_swatch_key`），冒号后就是下标。
-                self.color_idx = key[7..].parse().unwrap_or(0);
-            }
             // ---- state 章：教学页必须自证 ----
             //
             // 这一章的职责是教「哪些控件真的接了状态」。若「Wired to state」
             // 区里的控件自己点了没反应，这一页就在说谎——比别页的空壳更糟。
             "state-check" => self.demo_check.toggle(),
-            // state 章演示的是「switch 接了什么」：与 settings 页共用
-            // `switch_on`（旧首页 `live-switch` 的先例）——共享本身是教学
-            // 内容：「同一个状态可以驱动两处视图」。
-            "state-switch" => self.switch_on = !self.switch_on,
-            _ if key.starts_with("stseg:") => {
-                if let Some(s) = static_key(&DEMO_SEGS, key) {
-                    self.demo_seg = s;
-                }
-            }
-            "state-combo" => {
-                self.demo_combo = (self.demo_combo + 1) % 3;
-            }
-            // ---- 主题 ----
-            "theme-mica" => self.mica = !self.mica,
-            // ---- 参考层：navigation / collections / dialogs 族的选中态 ----
-            //
-            // ⚠ 这些字段都是 `&'static str`，而 `click` 收到的 key 是 `&str`
-            // （`on_input` 里 `to_string()` 转交）。直接 `self.x = key` 存不下来，
-            // 必须经 [`static_key`] 查回常量原身——查表是「运行期 key →
-            // 编译期常量」的唯一不泄漏通道。
-            _ if key.starts_with("subdemo:") => {
-                if let Some(s) = static_key(&SUBDEMO_IDS, key) {
-                    self.subsel = s;
-                }
-            }
-            _ if key.starts_with("seldemo:") => {
-                if let Some(s) = static_key(&SELDEMO_IDS, key) {
-                    self.selbar_sel = s;
-                }
-            }
-            _ if key.starts_with("list:") => {
-                if let Some(i) = data::LIST_ITEMS.iter().position(|(id, _)| *id == key) {
-                    self.list_sel = i;
-                }
-            }
-            _ if key.starts_with("td:") => {
-                // `td:RC`（常量表 `cell_key`）：行 ×4 + 列 = 线性下标。
-                // 下标位置：`t`0 `d`1 `:`2 `R`3 `C`4。
-                let r = key[3..4].parse::<usize>().unwrap_or(0);
-                let c = key[4..5].parse::<usize>().unwrap_or(0);
-                self.table_cell = r * 4 + c;
-            }
-            _ if key.starts_with("sw:") => {
-                self.swipe_page = key[3..].parse().unwrap_or(0);
-            }
-            _ if key.starts_with("dpc:") => {
-                // `dpc:RC`（`dp_cell_key`）：格子序号 = 行 ×7 + 列。selected
-                // 的语义是**日期值**，所以查 `CALENDAR[序号]` 的 `Some(n)` ——
-                // 空白格（None）不响应：日历上空白格本来就不是日期。
-                // 下标位置：`d`0 `p`1 `c`2 `:`3 `R`4 `C`5。
-                let r = key[4..5].parse::<usize>().unwrap_or(0);
-                let c = key[5..6].parse::<usize>().unwrap_or(0);
-                if let Some(Some(day)) = data::CALENDAR.get(r * 7 + c) {
-                    self.date_sel = *day;
-                }
-            }
-            _ if key.starts_with("tph:") => self.time_hour = time_part(key),
-            _ if key.starts_with("tpm:") => self.time_minute = time_part(key), // ---- 信息条关闭 ----
-            //
-            // ⚠ `bar:close` 与菜单栏的 `bar:0/1/2` 只差后缀，必须放在菜单栏
-            // 分支**之后**（或精确匹配），否则 `bar:close` 会被当成菜单索引。
-            "bar:close" => self.infobar_open = false,
-            "infobar-restore" => self.infobar_open = true,
-            // ---- expander 类 ----
-            "set-exp" => self.ref_exp = !self.ref_exp,
-            "set-adv" => self.adv_expanded = !self.adv_expanded,
             // ---- 控件参考页的族切换 ----
             //
-            // key 形如 `ref:basics`。走 `REF_FAMILIES` 查表而不是九段 `match`：
+            // key 形如 `ref:buttons`。走 `REF_FAMILIES` 查表而不是逐族 `match`：
             // 加一族只改那张表。解析方式与玻璃参数同构（剥前缀 → 查表），
             // 而门禁 `reference_family_keys_all_wired` 钉住「表里有、树上也有」。
             _ if key.starts_with("ref:") => {
@@ -1836,15 +1299,7 @@ impl zypui::Host for Gallery {
                     ])
                 })
                 .collect()),
-            "settings_item" => {
-                let (id, _, icon) = SETTINGS_ROUTE;
-                rec(vec![
-                    ("id", S(id)),
-                    ("label", S(g.tr(route_key(id)))),
-                    ("icon", S(icon)),
-                ])
-            }
-            // ---- 指南层 ----
+
             "cnt_text" => S(count_text(g.guide_count)),
             "demo_check" => S(g.demo_check.class_word()),
             // 复选框组：**两个**绑定撑起整组 —— 组头的聚合态 + 子项列表。
@@ -1867,22 +1322,15 @@ impl zypui::Host for Gallery {
                     ])
                 })
                 .collect()),
-            "demo_segs" => demo_segs(),
-            "demo_seg" => S(g.demo_seg),
-            "demo_combo_text" => S(demo_combo_text(g.demo_combo)),
+
             "bp_text" => S(bp_text(g)),
             "wants_dark" => B(g.wants_dark),
-            "switch_on" => B(g.switch_on),
-            "notify_on" => B(g.notify_on),
-            "expanded" => B(g.expanded),
-            "adv_expanded" => B(g.adv_expanded),
-            "ref_exp" => B(g.ref_exp),
-            "infobar_open" => B(g.infobar_open),
+
             "lang" => F(g.lang as f32),
             "langs" => langs(),
-            "lang_segs" => lang_segs(),
+
             "locale_name" => S(g.locale()),
-            "locale" => S(g.locale()),
+
             "theme_text" => S(if g.wants_dark { "Dark" } else { "Light" }),
             // ---- 参考层 ----
             "ref_segs" => ref_segs(),
@@ -1890,99 +1338,13 @@ impl zypui::Host for Gallery {
                 .get(g.ref_family)
                 .copied()
                 .map(seg_key)
-                .unwrap_or("ref:basics")),
+                .unwrap_or("ref:buttons")),
             "ref_family" => F(g.ref_family as f32),
-            // ---- basics ----
+            // ---- buttons ----
             "pill_on" => B(g.pill_on),
-            "combo_text" => S(combo_text(g.combo)),
-            "spin_text" => S(spin_text(g.spin)),
-            "volume" => F(g.volume),
-            "slider_text" => S(slider_text(g.volume)),
-            "color_idx" => F(g.color_idx as f32),
-            "area_lines" => area_lines(g),
-            // ---- toggles ----
-            "radio" => F(g.radio as f32),
-            "radio_items" => L(RADIO_ITEMS.iter().map(|(id, l)| item(id, l)).collect()),
-            "toggles_segs" => L(SEGS.iter().map(|(id, l)| item(id, l)).collect()),
-            "seg" => S(g.seg),
-            // ---- collections ----
-            "list_items" => L(LIST_ITEMS.iter().map(|(id, l)| item(id, l)).collect()),
-            "list_sel_id" => S(LIST_ITEMS
-                .get(g.list_sel)
-                .map(|(id, _)| *id)
-                .unwrap_or("list:b")),
-            "table_heads" => L(vec![
-                S(g.tr("ui.backdrop")),
-                S(g.tr("ui.cost")),
-                S(g.tr("ui.available")),
-            ]),
-            "table_rows" => L(TABLE_ROWS
-                .iter()
-                .map(|row| rec(vec![("cells", L(row.iter().map(|c| S(c)).collect()))]))
-                .collect()),
-            "td_text" => S(table_cell_text(g.table_cell)),
-            // ---- menus ----
-            "bar_labels" => L(BAR_ITEMS.iter().map(|x| S(x)).collect()),
-            "menu_open" => F(g.menu_open.map_or(-1.0, |i| i as f32)),
-            "menu_entries" => L(g
-                .menu_open
-                .and_then(|i| MENU_ENTRIES.get(i).copied())
-                .unwrap_or(MENU_ENTRIES[0])
-                .iter()
-                .map(|(label, key)| rec(vec![("label", S(label)), ("key", S(key))]))
-                .collect()),
-            "dd_open" => B(g.dd_open),
-            "tools" => L(TOOLS
-                .iter()
-                .map(|(id, icon)| rec(vec![("id", S(id)), ("icon", S(icon))]))
-                .collect()),
-            // ---- dialogs ----
-            "week_heads" => L(WEEK_HEADS.iter().map(|x| S(x)).collect()),
-            "dp_cells" => L(CALENDAR
-                .iter()
-                .map(|c| rec(vec![("day", F(c.unwrap_or(0) as f32))]))
-                .collect()),
-            "dp_rows" => F(3.0),
-            "date_sel" => F(g.date_sel as f32),
-            "tp_hours" => L(HOURS
-                .iter()
-                .map(|(key, label)| rec(vec![("key", S(key)), ("label", S(label))]))
-                .collect()),
-            "tp_minutes" => L(MINUTES
-                .iter()
-                .map(|(key, label)| rec(vec![("key", S(key)), ("label", S(label))]))
-                .collect()),
-            "time_hour" => S(g.time_hour),
-            "time_minute" => S(g.time_minute),
-            // ---- status ----
-            "toasts" => L(TOASTS
-                .iter()
-                .enumerate()
-                .map(|(i, (title, text))| {
-                    rec(vec![
-                        ("title", S(title)),
-                        ("text", S(text)),
-                        ("severity", S(TOAST_SEVERITIES[i])),
-                    ])
-                })
-                .collect()),
-            // ---- paging ----
-            "swipe_pages" => L(SWIPE
-                .iter()
-                .map(|(title, desc)| rec(vec![("title", S(title)), ("desc", S(desc))]))
-                .collect()),
-            "swipe_idx" => F(g.swipe_page as f32),
-            "swipe_count" => F(SWIPE.len() as f32),
-            // ---- navigation ----
-            "subsel" => S(g.subsel),
-            "selbar_sel" => S(g.selbar_sel),
-            "sel_items" => L(SELECTOR.iter().map(|(id, l)| item(id, l)).collect()),
-            "navdemo" => L(NAV_DEMO
-                .iter()
-                .map(|(id, label, icon)| {
-                    rec(vec![("id", S(id)), ("label", S(label)), ("icon", S(icon))])
-                })
-                .collect()),
+
+            // ---- checkbox ----
+
             // ---- glass ----
             "glass_params" => {
                 let (t, bz, d, i) = g.glass.texts();
