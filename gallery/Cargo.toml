@@ -32,6 +32,13 @@ zephyra-ui = { path = "../ZephyraUI" }
 zstylec = { path = "../zstylec" }
 zypui = { path = "../zypui" }
 
+# 背景照片的解码器。材质 / 液态玻璃那页的背景板是一张真实照片，
+# 编译期内嵌 JPEG、运行时解成 RGBA8 上传 GPU（见 `src/bin/main.rs`）。
+#
+# `default-features = false` 关掉 rayon：解码只在建窗那一刻跑一次，
+# 拉一个并行池进来不值当（而 rayon 会拖进一串额外依赖）。
+jpeg-decoder = { version = "0.3", default-features = false }
+
 # 平台能力抽象（窗口外观：暗色 / 圆角 / Mica）。应用只依赖 trait，
 # Windows 的实现与 Linux 的降级都在实现 crate 里。
 zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }

@@ -27,6 +27,7 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     ("testing", "Testing", "bell"),
     // ---- 附录：控件参考（一页内 segmented 切两族）----
     ("reference", "Controls", "doc"),
-    // 液态玻璃：一等路由（四个 `[−]/[+]` 步进器调折射参数）。
-    ("glass", "Liquid Glass", "sliders"),
+    // 材质专区（与液态玻璃合并）：三个 `[−]/[+]` 步进器调折射参数，
+    // 背景是一张真实照片。
+    ("materials", "Materials", "image"),
 ];

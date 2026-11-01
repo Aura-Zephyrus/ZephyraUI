@@ -33,7 +33,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use zephyra_core::theme::ThemeVariant;
-use zephyra_gallery::app::{resolve_route, Gallery, REF_FAMILIES, ROUTES, SUPPORTED};
+use zephyra_gallery::app::{
+    resolve_route, Gallery, MOUNTAIN_TEXTURE, REF_FAMILIES, ROUTES, SUPPORTED,
+};
 
 // `Styler` 只给 `HostWindow::set_styler` 用，与宿主是哪个后端无关 ——
 // 所以它的 gate 是「有没有窗口路」，而不是「哪个后端」。
@@ -789,6 +791,84 @@ fn use_demo_font() {
     );
 }
 
+// ---- 背景照片（材质 / 液态玻璃那页的背景板）----
+
+/// 背景照片（编译期内嵌的 JPEG）。
+///
+/// 与字体同一个待遇 —— gallery 是**演示应用**，照片是它的演示素材。
+/// 运行时从磁盘找文件的话，cwd 一变照片就没了，而症状是「背景全黑」，
+/// 与「纹理没注册上」看起来一模一样。
+const MOUNTAIN_JPEG: &[u8] = include_bytes!("../../assets/mountain.jpg");
+
+/// 把内嵌的 JPEG 解成 **RGBA8**（行优先）。
+///
+/// # 为什么自己补 alpha
+///
+/// `jpeg-decoder` 0.3 只有 `decode()`，出的是 **RGB8**（三通道）；
+/// 宿主的 `register_texture` 要的是 **RGBA8**。补 alpha 是一次逐像素循环，
+/// 只在建窗那一刻跑一次 —— 不是热路径，不值得为它多引一个图像库。
+///
+/// # 为什么返回 `Option` 而不是 `Result`
+///
+/// 失败只有两种（JPEG 坏 / 像素格式不认识），两种的处置都一样：**这页没有背景**。
+/// 而「没有背景」不该让整个应用起不来 —— 材质页照样能开，只是照片那块空着。
+/// 所以调用方把 `None` 打成一行警告，然后继续跑。
+fn decode_mountain() -> Option<(Vec<u8>, u32, u32)> {
+    let mut dec = jpeg_decoder::Decoder::new(MOUNTAIN_JPEG);
+    let raw = dec.decode().ok()?;
+    let info = dec.info()?;
+    // 每个像素的字节数：彩色 3、灰度 1。其余格式（CMYK / 12 位）本仓不处理 ——
+    // 素材是自己准备的，格式变了会在这里显形，而不是画出一张错乱的图。
+    let src = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => 3usize,
+        jpeg_decoder::PixelFormat::L8 => 1usize,
+        _ => return None,
+    };
+    let (w, h) = (info.width as u32, info.height as u32);
+    let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
+    for (i, px) in raw.chunks_exact(src).enumerate() {
+        let o = i * 4;
+        // 灰度：三个通道取同一个值；彩色：R / G / B 依次取。
+        let (r, g, b) = if src == 3 {
+            (px[0], px[1], px[2])
+        } else {
+            (px[0], px[0], px[0])
+        };
+        rgba[o] = r;
+        rgba[o + 1] = g;
+        rgba[o + 2] = b;
+        rgba[o + 3] = 255;
+    }
+    Some((rgba, w, h))
+}
+
+/// 把背景照片注册进宿主。
+///
+/// # 为什么两个后端能共用这一份
+///
+/// D3D12 返回 `Result<u32, String>`（槽位句柄）、Vulkan 返回
+/// `Result<(), SurfaceError>` —— **返回值类型不同，参数表相同**
+/// （名字 / 像素 / 宽 / 高），而本函数只关心「有没有失败」。
+/// 于是写成 `if let Err(e) = …` 两边都编得过，不必分成两份。
+///
+/// # 为什么失败不致命
+///
+/// 这张照片只是**背景板**。注册不上时材质页少一张照片，其余页面照常。
+/// 真的把整个应用拖死才是错的 —— 那样一张图就足以让 gallery 开不了。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
+fn register_mountain(host: &mut Host) {
+    let Some((pixels, w, h)) = decode_mountain() else {
+        eprintln!("[gallery] 背景照片解不出来（JPEG 坏或格式不认识），材质页的背景会是空的");
+        return;
+    };
+    if let Err(e) = host.register_texture(MOUNTAIN_TEXTURE, &pixels, w, h) {
+        eprintln!("[gallery] 注册背景纹理失败: {e:?}");
+    }
+}
+
 /// 本次编译选中的宿主类型。
 ///
 /// # 为什么是别名而不是在每处写全名
@@ -839,6 +919,13 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // 叠回自绘标题栏之上。用通用的运行时 env 覆盖，让无边框与 cwd 无关。
         std::env::set_var("ZEPHYRA_FRAMELESS", "1");
         let mut app = Host::new_lenient_sized(event_loop, view, (w, h));
+
+        // 背景照片要在**第一帧之前**注册 —— 否则首帧的材质页背景是空的，
+        // 而首帧是这一页唯一一次「从零画出来」的机会（之后每帧都复用纹理表）。
+        //
+        // 位置也在 `set_styler` 之前：样式表只写**纹理名**，真正建 GPU 资源的是
+        // 这里。两件事的顺序无所谓，但都必须在 `app.frame()` 之前。
+        register_mountain(&mut app);
 
         // 样式表是第一优先级证明物：「源码里没有样式」要能看到它接上了。
         app.set_styler(install(build_sheet()));

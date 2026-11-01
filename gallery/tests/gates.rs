@@ -76,9 +76,9 @@ fn laid_out_from(route: &'static str, family: usize) -> Node {
     root
 }
 
-/// 液态玻璃页的树 —— 它现在是一等路由 `glass`，不再藏在 reference 的族里。
-fn laid_out_glass() -> Node {
-    laid_out("glass")
+/// 材质页的树 —— 一等路由 `materials`（材质专区与液态玻璃合并在一页）。
+fn laid_out_materials() -> Node {
+    laid_out("materials")
 }
 
 /// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
@@ -2055,7 +2055,7 @@ fn glass_params_are_not_hard_coded() {
 
     // ---- 基准树 ----
     let mut base = Gallery::default();
-    base.route = "glass";
+    base.route = "materials";
     let warm = filters_at(&base);
     assert!(
         warm.len() >= 3,
@@ -2067,7 +2067,7 @@ fn glass_params_are_not_hard_coded() {
     // ---- 逐个参数各挪一档 ----
     for param in Param::ALL {
         let mut g = Gallery::default();
-        g.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
+        g.route = "materials"; // 材质专区（与液态玻璃合并）是一等路由
         assert!(
             g.glass.nudge(param, 1),
             "默认档位下 `{param:?}` 加一档被 clamp 掉了 —— 表的下界取得不对"
@@ -2130,7 +2130,7 @@ fn glass_params_are_not_hard_coded() {
     // 减起时成立，而这里真正的风险是 `nudge` 把加减**同一个方向**实现成两次
     // 加（那种形状下每条单参数门禁都绿，而画面上 `[−]` 与 `[+]` 效果一样）。
     let mut round = Gallery::default();
-    round.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
+    round.route = "materials"; // 材质专区（与液态玻璃合并）是一等路由
     for param in Param::ALL {
         assert!(round.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
     }
@@ -2267,7 +2267,7 @@ fn glass_param_tables_line_up() {
 /// 断言 8 个按钮全在树上；按钮少画了就会在这里报，而不是静默通过。
 #[test]
 fn glass_param_keys_all_wired() {
-    let root = laid_out_glass();
+    let root = laid_out_materials();
     let mut keys = Vec::new();
     for param in Param::ALL {
         keys.push(format!("glass-{}:dec", param.slug()));
@@ -2283,7 +2283,7 @@ fn glass_param_keys_all_wired() {
 
     // 逐个点「加」，每次都要求参数真的动了。
     let mut g = Gallery::default();
-    g.route = "glass"; // 液态玻璃现在是一等路由，不再藏在 reference 的族里
+    g.route = "materials"; // 材质专区（与液态玻璃合并）是一等路由
     for param in Param::ALL {
         let before = g.glass;
         g.click(&format!("glass-{}:inc", param.slug()));
@@ -2301,281 +2301,309 @@ fn glass_param_keys_all_wired() {
     assert_eq!(g.glass, Glass::default(), "加减一轮之后没回到默认值");
 }
 
-/// 三块玻璃必须**压在可折射的内容上**。
+/// 节点上某个属性的**生效值**。
 ///
-/// # 这条钉住的是整页的**前提**
+/// # 为什么不能只看 `iter_local`
 ///
-/// 折射采样的是「**已经画在屏幕上**的东西」。玻璃块下面没有内容 ⇒ 位移纯色
-/// ⇒ 画面上「折射没生效」。而那不是着色器的问题，是**几何**的问题 —— 于是
-/// 排查方向会整个跑偏（去查 HLSL、查滤镜链、查离屏尺寸）。
+/// 属性有**两层存储**：本地写死的（`iter_local`）与样式表给的（`iter_styled`）。
+/// 样式表走的是 `set_styled_prop`，落在**另一层** —— 而材质页的纹理名与材质
+/// 种类**全部**来自样式表，只看 local 的话它们一个都读不到。
 ///
-/// # 为什么要有「贯穿整个舞台的竖条」
+/// 两层都查，且**本地优先**（本地是最高优先级）。
+fn prop_of<'a>(
+    node: &'a Node,
+    key: &'static zephyra_core::property::PropertyKey,
+) -> Option<&'a zephyra_core::property::PropertyValue> {
+    node.props()
+        .iter_local()
+        .chain(node.props().iter_styled())
+        .find(|(k, _)| std::ptr::eq(*k, key))
+        .map(|(_, v)| v)
+}
+
+/// 照片板必须**真的挂着那张照片**。
 ///
-/// 早先这一页只有三行说明文字，而文字**只有 312px 宽**、三块玻璃占 692px ——
-/// 于是第三块玻璃下面**一整块纯色底板**，「折射没生效」是**必然**的。
-/// 竖条铺满整宽（`27 × 20 + 8 × 19 = 692`），每一块玻璃下面都有可弯的东西。
+/// # 为什么这条是整页的**前提**
 ///
-/// # 判据是「画出来的位置」，不是「布局出来的位置」
+/// 折射与磨砂读的是「**已经画在屏幕上**的东西」（离屏趟里的 `g_dst`）。
+/// 照片没画进去 ⇒ 玻璃块背后是纯色 ⇒ 位移纯色 ⇒ 画面上「折射没生效」。
+/// 而那不是着色器的问题，是**属性没接上**的问题 —— 排查方向会整个跑偏
+/// （去查 HLSL、查滤镜链、查离屏尺寸），而真正的答案在一行样式里。
 ///
-/// `translate-y` 是**绘制期**的位移（`paint.rs` 的 `translate_x/y`），**不**改
-/// 布局矩形。所以布局上玻璃块在竖条带**下面**，画出来才压上去。
-/// 判据必须按**画出来的**位置算 —— 否则这条门禁会恒真地绿。
+/// # 为什么查的是**属性**而不是画面
+///
+/// CPU 光栅**不采样纹理**（它只画图像的形状，见 `cpu_raster::draw_batch`），
+/// 所以像素级的判据在离线路径上永远是「没有照片」。属性级的判据才是
+/// 跨路径成立的 —— 它断的是「照片**有没有被声明**」，而真正有没有画出来
+/// 由真 GPU 截图复核。
 #[test]
-fn glass_panes_cover_the_refraction_target() {
-    let root = laid_out_glass();
+fn the_photo_board_carries_the_texture() {
+    let root = laid_out_materials();
+    let board = find_by_key(&root, "material-board").expect("要有照片板");
 
-    let target = find_by_key(&root, "glass-target").expect("舞台上要有竖条带");
-    let t = target.rect();
-    assert!(
-        t.height > 0.0,
-        "竖条带高度为 0 —— 玻璃块压在上面时底下什么也没有"
-    );
-
-    // 竖条必须**铺满**舞台内容宽 —— 否则靠右的玻璃块下面没有东西。
-    let stage = find_by_key(&root, "glass-stage").expect("要有舞台");
-    let s = stage.rect();
-    let content_w = s.width - 40.0; // 20px padding 两侧
-    assert!(
-        (t.width - content_w).abs() < 1.0,
-        "竖条带只占了 {:.1}px，舞台内容宽是 {:.1}px —— \
-         靠右的玻璃块下面没有可折射的内容（实测第三块玻璃原本完全在文字之外）",
-        t.width,
-        content_w
-    );
-
-    // 竖条要**够宽**，位移才看得见：位移是十几像素量级，窄条弯起来看不出来。
-    let mut bars = 0usize;
-    let mut narrowest = f32::MAX;
-    walk(&root, &mut |n: &Node| {
-        if n.key()
-            .and_then(|k| k.as_name())
-            .is_some_and(|k| k.starts_with("gx:"))
-        {
-            bars += 1;
-            narrowest = narrowest.min(n.rect().width);
-        }
-    });
-    assert!(bars >= 8, "竖条只有 {bars} 根 —— 折射的输入太稀疏");
-    assert!(
-        narrowest >= 16.0,
-        "最窄的竖条只有 {narrowest:.1}px —— 位移（十几像素）比它还宽，弯起来看不出来"
-    );
-
-    // ---- 玻璃块（**画出来的**位置）必须整块压在竖条带上 ----
-    //
-    // `translate-y` 是绘制期位移：布局矩形在下面，绘制位置在上面。
-    // 这里按 `.glass-panes` 的 `translate-y` 折算绘制位置。
-    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
-    let pr = panes.rect();
-    let shift = panes_translate_y();
-    let painted_top = pr.y + shift;
-
-    // 玻璃块本体是 `.glass-cell` 的**第一个**子节点（标签在下面），
-    // 所以它的高度就是 `.glass-pane` 的高度（120px）。
-    let pane_h = find_by_key(&root, "glass:a")
-        .expect("要有玻璃块")
-        .rect()
-        .height;
-    let pane_bottom = painted_top + pane_h;
-
-    // 玻璃块必须**整条落在竖条带里** —— 探出带外的那部分底下是空底板，
-    // 位移纯色 ⇒ 那一角读作「断裂 / 拖影」（真 GPU 截图上实测出现过：
-    // 薄那块底边一条橙/青断裂带、厚那块左边一条灰白拖影）。
-    assert!(
-        painted_top >= t.y - 1.0,
-        "玻璃块画出来的顶边在 {painted_top:.1}，竖条带的顶边在 {:.1} —— \
-         玻璃块**探出了**竖条带上方，那部分底下没有可折射的内容",
-        t.y
-    );
-    assert!(
-        pane_bottom <= t.y + t.height + 1.0,
-        "玻璃块画出来的底边在 {pane_bottom:.1}，竖条带的底边在 {:.1} —— \
-         玻璃块**探出了**竖条带下方，那部分底下没有可折射的内容",
-        t.y + t.height
+    let texture: Option<String> =
+        prop_of(board, &zephyra_core::props::IMAGE_TEXTURE).map(|v| match v {
+            zephyra_core::property::PropertyValue::StaticStr(s) => (*s).to_string(),
+            zephyra_core::property::PropertyValue::Str(s) => s.as_ref().to_string(),
+            other => panic!("image-texture 的值不是字符串：{other:?}"),
+        });
+    assert_eq!(
+        texture.as_deref(),
+        Some(zephyra_gallery::app::MOUNTAIN_TEXTURE),
+        "照片板没挂上背景纹理 —— 玻璃块背后是纯色，位移看不出来"
     );
 }
 
-/// 竖条带必须**露在玻璃块外面** —— 只盖住是不够的，还得没盖满。
+/// 照片的宽高比必须与照片板一致 —— 否则照片铺满板时会被**拉扁**。
 ///
-/// # 为什么这条和 `glass_panes_cover_the_refraction_target` 是两头夹
+/// # 为什么这条值得单列
 ///
-/// 「玻璃块盖住条带」保证块内有东西可弯；「条带露在块外」保证**块外**还有同一段
-/// 图案可看。缺了后者时真 GPU 截图上是三块**不透明的条纹贴片**：条纹只在玻璃里
-/// 有，玻璃外全黑 —— 于是「里面那些条纹到底有没有被掰弯」在画面上**无从对照**，
-/// 读出来就是「一点透明度都没有」。
+/// 照片按**节点矩形**铺满（`image-size` 默认 −1），而节点的宽高比由样式表写死。
+/// 两者一旦对不上，照片就被非等比拉伸 —— 山会被压扁，而画面上**看不出**
+/// 「被拉扁了」，只显得「这张照片怪怪的」。
+///
+/// 资源是**编译期内嵌**的 JPEG，它的长宽比与板的长宽比必须一致。
+/// 换图时这条门禁会当场红，而不是让人在画面里找「哪里怪」。
+#[test]
+fn the_photo_aspect_matches_the_board() {
+    let root = laid_out_materials();
+    let board = find_by_key(&root, "material-board").expect("要有照片板");
+    let b = board.rect();
+    let board_aspect = b.width / b.height;
+
+    let bytes = include_bytes!("../assets/mountain.jpg");
+    // `include_bytes!` 给的是 `&[u8; N]`，而 `Decoder::new` 要 `&[u8]`（它按
+    // `io::Read` 收）。
+    let mut dec = jpeg_decoder::Decoder::new(&bytes[..]);
+    dec.read_info().expect("资源是合法 JPEG");
+    let info = dec.info().expect("资源有尺寸");
+    let photo_aspect = info.width as f32 / info.height as f32;
+
+    assert!(
+        (board_aspect - photo_aspect).abs() < 0.02,
+        "照片板宽高比 {board_aspect:.4} 与资源宽高比 {photo_aspect:.4} 差得太多 —— \
+         照片铺满板时会被拉扁（{:.1}% 的非等比拉伸）",
+        (board_aspect / photo_aspect - 1.0) * 100.0
+    );
+}
+
+/// 三块材质样板必须**各自声明自己的材质**。
+///
+/// # 为什么这条不能靠「看画面」断
+///
+/// `material:` 拼错时**解析就会失败**（`zstylec::value::enum_value` 只认
+/// `solid` / `frosted` / `glass` 三个词），于是那条规则**整块被跳过** ——
+/// 而画面上那块样板只是「没有磨砂」，不报错、不空白，看不出是拼错。
+///
+/// 顺带断掉「三块样板声明成同一种」：那会让「材质选型」这一整个专区
+/// 变成同一块板子画三遍，而画面上确实看起来「三块一模一样」。
+#[test]
+fn the_material_swatches_declare_their_materials() {
+    use zephyra_core::filter::Material;
+
+    let root = laid_out_materials();
+    let mut got: Vec<(String, Material)> = Vec::new();
+    walk(&root, &mut |n: &Node| {
+        let Some(key) = n.key().and_then(|k| k.as_name()) else {
+            return;
+        };
+        if !key.starts_with("swatch:") {
+            return;
+        }
+        let material = match prop_of(n, &zephyra_core::props::MATERIAL) {
+            Some(zephyra_core::property::PropertyValue::Material(m)) => Some(*m),
+            _ => None,
+        };
+        got.push((key.to_string(), material.unwrap_or(Material::solid())));
+    });
+
+    assert_eq!(
+        got.len(),
+        3,
+        "材质样板只有 {} 块 —— 专区讲的是三种表面，少一块就少一种对照",
+        got.len()
+    );
+    let want = [
+        ("swatch:solid", Material::solid()),
+        ("swatch:frosted", Material::frosted()),
+        ("swatch:glass", Material::glass()),
+    ];
+    for (key, m) in &want {
+        let found = got
+            .iter()
+            .find(|(k, _)| k == key)
+            .unwrap_or_else(|| panic!("没有 {key} 这块样板"));
+        assert_eq!(
+            found.1, *m,
+            "{key} 的材质是 {:?}，应为 {m:?} —— 材质选型这一栏就少了一种对照",
+            found.1
+        );
+    }
+}
+
+/// 三块玻璃必须**整块落在照片板上**。
+///
+/// # 这条钉的是整页的**前提**
+///
+/// 折射采样的是「**已经画在屏幕上**的东西」。玻璃块下面没有照片 ⇒ 位移纯色
+/// ⇒ 画面上「折射没生效」。而那不是着色器的问题，是**几何**的问题 —— 于是
+/// 排查方向会整个跑偏（去查 HLSL、查滤镜链、查离屏尺寸）。
+///
+/// # 为什么判据是「整块落在板里」
+///
+/// 玻璃块**探出**照片板的那一角，底下是纯色板底 ⇒ 那一角读作「断裂 / 拖影」
+/// （真 GPU 截图上实测出现过：薄那块底边一条橙/青色断裂带）。所以不是
+/// 「玻璃块与照片有重叠」就行，而是要**整块**在照片里。
+#[test]
+fn the_glass_panes_sit_on_the_photo() {
+    let root = laid_out_materials();
+    let board = find_by_key(&root, "material-board").expect("要有照片板");
+    let b = board.rect();
+
+    for key in ["glass:a", "glass:b", "glass:c"] {
+        let r = find_by_key(&root, key)
+            .unwrap_or_else(|| panic!("要有 {key} 这块玻璃"))
+            .rect();
+        assert!(
+            r.width > 0.0 && r.height > 0.0,
+            "{key} 的矩形是 {r:?} —— 玻璃块量成 0，照片上什么都看不到"
+        );
+        // ⚠ 格式串里**不能**写 `{r.x:.1}` —— Rust 的格式串不支持字段访问，
+        // 只能按位置取参。所以先把要用��提出来。
+        let (rx, ry, rw, rh) = (r.x, r.y, r.width, r.height);
+        assert!(
+            rx >= b.x - 1.0 && rx + rw <= b.x + b.width + 1.0,
+            "{key} 横向探出照片板：玻璃在 {rx:.1}..{:.1}，板在 {:.1}..{:.1} —— \
+             探出去的那部分底下是纯色，读作断裂 / 拖影",
+            rx + rw,
+            b.x,
+            b.x + b.width
+        );
+        assert!(
+            ry >= b.y - 1.0 && ry + rh <= b.y + b.height + 1.0,
+            "{key} 纵向探出照片板：玻璃在 {ry:.1}..{:.1}，板在 {:.1}..{:.1} —— \
+             探出去的那部分底下是纯色，读作断裂 / 拖影",
+            ry + rh,
+            b.y,
+            b.y + b.height
+        );
+    }
+}
+
+/// 照片必须**露在玻璃块外面** —— 只盖住是不够的，还得没盖满。
+///
+/// # 为什么这条和 `the_glass_panes_sit_on_the_photo` 是两头夹
+///
+/// 「玻璃块落在照片里」保证块内有东西可弯；「照片露在块外」保证**块外**还有
+/// 同一段画面可看。缺了后者时真 GPU 截图上是三块**不透明的贴片**：照片只在
+/// 玻璃里有，玻璃外全是纯色 —— 于是「里面那些山脊到底有没有被掰弯」在画面上
+/// **无从对照**，读出来就是「一点透明度都没有」。
 ///
 /// 这是「有没有对照」的问题，不是「折射强弱」的问题：折射参数再对，没有外部
 /// 参照也读不出玻璃来。所以它单列一条，而不是并进上面那条的某个 assert。
 #[test]
-fn refraction_target_extends_beyond_the_glass() {
-    let root = laid_out_glass();
+fn the_photo_extends_beyond_the_glass() {
+    const EXPOSE: f32 = 30.0;
 
-    let t = find_by_key(&root, "glass-target")
-        .expect("舞台上要有竖条带")
-        .rect();
-    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
-    let painted_top = panes.rect().y + panes_translate_y();
-    let pane_h = find_by_key(&root, "glass:a")
-        .expect("要有玻璃块")
-        .rect()
-        .height;
+    let root = laid_out_materials();
+    let board = find_by_key(&root, "material-board").expect("要有照片板");
+    let b = board.rect();
+    let pane = find_by_key(&root, "glass:a").expect("要有玻璃块").rect();
 
-    let exposed_top = painted_top - t.y;
-    let exposed_bottom = (t.y + t.height) - (painted_top + pane_h);
-    // 30px 的判据：现值 40（条带 200 − 玻璃 120 = 80，上下各半），门槛取 30
-    // 留 10px 余量 —— 露区里得**放得下横边界**（行高 25px ⇒ 边界每 25px 一条，
-    // 40px 露区时上下各压到 25 与 175），才谈得上「同一段图案在块外继续」；
-    // 露成几像素时画面上只是一条亮边，对照就没了。
+    let exposed_top = pane.y - b.y;
+    let exposed_bottom = (b.y + b.height) - (pane.y + pane.height);
     assert!(
-        exposed_top >= 30.0,
-        "竖条带只在玻璃块上方露出 {exposed_top:.1}px（要求 ≥30）—— \
-         条纹几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
+        exposed_top >= EXPOSE,
+        "照片只在玻璃块上方露出 {exposed_top:.1}px（要求 ≥{EXPOSE}）—— \
+         照片几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
     );
     assert!(
-        exposed_bottom >= 30.0,
-        "竖条带只在玻璃块下方露出 {exposed_bottom:.1}px（要求 ≥30）—— \
-         条纹几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
+        exposed_bottom >= EXPOSE,
+        "照片只在玻璃块下方露出 {exposed_bottom:.1}px（要求 ≥{EXPOSE}）—— \
+         照片几乎被玻璃盖满，外面没有对照 ⇒ 玻璃读作不透明贴片"
     );
 }
 
-/// 玻璃块**上下边往内 20px 之内**必须有横着的颜色边界。
+/// 玻璃块压着的那块照片**必须有结构** —— 否则「折射算对了却看不见」。
 ///
-/// # 这条钉的是「折射算对了却看不见」
+/// # 这条钉的是「图案侧」，不是着色器侧
 ///
-/// 位移本身由着色器门禁管（那侧断的是「算得对」）。这条管的是**图案侧**：
-/// 玻璃块上下边的位移是**竖直**的，只有图案在竖直方向**有颜色边界**，那段
-/// 位移才改得动画面。缺了边界时真 GPU 截图上的观感是「折射没生效」——
-/// 而着色器其实一直在算（逐像素取样能证明它在算：玻璃外 x=586..593 是深色
-/// 缝隙、玻璃内同一段变成了青条）。
+/// 位移本身由着色器管（那侧断的是「算得对」）。这条管的是**被折射的东西**：
+/// 位移要改得动画面，那一块照片里必须有**颜色边界**；一块纯色（哪怕是
+/// 渐变到看不出差别）的区域，位移多大都读不出来 —— 真 GPU 截图上的观感是
+/// 「折射没生效」，而着色器其实一直在算。
 ///
-/// # 20px 是算出来的，不是拍出来的
+/// # 判据是**梯度能量**，不是「有没有某条线」
 ///
-/// 默认参数（thickness=48 / bezel=40 / ior=1.50）下，玻璃块边缘往内的位移剖面
-/// —— 按 `PSRefraction` 的式子逐点代入，220×120 的玻璃块：
+/// 旧版对着棋盘格断言「玻璃上下边往内 20px 内有横边界」—— 那依赖棋盘格
+/// 的规则行距，是**图案的排版**。换成照片之后这条判据不成立了（照片没有
+/// 「行」），于是换成与图案无关的量：**相邻像素亮度差的均值**。
 ///
-/// | 距边 | 位移 |
-/// |---|---|
-/// | 1px | ~23px |
-/// | 2px | ~23px（峰值） |
-/// | 4px | ~20px |
-/// | 10px | ~13px |
-/// | 20px | ~3px |
-/// | 40px（带内侧） | 0 |
+/// 一块有内容的照片（山脊、石阶、花丛）在任何一段上都有可观的梯度；
+/// 一块纯色或极缓渐变的图接近 0。门槛取实测值的约 1/4，留足余量。
 ///
-/// 边界落在往内 `d` 处要被看见，得存在某个更靠外的像素满足
-/// `d' + disp(d') > d` —— 代进去解出 `d ≈ 23px`。取 20 留 3px 余量。
-/// 再往外的边界**够不着**：那儿的位移已经衰减到 3px 以下。
+/// # 这条要解一次像素
 ///
-/// ⚠ 这个 20 跟着**默认档**走：把 `Glass::default()` 的厚度 / 倒角带调小，
-/// 位移剖面整体收缩，这条断言就该跟着收紧（上一版默认 28/26 时算出来是 12px）。
-///
-/// ⚠ 同样地，这条与 `.glass-seg` 的 `height: 25px`、`.glass-target` 的 `height`、
-/// `.glass-panes` 的 `translate-y` 三者**绑死**。改任何一个都会让边界滑出
-/// 20px，而症状只是「看着不像玻璃」—— 不报错、不红别的。
+/// 所以它是本文件里唯一一条**读资源像素**的门禁。代价是一次 JPEG 解码
+/// （约 50ms），换来的是「换一张图会当场红」—— 而那正是它要防的事。
 #[test]
-fn refraction_target_has_structure_within_reach_of_both_pane_edges() {
-    const REACH: f32 = 20.0;
+fn the_photo_under_the_panes_has_structure() {
+    let root = laid_out_materials();
+    let board = find_by_key(&root, "material-board").expect("要有照片板");
+    let b = board.rect();
+    let pane = find_by_key(&root, "glass:a").expect("要有玻璃块").rect();
 
-    let root = laid_out_glass();
+    // 玻璃块在照片上的归一化区域 —— 照片铺满板，所以板的矩形就是照片的映射。
+    let u0 = (pane.x - b.x) / b.width;
+    let u1 = (pane.x + pane.width - b.x) / b.width;
+    let v0 = (pane.y - b.y) / b.height;
+    let v1 = (pane.y + pane.height - b.y) / b.height;
 
-    // 玻璃块**画出来的**上下边（`translate-y` 是绘制期位移，布局矩形不含它）。
-    let panes = find_by_key(&root, "glass-panes").expect("要有玻璃块行");
-    let pane_top = panes.rect().y + panes_translate_y();
-    let pane_h = find_by_key(&root, "glass:a")
-        .expect("要有玻璃块")
-        .rect()
-        .height;
-    let pane_bottom = pane_top + pane_h;
-
-    // 棋盘的横边界 = 每一列里、除最后一个方格外的**底边**。
-    // 列的 key 是 `gx:{i}`（见 `effects.rs::target_key`）。
-    let col = find_by_key(&root, "gx:0").expect("棋盘至少要有第一列");
-    let col_w = col.rect().width;
-    let segs = col.children();
-    assert!(
-        segs.len() >= 3,
-        "棋盘第一列只有 {} 个方格 —— 横边界太少，上下边大概率一条都碰不上",
-        segs.len()
+    let bytes = include_bytes!("../assets/mountain.jpg");
+    // `include_bytes!` 给的是 `&[u8; N]`，而 `Decoder::new` 要 `&[u8]`（它按
+    // `io::Read` 收）。
+    let mut dec = jpeg_decoder::Decoder::new(&bytes[..]);
+    let rgb = dec.decode().expect("资源能解开");
+    let info = dec.info().expect("资源有尺寸");
+    assert_eq!(
+        info.pixel_format,
+        jpeg_decoder::PixelFormat::RGB24,
+        "资源不是 RGB24 —— 这条门禁按三通道解像素，换格式要一起改"
     );
-    // ⚠ 必须连**宽**一起断：方格是空容器，列改成竖排后它的横向尺寸由
-    // `.glass-bar` 的 `cross-align: stretch` 决定 —— 少了那条时方格量成
-    // **0 宽**，`height` 与 `y` 却都正常，于是只看边界的断言会**照常绿**，
-    // 而画面上棋盘根本不存在（整列退回一根纯色竖条）。去掉那条样式复现过、
-    // 这条门禁当场红。
-    for s in segs {
-        assert!(
-            (s.rect().width - col_w).abs() < 1.0,
-            "方格宽 {:.1}px，列宽 {col_w:.1}px —— 方格没铺满列，棋盘在画面上不存在",
-            s.rect().width
-        );
-        assert!(
-            s.rect().height >= 8.0,
-            "方格高 {:.1}px —— 太薄的横边界等于没有（横向位移看不出来）",
-            s.rect().height
-        );
-    }
-    let mut horiz: Vec<f32> = Vec::new();
-    for s in segs.iter().take(segs.len() - 1) {
-        let r = s.rect();
-        horiz.push(r.y + r.height);
-    }
-
-    let near_top = horiz
-        .iter()
-        .any(|b| *b > pane_top && *b <= pane_top + REACH);
+    let (w, h) = (info.width as usize, info.height as usize);
+    let x0 = (u0 * w as f32) as usize;
+    let x1 = ((u1 * w as f32) as usize).min(w);
+    let y0 = (v0 * h as f32) as usize;
+    let y1 = ((v1 * h as f32) as usize).min(h);
     assert!(
-        near_top,
-        "玻璃块上边（{pane_top:.1}）往内 {REACH}px 里没有横边界 —— \
-         那段竖直位移撞不上颜色变化，**上边的折射在画面上等于不存在**。\
-         现有边界在 {horiz:?}"
+        x1 > x0 + 8 && y1 > y0 + 8,
+        "玻璃块在照片上只映射到 {x0}..{x1} × {y0}..{y1} —— 取不到内容"
     );
 
-    let near_bottom = horiz
-        .iter()
-        .any(|b| *b < pane_bottom && *b >= pane_bottom - REACH);
-    assert!(
-        near_bottom,
-        "玻璃块下边（{pane_bottom:.1}）往内 {REACH}px 里没有横边界 —— \
-         那段竖直位移撞不上颜色变化，**下边的折射在画面上等于不存在**。\
-         现有边界在 {horiz:?}"
-    );
-}
-
-/// 读 `.glass-panes` 的 `translate-y`（绘制期位移，布局矩形不含它）。
-///
-/// # 为什么要从样式表里**读**而不是硬编码
-///
-/// 这个数是「玻璃块与竖条带对齐」的全部依据，而它住在 `.zstyle` 里。
-/// 硬编码一份的话，样式表改了而门禁还按老数算 ⇒ 门禁恒真。
-/// 于是从**同一份**样式表解析出来 —— 与 `shell_metrics_match_stylesheet`
-/// 同一手法。
-fn panes_translate_y() -> f32 {
-    let css = zephyra_gallery::styles::app_only()
-        .iter()
-        .find(|(name, _)| *name == "pages")
-        .map(|(_, src)| *src)
-        .expect("有 pages 这一张表");
-    // 在 `.glass-panes` 那一段里找 `translate-y: <n>px`。
-    let mut in_panes = false;
-    for line in css.lines() {
-        let t = line.trim();
-        if t.starts_with("Container.glass-panes") {
-            in_panes = true;
-            continue;
-        }
-        if in_panes {
-            if t.starts_with('}') {
-                break;
+    let lum = |x: usize, y: usize| -> f32 {
+        let i = (y * w + x) * 3;
+        0.299 * rgb[i] as f32 + 0.587 * rgb[i + 1] as f32 + 0.114 * rgb[i + 2] as f32
+    };
+    let mut sum = 0.0f32;
+    let mut n = 0.0f32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if x + 1 < x1 {
+                sum += (lum(x, y) - lum(x + 1, y)).abs();
+                n += 1.0;
             }
-            if let Some(rest) = t.strip_prefix("translate-y:") {
-                let v = rest.trim().trim_end_matches("px;").trim();
-                return v
-                    .parse()
-                    .unwrap_or_else(|_| panic!(".glass-panes 的 translate-y 读不出来：{rest:?}"));
+            if y + 1 < y1 {
+                sum += (lum(x, y) - lum(x, y + 1)).abs();
+                n += 1.0;
             }
         }
     }
-    panic!(".glass-panes 规则里没有 translate-y —— 玻璃块与竖条带的对齐就无从谈起");
+    let mean = sum / n.max(1.0);
+    assert!(
+        mean > 6.0,
+        "玻璃块压着的那块照片几乎没有结构（相邻像素亮度差均值 {mean:.2}）—— \
+         位移再对也读不出来，画面上就是「折射没生效」"
+    );
 }
 
 /// 玻璃块**不许有底色** —— 「上面盖着一层玻璃」只由折射 + 描边亮线表达。

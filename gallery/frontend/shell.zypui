@@ -250,14 +250,20 @@
   </PageRoot>
 </component>
 
-<!-- ───────────────────────── 液态玻璃（一等路由） ───────────────────────── -->
+<!-- ───────────────────────── 材质专区（与液态玻璃合并为一页） ───────────────────────── -->
 
-<component name="PageGlass">
-  <PageRoot key="glass" cls="page-glass">
-    <TextLabel key="glass-blurb" text="{tr('ui.liquid-glass-refraction-parameters-are-runtime-adjustable')}" level="text-body"/>
-    <Section key="sec-params" title="{tr('ui.refraction-parameters')}">
+<!-- 材质与玻璃**同页**：材质专区讲「三种表面长什么样」，液态玻璃讲
+     「折射参数怎么调」。两件事共用**同一块照片板** —— 材质样板与玻璃块
+     都浮在同一张山上，于是「实心 / 磨砂 / 玻璃」的差别和「薄 / 普通 / 厚」
+     的差别是**同一张照片**上的两种读法，不用在两张图之间来回对照。
+     照片挂在**板自己**身上（.zstyle 的 image-texture），因为它是所有子项
+     背后必须先画进去的东西 —— 折射与磨砂读的就是那一份。 -->
+<component name="PageMaterials">
+  <PageRoot key="materials" cls="page-materials">
+    <TextLabel key="materials-blurb" text="{tr('ui.materials-on-a-real-photo')}" level="text-body"/>
+    <Section key="sec-materials" title="{tr('ui.materials-and-liquid-glass')}">
       <GlassParams/>
-      <GlassStage/>
+      <MaterialBoard/>
     </Section>
   </PageRoot>
 </component>
@@ -277,38 +283,61 @@
   </PageRoot>
 </component>
 
-<!-- 折射舞台：底板文字 + 棋盘格（折射的输入）+ 三块玻璃。
-     棋盘 20 列 × 8 行，(i + j) % 2 换色；列 key "gx:N"。
-     玻璃的 filter 是结构值（Val::Raw 透传），由宿主逐帧算。 -->
-<component name="GlassStage">
-  <PageRoot key="glass-stage" cls="glass-stage">
-    <PageRoot key="glass-backdrop" cls="glass-backdrop">
-      <TextLabel key="gb:0" text="{tr('ui.the-quick-brown-fox-jumps-over-the-lazy-dog')}" level="glass-bg-text"/>
-      <TextLabel key="gb:1" text="{tr('ui.refraction-samples-what-is-already-on-screen')}" level="glass-bg-text"/>
-      <TextLabel key="gb:2" text="{tr('ui.remove-these-lines-and-the-glass-looks-broken')}" level="glass-bg-text"/>
-    </PageRoot>
-    <PageRoot key="glass-target" cls="glass-target">
-      <for var="i" list="range(20)">
-        <container key="{'gx:' + str(i)}" class="glass-bar">
-          <for var="j" list="range(8)">
-            <container class="glass-seg {(i + j) % 2 == 1 ? 'alt' : ''}"/>
-          </for>
-        </container>
-      </for>
-    </PageRoot>
-    <PageRoot key="glass-panes" cls="glass-panes">
-      <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:a" filter="{@glass_filter_0}" class="glass-pane"/>
+<!-- 照片板：上排三块材质样板，下排三块玻璃块。
+     板自己的 image-texture 是那张照片（见 pages.zstyle 的 .material-board），
+     所以这里**没有**背景元素 —— 板就是背景。 -->
+<component name="MaterialBoard">
+  <PageRoot key="material-board" cls="material-board">
+    <MaterialSwatches/>
+    <GlassPanes/>
+  </PageRoot>
+</component>
+
+<!-- 材质样板行：实心 / 磨砂 / 液态玻璃。
+     材质种类是**外观**（.zstyle 的分类名 material-solid / material-frosted /
+     material-glass），模板只负责摆位置 —— 外观不进模板是本仓的规矩。 -->
+<component name="MaterialSwatches">
+  <PageRoot key="material-swatches" cls="material-swatches">
+    <container key="swatch:solid" class="material-swatch material-solid">
+      <container key="chip:solid" class="photo-chip">
+        <TextLabel key="sw:solid" text="{tr('ui.solid')}" level="photo-chip-text"/>
+      </container>
+    </container>
+    <container key="swatch:frosted" class="material-swatch material-frosted">
+      <container key="chip:frosted" class="photo-chip">
+        <TextLabel key="sw:frosted" text="{tr('ui.frosted')}" level="photo-chip-text"/>
+      </container>
+    </container>
+    <container key="swatch:glass" class="material-swatch material-glass">
+      <container key="chip:glass" class="photo-chip">
+        <TextLabel key="sw:glass" text="{tr('ui.glass')}" level="photo-chip-text"/>
+      </container>
+    </container>
+  </PageRoot>
+</component>
+
+<!-- 玻璃块行：薄 / 普通 / 厚。三块共用面板调的那一组参数，只有**厚度**不同
+     （偏移见 app/glass.rs 的 PANE_THICKNESS_OFFSETS）—— 三个标题才名副其实。
+     滤镜是结构值（Val::Raw 透传），由宿主逐帧算。 -->
+<component name="GlassPanes">
+  <PageRoot key="glass-panes" cls="glass-panes">
+    <PageRoot key="cell" cls="glass-cell">
+      <container key="glass:a" filter="{@glass_filter_0}" class="glass-pane"/>
+      <container key="gt:a" class="photo-chip">
         <TextLabel key="gt:a" text="{tr('ui.thin')}" level="glass-title"/>
-      </PageRoot>
-      <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:b" filter="{@glass_filter_1}" class="glass-pane"/>
+      </container>
+    </PageRoot>
+    <PageRoot key="cell" cls="glass-cell">
+      <container key="glass:b" filter="{@glass_filter_1}" class="glass-pane"/>
+      <container key="gt:b" class="photo-chip">
         <TextLabel key="gt:b" text="{tr('ui.normal')}" level="glass-title"/>
-      </PageRoot>
-      <PageRoot key="cell" cls="glass-cell">
-        <container key="glass:c" filter="{@glass_filter_2}" class="glass-pane"/>
+      </container>
+    </PageRoot>
+    <PageRoot key="cell" cls="glass-cell">
+      <container key="glass:c" filter="{@glass_filter_2}" class="glass-pane"/>
+      <container key="gt:c" class="photo-chip">
         <TextLabel key="gt:c" text="{tr('ui.thick')}" level="glass-title"/>
-      </PageRoot>
+      </container>
     </PageRoot>
   </PageRoot>
 </component>
@@ -373,8 +402,8 @@
           <if cond="@route == 'reference'">
             <PageReference/>
           </if>
-          <if cond="@route == 'glass'">
-            <PageGlass/>
+          <if cond="@route == 'materials'">
+            <PageMaterials/>
           </if>
         </container>
       </container>

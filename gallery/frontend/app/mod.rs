@@ -51,6 +51,19 @@ pub mod shell;
 ///
 /// 拼错时 `ICON_NAME` 解析不到、图标**静默**消失 —— 门禁
 /// `every_icon_name_the_tree_emits_is_registered` 盯着这条。
+/// 背景照片的**纹理名**。
+///
+/// 它同时出现在两处，两处必须一致：
+///
+/// - 这里：向宿主注册纹理时用的名字；
+/// - `frontend/pages.zstyle` 的 `image-texture: "bg-mountain"` —— 那里写的是
+///   **同一个字符串**，后端按名字查采样视图。
+///
+/// ⚠ 写错的后果不是「图片不出来」这么温和：名字对不上时 `quad::expand`
+/// 把这条图像命令**跳过**并计入 `missing_textures`，而画面上只表现为
+/// 「背景是空的」—— 与「照片解码失败」完全同形。
+pub const MOUNTAIN_TEXTURE: &str = "bg-mountain";
+
 pub const ROUTES: &[(&str, &str, &str)] = &[
     ("guide", "Quick start", "home"),
     ("state", "State", "check"),
@@ -59,10 +72,13 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("theme", "Theme & i18n", "settings"),
     ("testing", "Testing", "bell"),
     ("reference", "Controls", "doc"),
-    // 液态玻璃**提升为一等路由**：它有运行期可调的折射参数实验台，
-    // 藏在第 8 族要点两下才看得到，而四个 `[−]/[+]` 步进器正是最不该
-    // 藏起来的东西。图标选 `sliders` —— 这一页的核心是调参数。
-    ("glass", "Liquid Glass", "sliders"),
+    // 材质专区**提升为一等路由**，并把液态玻璃**并进来**：材质（实心 / 磨砂 /
+    // 液态玻璃）本来只是按钮族里的一行按钮，而液态玻璃是运行期可调的折射
+    // 实验台 —— 两件事讲的是同一张皮的不同侧面，合成一页比分成两页强。
+    //
+    // 合并之后这一页的核心是「材质在真实照片上是什么样」，所以图标取 `image`
+    // （照片板就是这一页的背景）；四个 `[−]/[+]` 步进器仍在页内。
+    ("materials", "Materials", "image"),
 ];
 
 /// 控件参考页的**族**（顺序即 segmented 的段顺序）。
@@ -164,7 +180,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "route.theme", "Theme & i18n"),
     ("en", "route.testing", "Testing"),
     ("en", "route.reference", "Controls"),
-    ("en", "route.glass", "Liquid Glass"),
+    ("en", "route.materials", "Materials"),
     (
         "en",
         "ui.small-nav-collapsed-to-icons",
@@ -224,27 +240,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.current-breakpoint", "Current breakpoint"),
     ("en", "ui.44-epx-correct", "44 epx (correct)"),
     ("en", "ui.28-epx-too-small", "28 epx (too small)"),
-    (
-        "en",
-        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
-        "The quick brown fox jumps over the lazy dog.",
-    ),
-    (
-        "en",
-        "ui.refraction-samples-what-is-already-on-screen",
-        "Refraction samples what is already on screen.",
-    ),
-    (
-        "en",
-        "ui.remove-these-lines-and-the-glass-looks-broken",
-        "Remove these lines and the glass looks broken.",
-    ),
-    (
-        "en",
-        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
-        "Liquid glass: refraction parameters are runtime adjustable",
-    ),
-    ("en", "ui.refraction-parameters", "Refraction parameters"),
+    ("en", "ui.materials-on-a-real-photo", "Materials on a real photo"),
+    ("en", "ui.materials-and-liquid-glass", "Materials & Liquid Glass"),
     ("en", "ui.thin", "Thin"),
     ("en", "ui.normal", "Normal"),
     ("en", "ui.thick", "Thick"),
@@ -304,7 +301,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "route.theme", "主题与多语言"),
     ("zh-Hans", "route.testing", "测试"),
     ("zh-Hans", "route.reference", "控件参考"),
-    ("zh-Hans", "route.glass", "液态玻璃"),
+    ("zh-Hans", "route.materials", "材质与玻璃"),
     (
         "zh-Hans",
         "ui.small-nav-collapsed-to-icons",
@@ -356,27 +353,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.current-breakpoint", "当前断点"),
     ("zh-Hans", "ui.44-epx-correct", "44 epx（正确）"),
     ("zh-Hans", "ui.28-epx-too-small", "28 epx（太小）"),
-    (
-        "zh-Hans",
-        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
-        "敏捷的棕色狐狸跃过懒狗。",
-    ),
-    (
-        "zh-Hans",
-        "ui.refraction-samples-what-is-already-on-screen",
-        "折射采样的是屏幕上已有的内容。",
-    ),
-    (
-        "zh-Hans",
-        "ui.remove-these-lines-and-the-glass-looks-broken",
-        "删掉这几行，玻璃就像坏了一样。",
-    ),
-    (
-        "zh-Hans",
-        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
-        "液态玻璃：折射参数运行期可调",
-    ),
-    ("zh-Hans", "ui.refraction-parameters", "折射参数"),
+    ("zh-Hans", "ui.materials-on-a-real-photo", "真实照片上的材质"),
+    ("zh-Hans", "ui.materials-and-liquid-glass", "材质与液态玻璃"),
     ("zh-Hans", "ui.thin", "薄"),
     ("zh-Hans", "ui.normal", "普通"),
     ("zh-Hans", "ui.thick", "厚"),
@@ -436,7 +414,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "route.theme", "テーマと多言語"),
     ("ja", "route.testing", "テスト"),
     ("ja", "route.reference", "コントロール"),
-    ("ja", "route.glass", "リキッドグラス"),
+    ("ja", "route.materials", "マテリアルとガラス"),
     (
         "ja",
         "ui.small-nav-collapsed-to-icons",
@@ -492,27 +470,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.current-breakpoint", "現在のブレークポイント"),
     ("ja", "ui.44-epx-correct", "44 epx（正しい）"),
     ("ja", "ui.28-epx-too-small", "28 epx（小さすぎる）"),
-    (
-        "ja",
-        "ui.the-quick-brown-fox-jumps-over-the-lazy-dog",
-        "素早い茶色のキツネがのろまな犬を飛び越える。",
-    ),
-    (
-        "ja",
-        "ui.refraction-samples-what-is-already-on-screen",
-        "屈折は画面に既にあるものをサンプリングする。",
-    ),
-    (
-        "ja",
-        "ui.remove-these-lines-and-the-glass-looks-broken",
-        "この行を消すとガラスが壊れて見える。",
-    ),
-    (
-        "ja",
-        "ui.liquid-glass-refraction-parameters-are-runtime-adjustable",
-        "リキッドグラス：屈折のパラメータは実行時に変えられる",
-    ),
-    ("ja", "ui.refraction-parameters", "屈折のパラメータ"),
+    ("ja", "ui.materials-on-a-real-photo", "実写写真の上のマテリアル"),
+    ("ja", "ui.materials-and-liquid-glass", "マテリアルとリキッドグラス"),
     ("ja", "ui.thin", "薄い"),
     ("ja", "ui.normal", "普通"),
     ("ja", "ui.thick", "厚い"),
