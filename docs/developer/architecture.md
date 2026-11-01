@@ -202,7 +202,7 @@ DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate �
 - **虚拟化列表**：`layout` 协议是否需要内建「只测量可见项」的支持。当前未考虑。
 - **动画**：脏标记只有 `Paint`/`Layout`/`Structure` 四级，没有「插值中」这一等。属性动画可能需要第五级，
   或者动画完全在宿主侧做。
-- **无障碍**：WinUI 的 Automation 与 axum 同等重要。当前完全没有。
+- **无障碍**：WinUI 的 Automation 与 axum 同等重要。**已接 Windows 侧**（`zephyra-base/extra/zephyra-uia`：原始提供者 + Toggle / Invoke 图案，见 [dev-log 2026-10-31](../dev-log/2026-10-31-uia-raw-provider-toggle-pattern.md)）；**事件**（属性变化 / 结构变化）与 Linux 侧尚未接。
 - **多窗口 / 多显示器**：`DisplayList` 是按窗口的，但跨窗口共享资源（纹理图集）的策略未考虑。
 
 ## 相关

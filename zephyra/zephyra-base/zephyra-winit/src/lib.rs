@@ -171,6 +171,20 @@ pub struct HostWindow<V: View> {
     last_stats: String,
     resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
     profiler: zephyra_fx::bridge::PerformanceProfiler,
+    /// 无障碍（UIA）接线。
+    ///
+    /// `None` = 没装（默认）。装了之后每帧发布一份无障碍树快照，并把 UIA 侧
+    /// 排队的动作转成「聚焦 + 键盘激活」交给应用。
+    ///
+    /// 为什么是 `Option`：无障碍是**附加能力** —— 默认不装，屏幕阅读器就看不见
+    /// 这个界面，而应用代码一行都不用改。要不要装由应用在 `Bootstrap::resumed`
+    /// 里决定。
+    uia: Option<zephyra_uia::Bridge>,
+    /// 窗口句柄（裸 `HWND`）。
+    ///
+    /// 存的是 `isize` 而不是 `windows::…::HWND`：`HWND` 是 `Send`/`Sync` 的
+    /// 门槛更高（它带裸指针），而本结构体要在 `Arc` 里被别的线程碰到。
+    hwnd: Option<isize>,
 }
 
 impl<V: View> HostWindow<V> {
@@ -217,6 +231,8 @@ impl<V: View> HostWindow<V> {
             .map(|h| windows::Win32::Foundation::HWND(h as *mut _))
             .ok_or_else(|| panic!("DComp 需要 Win32 HWND；非 Windows 后端尚未实现渲染器"))
             .expect("取 HWND");
+        // 裸句柄存一份：UIA 的窗口过程子类要用它（`zephyra_uia::install`）。
+        let raw_hwnd = hwnd.0 as isize;
 
         let surface = match Surface::new(hwnd, &gpu, (size.width, size.height), use_dcomp) {
             Ok(s) => s,
@@ -239,7 +255,6 @@ impl<V: View> HostWindow<V> {
                 "DXGI swapchain"
             }
         );
-
         let renderer = Renderer::new(&gpu.device).expect("编译着色器 / 建管线");
         // 首帧就要上传图集（字体字形此刻还没打包，但纹理得先有内容）。
         renderer.upload_atlas(&gpu.context, engine.atlas()).ok();
@@ -273,6 +288,8 @@ impl<V: View> HostWindow<V> {
             last_stats: String::new(),
             resource_telemetry: None,
             profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
+            uia: None,
+            hwnd: Some(raw_hwnd),
         }
     }
 
@@ -284,6 +301,73 @@ impl<V: View> HostWindow<V> {
     /// 「读样式表成功」——那样一个拼错的属性名就让程序起不来。
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
         self.cache.set_styler(styler);
+    }
+
+    /// 装上无障碍（Windows UI Automation）。
+    ///
+    /// # 装上之后会发生什么
+    ///
+    /// - 屏幕阅读器（Narrator）与自动化脚本能**看见**这棵界面树：复选框是
+    ///   CheckBox 角色、带名字与位置，开关状态是 ToggleState；
+    /// - 它们能**操作**控件：Toggle 图案会真的把复选框勾上，Invoke 图案会真的
+    ///   按下按钮 —— 走的是**与键盘完全同构**的路径（见 `zephyra_uia::Bridge`）。
+    ///
+    /// 应用**不需要**为无障碍写任何代码：无障碍树是从画出来的那棵树派生的。
+    ///
+    /// # 装序
+    ///
+    /// 必须在**别的窗口过程子类之后**装（`zephyra-platform-win` 的实时 resize）——
+    /// 消息链才是 `UIA → live_resize → winit`。
+    ///
+    /// # 失败怎么办
+    ///
+    /// 失败**不**是致命错误：无障碍是附加能力，窗口该开还得开。调用方应当
+    /// 打印一条警告后继续跑。
+    pub fn enable_uia(&mut self) -> Result<(), zephyra_uia::Error> {
+        let Some(hwnd) = self.hwnd else {
+            return Err(zephyra_uia::Error::WindowProc(0));
+        };
+        zephyra_uia::install(hwnd)?;
+        self.uia = Some(zephyra_uia::Bridge::new());
+        Ok(())
+    }
+
+    /// 每帧的无障碍维护：发布快照 + 施加 UIA 侧排队的动作。
+    ///
+    /// # 调用时机
+    ///
+    /// 在 `frame_inner` 里、`sync_input` **之后**调 —— 顺序不能换：
+    /// `zephyra_uia::Bridge` 的动作要跨三帧才被应用看见（闩住 → 松开 → 应用
+    /// 认 click），而它依赖「本帧的树已经建好」。
+    ///
+    /// 见 [`zephyra_uia::Bridge::pump`]。
+    fn pump_uia(&mut self) {
+        if self.uia.is_none() {
+            return;
+        }
+        // 1. 发布无障碍树快照。
+        //
+        // 快照来自**保留树**（画出来的那棵），所以它不会与画面漂移。
+        if let Some(root) = self.cache.node() {
+            let win = zephyra_uia::window_info(self.hwnd.unwrap_or(0));
+            zephyra_uia::publish(zephyra_uia::rules::build(root, &win));
+        }
+        // 2. 施加 UIA 侧排队的动作。
+        let pumped = {
+            let Some(root) = self.cache.node_mut() else {
+                return;
+            };
+            let ctx = Context::new(self.theme);
+            let Some(bridge) = self.uia.as_mut() else {
+                return;
+            };
+            bridge.pump(root, &mut self.focus, &mut self.activation, ctx)
+        };
+        if pumped.pressed_changed {
+            // `pressed` 变了 ⇒ 下一帧的 `sync_input` 要把它报给应用
+            // （本宿主每帧开头都 `sync_input`，所以这里只要标脏就够）。
+            self.dirty = true;
+        }
     }
 
     /// 图像纹理表（只读）。宿主用 [`Self::textures_mut`] 改。
@@ -461,6 +545,12 @@ impl<V: View> HostWindow<V> {
 
         // 3. 清事件标志。脏标记由 `FrameCache` 内部清（它知道什么时候该清）。
         self.dirty = false;
+
+        // 4. 无障碍：发布快照 + 施加 UIA 侧排队的动作。
+        //
+        // 必须在 `sync_input` **之后**（本函数开头那次）—— 见 [`Self::pump_uia`]。
+        // 也必须在 `self.dirty = false` **之后**：它要标脏，而那行会清掉标脏。
+        self.pump_uia();
 
         // 桥的 `stats` 答案在这里刷新——`Frame` 的消费者（trace 打印）与本字段
         // 同源同帧，不会出现「stats 落后一帧」。

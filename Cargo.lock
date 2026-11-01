@@ -2410,6 +2410,7 @@ dependencies = [
  "zephyra-platform",
  "zephyra-style",
  "zephyra-ui",
+ "zephyra-uia",
  "zephyra-vulkan",
  "zephyra-winit",
  "zephyra-winit-d3d12",
@@ -2453,6 +2454,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-uia"
+version = "0.1.0"
+dependencies = [
+ "windows",
+ "windows-core",
+ "zephyra-core",
+]
+
+[[package]]
 name = "zephyra-vulkan"
 version = "0.1.0"
 dependencies = [
@@ -2482,6 +2492,7 @@ dependencies = [
  "zephyra-dcomp",
  "zephyra-fx",
  "zephyra-platform-win",
+ "zephyra-uia",
  "zephyra-winit-d3d12",
  "zephyra-winit-input",
 ]
@@ -2500,6 +2511,7 @@ dependencies = [
  "zephyra-fx",
  "zephyra-platform",
  "zephyra-platform-win",
+ "zephyra-uia",
  "zephyra-winit-input",
 ]
 

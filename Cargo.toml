@@ -33,6 +33,10 @@ members = [
     # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
     "zephyra/zephyra-base/zephyra-winit-input",
     "zephyra/zephyra-base/extra/zephyra-camera",
+    # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
+    # 与 camera 同一层：Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
+    # 不进 default-members（默认构建不该编 COM 那一坨）。
+    "zephyra/zephyra-base/extra/zephyra-uia",
     "zephyra/zephyra-base/zephyra-dcomp",
     # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**
     # （可进 default-members，但暂无独立产物需要默认构建，故一并归到"按需选"）。

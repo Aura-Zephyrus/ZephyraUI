@@ -157,6 +157,26 @@ pub struct HostWindow<V: View> {
     last_stats: String,
     resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
     profiler: zephyra_fx::bridge::PerformanceProfiler,
+    /// 无障碍（UIA）接线。
+    ///
+    /// `None` = 没装（默认）。装了之后每帧发布一份无障碍树快照，并把 UIA 侧
+    /// 排队的动作转成「聚焦 + 键盘激活」交给应用。
+    ///
+    /// 为什么是 `Option`：无障碍是**附加能力** —— 默认不装，屏幕阅读器就看不见
+    /// 这个界面，而应用代码一行都不用改。要不要装由应用在 `Bootstrap::resumed`
+    /// 里决定。
+    uia: Option<zephyra_uia::Bridge>,
+    /// UIA 侧刚改过状态 ⇒ 还需要再跑一帧把它画出来。
+    ///
+    /// # 为什么单独一个字段
+    ///
+    /// 应用是在 `sync_input` 里改的状态，而那发生在**本帧的树建好之后** ——
+    /// 于是新状态要等**下一帧**才画得出来。
+    ///
+    /// 而本后端静止时一帧都不跑（事件驱动），所以必须显式记着「还欠一帧」，
+    /// 否则那个勾不会出现在屏幕上 —— 而应用那边已经改了状态，画面与状态就
+    /// 悄悄对不上了。
+    uia_redraw: bool,
     /// 窗口。**最后析构**，见模块文档。
     window: Arc<Window>,
 }
@@ -399,6 +419,8 @@ impl<V: View> HostWindow<V> {
             last_stats: String::new(),
             resource_telemetry: None,
             profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
+            uia: None,
+            uia_redraw: false,
             window,
         }
     }
@@ -734,6 +756,11 @@ impl<V: View> HostWindow<V> {
         // 3. 清事件标志。脏标记由 `FrameCache` 内部清（它知道什么时候该清）。
         self.dirty = false;
 
+        // 4. 无障碍：发布快照 + 施加 UIA 侧排队的动作。
+        //
+        // 必须在 `self.dirty = false` **之后**：它要标脏，而那行会清掉标脏。
+        self.pump_uia();
+
         // 桥的 `stats` 答案在这里刷新（与 D3D11 侧同源同帧）。
         self.last_stats = format!(
             "quads={} skipped={} dirty={} needs_layout={} redrawn={} hovered={}",
@@ -1028,6 +1055,119 @@ impl<V: View> HostWindow<V> {
             true
         }));
         zephyra_platform_win::install_live_resize(hwnd)
+    }
+
+    /// 装上无障碍（Windows UI Automation）。
+    ///
+    /// # 装上之后会发生什么
+    ///
+    /// - 屏幕阅读器（Narrator）与自动化脚本能**看见**这棵界面树：复选框是
+    ///   CheckBox 角色、带名字与位置，开关状态是 ToggleState；
+    /// - 它们能**操作**控件：Toggle 图案会真的把复选框勾上，Invoke 图案会真的
+    ///   按下按钮 —— 走的是**与键盘完全同构**的路径（见 `zephyra_uia::Bridge`）。
+    ///
+    /// 应用**不需要**为无障碍写任何代码：无障碍树是从画出来的那棵树派生的。
+    ///
+    /// # 装序
+    ///
+    /// 必须在 [`Self::enable_live_resize`] **之后**装 —— 两者都是
+    /// `SetWindowLongPtrW(GWLP_WNDPROC)`，消息链才是
+    /// `UIA → live_resize → winit`。
+    ///
+    /// # 失败怎么办
+    ///
+    /// 失败**不**是致命错误：无障碍是附加能力，窗口该开还得开。调用方应当
+    /// 打印一条警告后继续跑。
+    pub fn enable_uia(&mut self) -> Result<(), zephyra_uia::Error> {
+        let Some(hwnd) = hwnd_of(self.window.as_ref()) else {
+            // 非 Win32 平台没有 HWND 可子类化。不算错：这个后端本来就是 Windows 专属。
+            return Ok(());
+        };
+        zephyra_uia::install(hwnd)?;
+        self.uia = Some(zephyra_uia::Bridge::new());
+        Ok(())
+    }
+
+    /// 有没有待处理的无障碍工作（该跑一帧了）。
+    ///
+    /// # 为什么需要它
+    ///
+    /// 本后端是**事件驱动**的：静止时 `about_to_wait` 一帧都不跑。而 UIA 的
+    /// 动作是**外部发起**的 —— 屏幕阅读器在自己的线程上喊一声，动作排进队列，
+    /// 我们的事件循环并不会因此醒。
+    ///
+    /// 于是这一帧必须由「队列非空」或「上一帧闩住了还没松」触发，否则那个动作
+    /// 会一直躺在队列里，直到碰巧有别的输入把窗口叫醒。
+    fn uia_needs_frame(&self) -> bool {
+        if self.uia.is_none() {
+            return false;
+        }
+        zephyra_uia::pending_action_count() > 0
+            || self.uia.as_ref().is_some_and(|b| b.is_latched())
+            || self.uia_redraw
+    }
+
+    /// 每帧的无障碍维护：发布快照 + 施加 UIA 侧排队的动作。
+    ///
+    /// # 调用时机
+    ///
+    /// 在 `frame_inner` 里、**清掉脏标记之后**调 —— 它要标脏，而那行会清掉标脏。
+    ///
+    /// # 为什么这里要自己补 `sync_input`
+    ///
+    /// 本后端的 `sync_input` 只在**事件回调**里调（静止时事件不来 ⇒ 不调）。
+    /// 而应用把 click 认成「`pressed` 由 `Some` 变成 `None`」—— 它必须**分别**
+    /// 看见「按下」与「松开」两拍。
+    ///
+    /// 所以这里在 `pressed` 变了之后连补两次 `sync_input`：第一拍报「按下」，
+    /// 第二拍（在松开之后）报「松开」⇒ 应用认 click。
+    ///
+    /// 少了任何一拍，应用就永远等不到 click，而画面上完全看不出异常。
+    fn pump_uia(&mut self) {
+        if self.uia.is_none() {
+            return;
+        }
+        // 上一帧欠的那一帧画完了 ⇒ 清掉「还欠一帧」。
+        self.uia_redraw = false;
+        // 1. 发布无障碍树快照。
+        //
+        // 快照来自**保留树**（画出来的那棵），所以它不会与画面漂移。
+        if let Some(root) = self.cache.node() {
+            let win = zephyra_uia::window_info(hwnd_of(self.window.as_ref()).unwrap_or(0));
+            zephyra_uia::publish(zephyra_uia::rules::build(root, &win));
+        }
+        // 2. 施加 UIA 侧排队的动作。
+        let pumped = {
+            let Some(root) = self.cache.node_mut() else {
+                return;
+            };
+            let ctx = Context::new(self.theme);
+            let Some(bridge) = self.uia.as_mut() else {
+                return;
+            };
+            bridge.pump(root, &mut self.focus, &mut self.activation, ctx)
+        };
+        if !pumped.pressed_changed {
+            return;
+        }
+        // 3. 「按下」那一拍。
+        self.sync_input();
+        // 4. 立刻松开 + 「松开」那一拍 ⇒ 应用认 click。
+        //
+        // 为什么必须当场松开：本后端静止时一帧都不跑，等不到「下一帧」——
+        // 而「松开」那一拍是 click 的另一半，缺了它点击就丢了。
+        let released = {
+            let Some(bridge) = self.uia.as_mut() else {
+                return;
+            };
+            bridge.release_now(&mut self.activation)
+        };
+        if released {
+            self.sync_input();
+        }
+        // 5. 应用可能改了状态 ⇒ 欠一帧重画。
+        self.dirty = true;
+        self.uia_redraw = true;
     }
 
     /// 呈现一次。
@@ -1870,7 +2010,11 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         //
         // ⚠ 设备已死时**无条件**跑一帧：`dirty` 可能已经被清掉（设备是在
         // `present()` 里死的），那样就再没有 `frame()` 可跑，恢复代码永远不执行。
-        if self.dirty || self.chain.device_dead() || self.profiler.is_running() {
+        if self.dirty
+            || self.chain.device_dead()
+            || self.profiler.is_running()
+            || self.uia_needs_frame()
+        {
             let f = self.frame();
             if f.redrawn {
                 self.present();
@@ -1895,6 +2039,12 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
             event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
                 std::time::Instant::now() + std::time::Duration::from_millis(50),
             ));
+        } else if self.uia_needs_frame() {
+            // 无障碍侧还有活（动作排队 / 闩住未松 / 欠一帧重画）⇒ 保持唤醒。
+            //
+            // 用 `Poll` 而不是 `WaitUntil(now)`：后者在时间点到达前会睡，而
+            // 「欠一帧」这种事没有时间点 —— 它就是「下一帧」。
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         } else {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
         }

@@ -66,6 +66,10 @@ ab_glyph = "0.2"
 [target.'cfg(windows)'.dependencies]
 zephyra-dcomp = { path = "../zephyra-dcomp" }
 zephyra-platform-win = { path = "../zephyra-platform-win" }
+# 无障碍（Windows UI Automation）：每帧从保留树派生无障碍树，并把 UIA 的
+# Toggle / Invoke 动作转回应用。它整段都是 Windows 的 COM 边界，所以放在
+# `cfg(windows)` 段里 —— Linux 上根本不编它。
+zephyra-uia = { path = "../extra/zephyra-uia" }
 # D3D11 渲染 + DXGI 呈现。
 #
 # 版本必须与 `zephyra-dcomp` 一致（都是 0.62）—— COM 接口类型要互相 cast 就得来自

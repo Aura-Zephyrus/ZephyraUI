@@ -71,6 +71,10 @@ zephyra-dcomp = { path = "../zephyra-dcomp" }
 # 这样应用层不出现任何 Win32 代码，而 DWM 细节也不渗进渲染后端。
 zephyra-platform = { path = "../zephyra-platform" }
 zephyra-platform-win = { path = "../zephyra-platform-win" }
+# 无障碍（Windows UI Automation）：每帧从保留树派生无障碍树，并把 UIA 的
+# Toggle / Invoke 动作转回应用。它整段都是 Windows 的 COM 边界，所以放在
+# `cfg(windows)` 段里 —— Linux 上根本不编它。
+zephyra-uia = { path = "../extra/zephyra-uia" }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
