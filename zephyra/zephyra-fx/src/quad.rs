@@ -696,10 +696,23 @@ impl RenderReport {
 ///
 /// # 不变量：runs 恰好划分整条顶点流
 ///
-/// 按 `first_vertex` 升序拼接时**不留缝、不重叠、不少不漏**，且顺序与
-/// [`QuadBatch::flatten`] 的输出一致。拼接相等是本类型的全部意义 —— 漏掉一段的
-/// 症状是「某个图元不出现」，两段重叠的症状是「某个图元重复画」（半透明时更糟：
-/// 同一处叠两层，颜色变深且没有任何报错）。所以它有专门的测试守着。
+/// 把所有 run 按 `first_vertex` **排序后**拼接**不留缝、不重叠、不少不漏**，
+/// 且拼起来与 [`QuadBatch::flatten`] 的输出逐顶点相同。拼接相等是本类型的
+/// 全部意义 —— 漏掉一段的症状是「某个图元不出现」，两段重叠的症状是「某个
+/// 图元重复画」（半透明时更糟：同一处叠两层，颜色变深且没有任何报错）。所以
+/// 它有专门的测试守着。
+///
+/// # ⚠ runs 的**先后** = DisplayList 的先后，而**不是** `first_vertex` 的升序
+///
+/// 段的先后是**绘制顺序** —— 渲染器逐段回放，先画的被后画的压住。
+/// 它必须等于 DisplayList 的顺序，否则「照片当背景」会把压在照片上的
+/// 卡片盖掉（2026-11-01 由 gallery 的材质页撞出）。
+///
+/// 而 `first_vertex` 是段在**合并流**里的位置，合并流按图元类型排
+/// （实心 → 图像 → 多边形）—— 于是两者的序**不必**一致：一张排在最前
+/// 的图像，它的 `first_vertex` 却在所有实心之后。
+///
+/// 判据用「排序后拼接」而不是「按序拼接」，正是为了不把这两件事混成一件。
 ///
 /// # 为什么只合并**相邻**的同混合模式段
 ///
@@ -745,6 +758,17 @@ impl DrawRun {
 ///
 /// 只合并**相邻**段（`last.end() == first`），因为不重排命令 —— 见 [`DrawRun`]。
 ///
+/// # 合并只看**紧邻的上一条**
+///
+/// 「紧邻」指的是 [`RunTally::ordered`] 里的上一条，而不是「同类别里的上一条」。
+/// 这两条在有其它类别插在中间时是不同的：DisplayList 是
+/// 「实心矩形 → 图像 → 实心矩形」时，两个实心矩形**不能**并成一段 ——
+/// 并了就等于把后一个矩形提到图像之前画，图像会盖住它（这正是
+/// `an_image_does_not_cover_later_solids` 那条门禁盯的场景）。
+///
+/// 同理，「图像 → 图像」只有在中间没有别的图元时才并 —— 中间插了一个
+/// 实心矩形时并段会把那个矩形挤到两张图像之后。
+///
 /// # ⚠ 那条相邻性检查在当前结构下**不是**承重逻辑
 ///
 /// 三份段内记录各自只增长（`solid` / `pending` / `paths` 都是只 append），所以连续两次
@@ -754,7 +778,8 @@ impl DrawRun {
 ///
 /// 真正的合并规则是「同纹理 + 同混合」那两条；相邻性只是别把不接的东西硬接上。
 fn push_run(
-    runs: &mut Vec<DrawRun>,
+    tally: &mut RunTally,
+    class: RunClass,
     first: u32,
     count: u32,
     texture: Option<Rc<str>>,
@@ -763,23 +788,89 @@ fn push_run(
     if count == 0 {
         return;
     }
-    if let Some(last) = runs.last_mut() {
-        if last.end() == first
-            && last.blend == blend
-            && last.texture.as_deref() == texture.as_deref()
+    if let Some(last) = tally.ordered.last_mut() {
+        if last.class == class
+            && last.run.end() == first
+            && last.run.blend == blend
+            && last.run.texture.as_deref() == texture.as_deref()
         {
-            last.vertex_count += count;
-            last.commands += 1;
+            last.run.vertex_count += count;
+            last.run.commands += 1;
             return;
         }
     }
-    runs.push(DrawRun {
-        first_vertex: first,
-        vertex_count: count,
-        texture,
-        blend,
-        commands: 1,
+    tally.ordered.push(OrderedRun {
+        class,
+        run: DrawRun {
+            first_vertex: first,
+            vertex_count: count,
+            texture,
+            blend,
+            commands: 1,
+        },
     });
+}
+
+/// 一条 run 的顶点属于**哪一段**顶点数组 —— 决定它在合并流里的基址。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunClass {
+    Solid,
+    Image,
+    Path,
+}
+
+/// 按 **DisplayList 顺序**记录的一条 run（`first_vertex` 是**段内偏移**）。
+#[derive(Debug)]
+struct OrderedRun {
+    /// 顶点属于哪一段数组。
+    class: RunClass,
+    /// 段内偏移的 run。
+    run: DrawRun,
+}
+
+/// 分段记录：**一份**，按 DisplayList 顺序。
+///
+/// # 为什么不按类别分三份
+///
+/// 曾经是 `solid` / `images` / `paths` 三份，末尾由 [`merge_runs`] 按
+/// 「实心 → 图像 → 多边形」的顺序拼起来。那样得到的绘制顺序**不等于**
+/// DisplayList 的顺序 —— 于是任何 `Command::Image` 都会排在同一段里
+/// **所有**实心四边形之后绘制。
+///
+/// 症状（2026-11-01 由 gallery 的材质页撞出）：照片当背景时，照片把
+/// 压在它上面的实心卡片连同卡片里的文字标签一起盖掉了 —— 而照片自己在
+/// DisplayList 里明明排在那些卡片**之前**。
+///
+/// ⚠ 同一处分组也影响 CPU 参考栅格（它按同一份流绘制），所以那不是
+/// 「GPU 的问题」，是展开层的问题。
+#[derive(Debug, Default)]
+struct RunTally {
+    /// 全部 run，按 DisplayList 顺序。
+    ordered: Vec<OrderedRun>,
+}
+
+/// 把段内偏移的 run 拼成合并流坐标，**保持 DisplayList 顺序**。
+///
+/// 基址仍然按类别加（实心在流头、图像在中、多边形在尾），但**段的先后**
+/// 由 DisplayList 决定 —— 顶点流本身不必重排（重排它会让三后端的索引
+/// 定位全要跟着改），只要 draw 的先后对就行。
+fn merge_runs(tally: &RunTally, solid_len: u32, images_len: u32, out: &mut Vec<DrawRun>) {
+    out.clear();
+    out.reserve(tally.ordered.len());
+    for e in &tally.ordered {
+        let base = match e.class {
+            RunClass::Solid => 0,
+            RunClass::Image => solid_len,
+            RunClass::Path => solid_len + images_len,
+        };
+        out.push(DrawRun {
+            first_vertex: e.run.first_vertex + base,
+            vertex_count: e.run.vertex_count,
+            texture: e.run.texture.clone(),
+            blend: e.run.blend,
+            commands: e.run.commands,
+        });
+    }
 }
 
 #[derive(Debug, Default)]
@@ -853,36 +944,6 @@ impl QuadBatch {
     }
 }
 
-/// 分段记录的三份（`solid` / `images` / `paths`），`first_vertex` 是**段内偏移**。
-///
-/// 末尾由 [`merge_runs`] 加上各自基址拼成合并流坐标。
-#[derive(Debug, Default)]
-struct RunTally {
-    solid: Vec<DrawRun>,
-    images: Vec<DrawRun>,
-    paths: Vec<DrawRun>,
-}
-
-/// 把三份段内偏移的 run 拼成合并流坐标（`solid` → `images` → `paths`）。
-fn merge_runs(tally: &RunTally, solid_len: u32, images_len: u32, out: &mut Vec<DrawRun>) {
-    out.clear();
-    out.reserve(tally.solid.len() + tally.images.len() + tally.paths.len());
-    let mut add = |runs: &[DrawRun], base: u32| {
-        for r in runs {
-            out.push(DrawRun {
-                first_vertex: r.first_vertex + base,
-                vertex_count: r.vertex_count,
-                texture: r.texture.clone(),
-                blend: r.blend,
-                commands: r.commands,
-            });
-        }
-    };
-    add(&tally.solid, 0);
-    add(&tally.images, solid_len);
-    add(&tally.paths, solid_len + images_len);
-}
-
 /// 跨帧复用的展开缓冲。
 ///
 /// # 为什么需要它
@@ -928,24 +989,17 @@ pub struct Scratch {
     pub vertices: Vec<Vertex>,
     /// 索引流。
     pub indices: Vec<u16>,
-    /// 图像命令的临时队列（分批前）。
+    /// 分段记录，**一份**且按 DisplayList 顺序 —— 末尾统一加基址。
     ///
-    /// ⚠ 它存 `(String, …)`，所以复用 Vec **不等于**复用那些 `String` 的堆内存。
-    /// 那部分（每帧两三个几十字节的小分配）留在原地，不为了它把句柄改成
-    /// `Rc<str>` —— 那是契约改动，收益与风险不成比例。
-    image_quads: Vec<(
-        Rc<str>,
-        Rect,
-        UvRect,
-        Color,
-        f32,
-        zephyra_core::filter::BlendMode,
-    )>,
-    /// 分段记录，三份分开是因为它们在**遍历过程中交错**产生（`solid` 与 `paths`
-    /// 来自同一次命令遍历，`images` 来自其后的分批循环），而合并流要求
-    /// `solid` → `images` → `paths` 的顺序。分开记，末尾统一加基址即可。
+    /// ⚠ 曾经是三份（`solid` / `images` / `paths`），因为图像的顶点在命令遍历
+    /// **之后**才分批产生、无法与前两者同序记录。代价是绘制顺序变成了
+    /// 「实心 → 图像 → 多边形」的类型分组，与 DisplayList 脱节 ——
+    /// 照片当背景时会盖住压在它上面的卡片。
+    ///
+    /// 现在图像的顶点与 run **在命令遍历里就地产生**（分批规则不变），
+    /// 于是三份合成一份，顺序天然正确。
     run_tally: RunTally,
-    /// 合并后的 [`DrawRun`] 列表（`run_tally` 的三份按顺序加基址后的结果）。
+    /// 合并后的 [`DrawRun`] 列表（`run_tally` 按 DisplayList 顺序加基址后的结果）。
     runs: Vec<DrawRun>,
     /// 当前图像批的顶点。换纹理时清空重填。
     ///
@@ -1025,7 +1079,6 @@ impl Scratch {
         self.batches.clear();
         self.vertices.clear();
         self.indices.clear();
-        self.image_quads.clear();
         self.pending.clear();
         // run 相关三处同样必须清：段记录不清会让 `runs` 每帧多出上一帧的条目，
         // 症状与顶点段不清时一样（合成器按 `runs` 逐段画，于是每帧多画一层）。
@@ -1034,9 +1087,7 @@ impl Scratch {
         // 自己也 clear 一遍，所以删掉这里的 clear 不会有任何测试失败（变异实测
         // SURVIVED）。留着是因为 `reset()` 的契约是"清空全部段"，少清一处就让它
         // 变成一句谎话，而谎话的代价由下一个读文档的人付。
-        self.run_tally.solid.clear();
-        self.run_tally.images.clear();
-        self.run_tally.paths.clear();
+        self.run_tally.ordered.clear();
         self.runs.clear();
     }
 
@@ -1052,9 +1103,8 @@ impl Scratch {
             vertices: self.vertices.capacity(),
             indices: self.indices.capacity(),
             runs: self.runs.capacity(),
-            runs_solid: self.run_tally.solid.capacity(),
-            runs_images: self.run_tally.images.capacity(),
-            runs_paths: self.run_tally.paths.capacity(),
+            // 分段记录（一份，按 DisplayList 顺序）。
+            runs_ordered: self.run_tally.ordered.capacity(),
         }
     }
 }
@@ -1070,10 +1120,8 @@ pub struct ScratchCaps {
     pub indices: usize,
     /// 合并后的 [`DrawRun`] 缓冲。
     pub runs: usize,
-    /// 分段记录的三份（段内偏移）。
-    pub runs_solid: usize,
-    pub runs_images: usize,
-    pub runs_paths: usize,
+    /// 分段记录（段内偏移，按 DisplayList 顺序）。
+    pub runs_ordered: usize,
 }
 
 /// 把一份 `DisplayList` 展开成顶点流。
@@ -1231,17 +1279,32 @@ pub fn expand_range_translated_into(
     // `vertices` 与 `indices` 不走 `take`（末尾还要继续用它们），所以显式清。
     scratch.vertices.clear();
     scratch.indices.clear();
-    // 同样借出下面两个：`pending` 会成为 `out.images`（末尾要还回去），
-    // `image_quads` 是本趟的临时队列（用完即弃，但 Vec 本身可复用）。
-    let mut image_quads = std::mem::take(&mut scratch.image_quads);
     // 分段记录借出来，末尾连同内容一起还回去。
     let mut tally = std::mem::take(&mut scratch.run_tally);
-    tally.solid.clear();
-    tally.images.clear();
-    tally.paths.clear();
+    tally.ordered.clear();
     // 当前图像批的顶点。换纹理时把它整体搬进 `batches`。
     let mut pending = std::mem::take(&mut scratch.pending);
-    image_quads.clear();
+    // 图像分批状态：**当前**批的纹理名与混合模式，以及它在 `pending` 里的起点。
+    //
+    // 只合并**相邻**的同纹理同混合段 —— 重排命令会把半透明叠加的可见结果改掉。
+    //
+    // ⚠ 只按纹理合批是不够的：相邻两段图像若混合模式不同而纹理相同，合进一批后
+    // base 只能给它们套**同一个**混合方程 —— 症状是「有一段的混合效果没生效」，
+    // 而顶点数、缺失纹理数这些统计全都正常。
+    let mut open: Option<Rc<str>> = None;
+    let mut open_blend = zephyra_core::filter::BlendMode::default();
+    // 当前批在 `images` 段里的起点。
+    //
+    // ⚠⚠ 这里**不能**在换批时 `pending.clear()`：那是本层一个长期存在的 bug ——
+    // `pending` 是 `out.images` 的**全部**内容（合并流里的整个 images 段），而
+    // `batches` 报的是「每批多少顶点」、渲染器据此从 `image_first` 起逐批推进。
+    // 清掉就等于只留下最后一批的顶点：`batches` 声称 12 个、`images` 只有 4 个，
+    // 渲染器读到别的图元的位置上 —— 症状是图像错位或消失，而 `batches` 的统计
+    // **完全正常**，所以极难往这里联想。
+    //
+    // 之所以一直没被发现：demo 里所有图像共用一张纹理 ⇒ 永远只有一批 ⇒
+    // `clear()` 是空操作。有测试专门钉住多批的情形。
+    let mut batch_start = 0u32;
     let mut clip: Option<Rect> = None;
 
     for (i, item) in list.iter().enumerate() {
@@ -1326,7 +1389,8 @@ pub fn expand_range_translated_into(
                     out.report.quads += 1;
                 }
                 push_run(
-                    &mut tally.solid,
+                    &mut tally,
+                    RunClass::Solid,
                     solid_before as u32,
                     (out.solid.len() - solid_before) as u32,
                     None,
@@ -1355,14 +1419,44 @@ pub fn expand_range_translated_into(
                 // `src` 先钳到 0..1：越界 uv 的症状出现在采样器里（取到相邻
                 // 图块的内容），那时已经离病因很远。
                 let uv = src.map(|r| r.clamped()).unwrap_or(UvRect::FULL);
-                image_quads.push((
-                    scratch.intern(texture.as_str()),
+                let name = scratch.intern(texture.as_str());
+                // 未注册的纹理整条跳过，且**不**打断当前批。
+                if !is_registered(&name) {
+                    out.report.missing_textures += 1;
+                    continue;
+                }
+                // 图像的顶点与 run **在循环里就地产生** —— 曾经它们被推进一个
+                // 临时队列、循环结束后再统一分批，于是所有图像的 run 都排在
+                // 所有实心四边形的 run 之后（类型分组）。那张照片于是盖住了
+                // 压在它上面的卡片与标签。
+                //
+                // 分批规则不变：只合并**相邻**的同纹理同混合段。
+                if open.as_deref() != Some(&*name) || open_blend != *blend {
+                    if let Some(prev) = open.take() {
+                        out.batches
+                            .push((prev, (pending.len() as u32) - batch_start));
+                    }
+                    batch_start = pending.len() as u32;
+                    open = Some(name.clone());
+                    open_blend = *blend;
+                }
+                let first = pending.len() as u32;
+                pending.extend_from_slice(&Vertex::from_rounded_uv_rect(
                     rect,
+                    px,
+                    [tint.r, tint.g, tint.b, tint.a],
                     uv,
-                    *tint,
                     radius.radius,
-                    *blend,
                 ));
+                push_run(
+                    &mut tally,
+                    RunClass::Image,
+                    first,
+                    (pending.len() as u32) - first,
+                    Some(name.clone()),
+                    *blend,
+                );
+                out.report.quads += 1;
             }
             Command::Text {
                 glyphs,
@@ -1414,7 +1508,8 @@ pub fn expand_range_translated_into(
                 // 整段文本记成一段：字形之间没有纹理/混合模式的变化，拆开只会让
                 // draw 次数从 1 变成「字形个数」。
                 push_run(
-                    &mut tally.solid,
+                    &mut tally,
+                    RunClass::Solid,
                     solid_before as u32,
                     (out.solid.len() - solid_before) as u32,
                     None,
@@ -1500,7 +1595,8 @@ pub fn expand_range_translated_into(
                     out.report.path_triangles += added;
                 }
                 push_run(
-                    &mut tally.paths,
+                    &mut tally,
+                    RunClass::Path,
                     before as u32,
                     (out.paths.len() - before) as u32,
                     None,
@@ -1526,7 +1622,7 @@ pub fn expand_range_translated_into(
         }
     }
 
-    // ---- 图像：按纹理分批 ----
+    // ---- 图像：收尾最后一批 ----
     //
     // 一次 draw call 只能绑定一张纹理，所以每种纹理一批。批次之间必须保持
     // **原始命令顺序** —— 图像可能半透明互相叠加，重排会改变可见结果。
@@ -1534,57 +1630,9 @@ pub fn expand_range_translated_into(
     //
     // 每批记下它要绑的**纹理名**（而不是绑定对象）—— 绑定要活到提交之后，
     // 而纹理表是只读借用，提前取出会造成不必要的借用交叉。
-    let mut open: Option<Rc<str>> = None;
-    // 当前图像批的混合模式：纹理相同**且**混合模式相同才算同一批。
     //
-    // ⚠ 只按纹理合批是不够的：相邻两段图像若混合模式不同而纹理相同，合进一批后
-    // base 只能给它们套**同一个**混合方程 —— 症状是「有一段的混合效果没生效」，
-    // 而顶点数、缺失纹理数这些统计全都正常。
-    let mut open_blend = zephyra_core::filter::BlendMode::default();
-    // 当前批在 `images` 段里的起点。
-    //
-    // ⚠⚠ 这里**不能**在换批时 `pending.clear()`：那是本层一个长期存在的 bug ——
-    // `pending` 是 `out.images` 的**全部**内容（合并流里的整个 images 段），而
-    // `batches` 报的是「每批多少顶点」、渲染器据此从 `image_first` 起逐批推进。
-    // 清掉就等于只留下最后一批的顶点：`batches` 声称 12 个、`images` 只有 4 个，
-    // 渲染器读到别的图元的位置上 —— 症状是图像错位或消失，而 `batches` 的统计
-    // **完全正常**，所以极难往这里联想。
-    //
-    // 之所以一直没被发现：demo 里所有图像共用一张纹理 ⇒ 永远只有一批 ⇒
-    // `clear()` 是空操作。有测试专门钉住多批的情形。
-    let mut batch_start = 0u32;
-    for (name, rect, uv, tint, radius, blend) in &image_quads {
-        // 未注册的纹理整条跳过，且**不**打断当前批。
-        if !is_registered(name) {
-            out.report.missing_textures += 1;
-            continue;
-        }
-        if open.as_deref() != Some(&**name) || open_blend != *blend {
-            if let Some(prev) = open.take() {
-                out.batches
-                    .push((prev, (pending.len() as u32) - batch_start));
-            }
-            batch_start = pending.len() as u32;
-            open = Some(name.clone());
-            open_blend = *blend;
-        }
-        let first = pending.len() as u32;
-        pending.extend_from_slice(&Vertex::from_rounded_uv_rect(
-            *rect,
-            px,
-            [tint.r, tint.g, tint.b, tint.a],
-            *uv,
-            *radius,
-        ));
-        push_run(
-            &mut tally.images,
-            first,
-            (pending.len() as u32) - first,
-            Some(name.clone()),
-            *blend,
-        );
-        out.report.quads += 1;
-    }
+    // ⚠ 收尾必须在这里做：最后一批的顶点已经在 `pending` 里，但它还没被
+    // 记进 `batches` —— 漏了这一句，渲染器就少绑一张纹理。
     if let Some(prev) = open.take() {
         out.batches
             .push((prev, (pending.len() as u32) - batch_start));
@@ -1636,7 +1684,6 @@ pub fn expand_range_translated_into(
     scratch.images = out.images;
     scratch.paths = out.paths;
     scratch.batches = out.batches;
-    scratch.image_quads = image_quads;
     scratch.run_tally = tally;
     scratch.runs = out.runs;
 

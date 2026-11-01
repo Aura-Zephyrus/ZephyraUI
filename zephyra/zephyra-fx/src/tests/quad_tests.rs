@@ -947,6 +947,10 @@ fn image_with_blend(
 /// 这是 E3 存在的全部理由 —— 加了分段元数据之后，"合成器照着 `runs` 画"与
 /// "合成器照着整条流画"必须画出**同一个东西**。漏一段的症状是图元不出现，
 /// 两段重叠的症状是图元重复画（半透明时颜色变深，且不报任何错）。
+///
+/// ⚠ 拼接前必须**按 `first_vertex` 排序** —— 段的先后是 DisplayList 的顺序，
+/// 而 `first_vertex` 是它在合并流里的位置，两者的序不必一致
+/// （见 `DrawRun` 的不变量一节）。
 #[test]
 fn runs_spliced_rebuild_the_unsplit_stream() {
     use zephyra_core::filter::BlendMode;
@@ -965,11 +969,13 @@ fn runs_spliced_rebuild_the_unsplit_stream() {
 
     // 结构：连续、完整覆盖
     assert!(!b.runs.is_empty(), "这批命令里每种图元都有，runs 不该为空");
+    let mut by_pos: Vec<&crate::quad::DrawRun> = b.runs.iter().collect();
+    by_pos.sort_by_key(|r| r.first_vertex);
     assert_eq!(
-        b.runs[0].first_vertex, 0,
+        by_pos[0].first_vertex, 0,
         "第一段必须从流头开始，否则开头的图元没人画"
     );
-    for w in b.runs.windows(2) {
+    for w in by_pos.windows(2) {
         assert_eq!(
             w[1].first_vertex,
             w[0].end(),
@@ -979,21 +985,25 @@ fn runs_spliced_rebuild_the_unsplit_stream() {
         );
     }
     assert_eq!(
-        b.runs.last().unwrap().end() as usize,
+        by_pos.last().unwrap().end() as usize,
         all.len(),
         "最后一段必须正好到流尾，否则尾部的图元没人画（或被多画一次）"
     );
 
     // 判据本体：逐段切出来拼接 == 整条流
     let mut spliced = Vec::new();
-    for r in &b.runs {
+    for r in &by_pos {
         let s = r.first_vertex as usize;
         spliced.extend_from_slice(&all[s..s + r.vertex_count as usize]);
     }
     assert_eq!(spliced, all, "按 runs 切分再拼起来必须与合并流逐顶点相同");
 }
 
-/// 混合模式全默认时 `runs` 就是原来的三段 —— 合批行为**没有**被 E3 改动。
+/// 混合模式全默认时，这条命令序列恰好产出三段。
+///
+/// ⚠ 段数是三段的**原因**现在不是「图元分三类」，而是「命令序列恰好是
+/// 实心 → 图像 → 多边形，且相邻的同类命令被合并」。命令顺序一换，
+/// 段数就换 —— 那正是 `an_image_does_not_cover_later_solids` 盯的东西。
 ///
 /// ⚠ 刻意放**两个**矩形：不合并的话这里会是 4 段而不是 3 段，所以这条钉住的
 /// 是「相邻同混合模式的段被合并」这件事，而不只是「段数等于三」。
@@ -1033,6 +1043,74 @@ fn default_blend_yields_exactly_three_runs() {
         "只有 images 段换绑定：{:?}",
         b.runs
     );
+}
+
+// ---- 绘制顺序：`runs` 的先后 = DisplayList 的先后 ----
+
+/// **图像不能盖住排在它后面的实心四边形**。
+///
+/// 2026-11-01 由 gallery 的材质页撞出：展开层曾把 run 按「实心 → 图像 →
+/// 多边形」的**类型分组**输出，于是任何 `Command::Image` 都排在同一段里
+/// 所有实心四边形之后绘制。照片当背景时，照片把压在它上面的实心卡片连同
+/// 卡片里的文字标签一起盖掉了 —— 画面上极像「卡片没画出来」，而
+/// DisplayList 里明明有它。
+///
+/// 这条断言的是**绘制顺序**（`runs` 的先后就是 draw 的先后），不是
+/// 「有没有这条命令」—— 后者在修复前后都成立，钉不住任何东西。
+#[test]
+fn an_image_does_not_cover_later_solids() {
+    let l = list_of(vec![
+        image("t1", Rect::new(0.0, 0.0, 40.0, 40.0)),
+        quad(Rect::new(0.0, 0.0, 40.0, 40.0), Color::rgb(1.0, 0.0, 0.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert_eq!(b.runs.len(), 2, "图像与实心各一段：{:?}", b.runs);
+    assert_eq!(
+        b.runs[0].texture.as_deref(),
+        Some("t1"),
+        "第一段必须是图像（它排在 DisplayList 前面）：{:?}",
+        b.runs
+    );
+    assert!(
+        b.runs[1].texture.is_none(),
+        "第二段必须是实心（它排在 DisplayList 后面）：{:?}",
+        b.runs
+    );
+}
+
+/// 「实心 → 图像 → 实心」时两个实心**不能**并成一段。
+///
+/// 并了就等于把后一个实心提到图像之前画 —— 图像会盖住它。段能不能并，
+/// 判据是「**紧邻的上一条**是不是同类别」，不是「同类别里的上一条」。
+#[test]
+fn a_solid_between_images_keeps_its_own_run() {
+    let l = list_of(vec![
+        quad(Rect::new(0.0, 0.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+        image("t1", Rect::new(20.0, 0.0, 10.0, 10.0)),
+        quad(Rect::new(40.0, 0.0, 10.0, 10.0), Color::rgb(0.0, 1.0, 0.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert_eq!(b.runs.len(), 3, "三条命令各一段：{:?}", b.runs);
+    assert!(b.runs[0].texture.is_none(), "第一段是实心");
+    assert_eq!(b.runs[1].texture.as_deref(), Some("t1"), "第二段是图像");
+    assert!(b.runs[2].texture.is_none(), "第三段是实心");
+}
+
+/// 同理，「图像 → 实心 → 图像」时两张图像也不能并成一段。
+///
+/// 合并规则里的「相邻」是**DisplayList 里相邻**，不是「图像之间相邻」。
+#[test]
+fn two_images_with_a_solid_between_keep_two_runs() {
+    let l = list_of(vec![
+        image("t1", Rect::new(0.0, 0.0, 10.0, 10.0)),
+        quad(Rect::new(20.0, 0.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+        image("t1", Rect::new(40.0, 0.0, 10.0, 10.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert_eq!(b.runs.len(), 3, "两条图像各一段：{:?}", b.runs);
+    assert_eq!(b.runs[0].texture.as_deref(), Some("t1"));
+    assert!(b.runs[1].texture.is_none());
+    assert_eq!(b.runs[2].texture.as_deref(), Some("t1"));
 }
 
 /// 相邻**同纹理**但混合模式不同的图像必须拆段。

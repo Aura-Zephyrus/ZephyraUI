@@ -343,9 +343,15 @@ fn stress_a_four_thousand_command_batch_is_internally_consistent() {
     assert_eq!(batch.report.missing_textures, 0, "本场景无图像命令");
     assert!(batch.report.skipped == 0, "全部矩形可见，不该有跳过");
 
-    // runs 铺满 solid 顶点流：按 first_vertex 升序必须首尾相接。
+    // runs 铺满 solid 顶点流：**按 `first_vertex` 排序后**必须首尾相接。
+    //
+    // ⚠ 不能直接按 `runs` 的顺序断言 —— 段的先后是 **DisplayList 的顺序**，
+    // 而 `first_vertex` 是它在合并流里的位置，两者的序**不必**一致
+    // （实心的顶点在流头、图像的在中，但图像可能排在实心之前）。
+    let mut by_pos: Vec<&crate::quad::DrawRun> = batch.runs.iter().collect();
+    by_pos.sort_by_key(|r| r.first_vertex);
     let mut cursor = 0u32;
-    for run in &batch.runs {
+    for run in by_pos {
         assert_eq!(run.first_vertex, cursor, "runs 之间不留缝");
         cursor += run.vertex_count;
     }
@@ -353,5 +359,87 @@ fn stress_a_four_thousand_command_batch_is_internally_consistent() {
         cursor as usize,
         batch.solid.len(),
         "runs 必须恰好覆盖整条 solid 顶点流"
+    );
+}
+
+/// 交错命令（矩形 / 图像）的展开：段的先后必须等于**命令的先后**。
+///
+/// # 为什么全矩形的老压力测试看不见顺序问题
+///
+/// 全是矩形时，「按图元类型分组」与「按 DisplayList 顺序」**恰好一致** ——
+/// 那条老压力测试因此一直是绿的，而真实缺陷（图像盖住后面的矩形）就藏在
+/// 它看不见的那半边。这条用**交错**的两种命令把两者分开。
+///
+/// 判据是「段的类别序列 = 命令类别序列的游程编码」：段能合并的只有
+/// **紧邻**的同类命令，所以段序列与命令序列必须逐项吻合。
+#[test]
+fn stress_mixed_commands_keep_displaylist_order() {
+    let mut l = DisplayList::new();
+    const N: u32 = 900;
+    for i in 0..N {
+        let cmd = if i % 2 == 0 {
+            Command::Quad {
+                rect: Rect::new((i % 30) as f32 * 16.0, (i / 30) as f32 * 16.0, 12.0, 12.0),
+                radius: CornerRadius { radius: 0.0 },
+                fill: Color::rgb(1.0, 1.0, 1.0),
+                stroke: None,
+                filter: FilterChain::none(),
+                blend: BlendMode::SrcOver,
+            }
+        } else {
+            Command::Image {
+                texture: zephyra_core::paint::TextureRef::new("t"),
+                src: None,
+                dst: Rect::new((i % 30) as f32 * 16.0, (i / 30) as f32 * 16.0, 12.0, 12.0),
+                radius: CornerRadius { radius: 0.0 },
+                tint: Color::rgb(1.0, 1.0, 1.0),
+                filter: FilterChain::none(),
+                blend: BlendMode::SrcOver,
+            }
+        };
+        l.push(
+            SortKey {
+                layer: Layer::Content,
+                z: 0,
+                order: i,
+            },
+            cmd,
+        );
+    }
+    l.sort();
+    let batch = expand(&l, SIZE, REG);
+
+    // 段序列 = 命令类别序列的游程编码。
+    //
+    // 类别：0 = 实心（不换纹理绑定），1 = 图像（换绑定）。
+    let mut expected: Vec<u8> = Vec::new();
+    for i in 0..N {
+        let kind = if i % 2 == 0 { 0u8 } else { 1 };
+        if expected.last() != Some(&kind) {
+            expected.push(kind);
+        }
+    }
+    let actual: Vec<u8> = batch
+        .runs
+        .iter()
+        .map(|r| if r.texture.is_some() { 1u8 } else { 0 })
+        .collect();
+    assert_eq!(
+        actual, expected,
+        "段的先后必须与命令的先后一致（类型分组会把图像全推到实心后面）"
+    );
+
+    // 段的顶点必须恰好铺满整条流（按位置排序后首尾相接）。
+    let mut by_pos: Vec<&crate::quad::DrawRun> = batch.runs.iter().collect();
+    by_pos.sort_by_key(|r| r.first_vertex);
+    let mut cursor = 0u32;
+    for run in by_pos {
+        assert_eq!(run.first_vertex, cursor, "runs 之间不留缝");
+        cursor += run.vertex_count;
+    }
+    assert_eq!(
+        cursor as usize,
+        batch.solid.len() + batch.images.len(),
+        "runs 必须恰好覆盖整条顶点流"
     );
 }

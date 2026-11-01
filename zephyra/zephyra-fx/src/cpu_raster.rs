@@ -427,29 +427,57 @@ fn to_bytes(c: [f32; 4]) -> [u8; 4] {
 ///
 /// `atlas` 是字形图集；`None` 表示没有图集 —— 此时字形**不画**，矩形照画。
 /// 这么分开是有意的：没有图集时把字画成色块是最容易误导人的失败方式。
+///
+/// # 绘制顺序 = `runs` 的顺序 = DisplayList 的顺序
+///
+/// ⚠ 曾经这里是「先 `solid` 整段、再 `images` 整段、最后 `paths` 整段」——
+/// 那是**按图元类型分组**，与 DisplayList 脱节：一张照片（图像）会盖住
+/// 压在它上面的实心卡片与卡片里的文字。GPU 那边曾有同一个缺陷（同一个
+/// 展开层），两边一起修的 —— 参考图与实测图若顺序不同，它就不是参考了。
+///
+/// 现在逐 `run` 画，段落在合并流里的位置决定它属于哪一段数组：
+/// 实心在流头、图像在中、多边形在尾（见 `quad::QuadBatch::flatten`）。
 pub fn draw_batch(canvas: &mut CpuCanvas, batch: &quad::QuadBatch, atlas: Option<&AtlasBitmap>) {
-    for chunk in batch.solid.chunks_exact(4) {
-        canvas.quad(chunk, atlas);
-    }
-    // 图像**也画** —— 但只画**形状**，不采样纹理（见 `kind::IMAGE` 分支）。
-    //
-    // ⚠️ 过去这里是空注释，于是 `batch.images` 整段从未被光栅化 ——
-    // 「图像链在无 GPU 环境零验证」的老缺口就是这么来的：不是没人写测试，
-    // 是这条路径根本不会被执行。
-    //
-    // 画形状（而不是跳过）的理由：圆角、uv 钳制、混合这些都落在图像这条链上，
-    // 而它们出问题时的症状是「图像边缘发暗 / 内容错位」，在真机上极难归因。
-    for chunk in batch.images.chunks_exact(4) {
-        canvas.quad(chunk, atlas);
-    }
-    // 多边形（`Command::Path`，矢量图标全走这里）**也画**。
-    //
-    // ⚠️ 过去这里是空的，于是 `paths` 整段从未被光栅化 —— 与上面 `images`
-    // 那条完全同型的洞：几何统计照常增长（`path_triangles` 有数），图里却
-    // 一个图标都没有。自验图是本仓唯一的像素级判据，它少画一类图元，
-    // 等于把一整类缺陷永久地藏了起来。
-    for chunk in batch.paths.chunks_exact(3) {
-        canvas.triangle(chunk);
+    let solid_len = batch.solid.len();
+    let images_len = batch.images.len();
+    let paths_len = batch.paths.len();
+    for run in &batch.runs {
+        let f = run.first_vertex as usize;
+        let n = run.vertex_count as usize;
+        if f < solid_len {
+            // 矩形 + 字形（字形在 `solid` 段里，但也要采样图集）。
+            let s = f;
+            let e = (f + n).min(solid_len);
+            for chunk in batch.solid[s..e].chunks_exact(4) {
+                canvas.quad(chunk, atlas);
+            }
+        } else if f < solid_len + images_len {
+            // 图像**也画** —— 但只画**形状**，不采样纹理（见 `kind::IMAGE` 分支）。
+            //
+            // ⚠️ 过去这里是空注释，于是 `batch.images` 整段从未被光栅化 ——
+            // 「图像链在无 GPU 环境零验证」的老缺口就是这么来的：不是没人写测试，
+            // 是这条路径根本不会被执行。
+            //
+            // 画形状（而不是跳过）的理由：圆角、uv 钳制、混合这些都落在图像这条链上，
+            // 而它们出问题时的症状是「图像边缘发暗 / 内容错位」，在真机上极难归因。
+            let s = f - solid_len;
+            let e = (f + n - solid_len).min(images_len);
+            for chunk in batch.images[s..e].chunks_exact(4) {
+                canvas.quad(chunk, atlas);
+            }
+        } else {
+            // 多边形（`Command::Path`，矢量图标全走这里）**也画**。
+            //
+            // ⚠️ 过去这里是空的，于是 `paths` 整段从未被光栅化 —— 与上面 `images`
+            // 那条完全同型的洞：几何统计照常增长（`path_triangles` 有数），图里却
+            // 一个图标都没有。自验图是本仓唯一的像素级判据，它少画一类图元，
+            // 等于把一整类缺陷永久地藏了起来。
+            let s = f - solid_len - images_len;
+            let e = (f + n - solid_len - images_len).min(paths_len);
+            for chunk in batch.paths[s..e].chunks_exact(3) {
+                canvas.triangle(chunk);
+            }
+        }
     }
 }
 

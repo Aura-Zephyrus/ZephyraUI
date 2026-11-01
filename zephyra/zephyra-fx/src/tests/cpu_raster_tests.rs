@@ -99,6 +99,69 @@ fn image_batch(dst: zephyra_core::core::Rect, radius: f32) -> quad::QuadBatch {
     quad::expand(&l, (100, 100), |_| true)
 }
 
+/// **压在图像后面的实心四边形必须盖住它**。
+///
+/// 端到端地钉住「绘制顺序 = DisplayList 顺序」：展开层曾把 run 按
+/// 「实心 → 图像 → 多边形」的**类型分组**输出，于是图像总在同段所有实心
+/// 四边形之后绘制 —— 照片当背景时把压在它上面的卡片与标签一起盖掉了。
+///
+/// 展开层的门禁（`an_image_does_not_cover_later_solids`）断言的是 run 的
+/// 先后；这条断言的是**画出来的像素** —— 后者才与用户看到的画面同口径。
+#[test]
+fn a_solid_drawn_after_an_image_covers_it() {
+    let mut l = zephyra_core::paint::DisplayList::new();
+    let dst = zephyra_core::core::Rect::new(10.0, 10.0, 80.0, 80.0);
+    // 先一张蓝色图像。
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 0,
+        },
+        zephyra_core::paint::Command::Image {
+            texture: zephyra_core::paint::TextureRef::new("t"),
+            src: Some(zephyra_core::core::UvRect::FULL),
+            dst,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            tint: zephyra_core::core::Color::rgb(0.0, 0.0, 1.0),
+            filter: Default::default(),
+            blend: Default::default(),
+        },
+    );
+    // 再一块同位置的红色实心四边形。
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        zephyra_core::paint::Command::Quad {
+            rect: dst,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: zephyra_core::core::Color::rgb(1.0, 0.0, 0.0),
+            stroke: None,
+            filter: Default::default(),
+            blend: Default::default(),
+        },
+    );
+    l.sort();
+    let batch = quad::expand(&l, (100, 100), |_| true);
+
+    let mut canvas = CpuCanvas::new(100, 100, [0.0; 4]);
+    draw_batch(&mut canvas, &batch, None);
+
+    let at = |x: u32, y: u32| {
+        let i = (y as usize * 100 + x as usize) * 4;
+        [canvas.pixels[i], canvas.pixels[i + 1], canvas.pixels[i + 2]]
+    };
+    // 中心必须是被后画的红色四边形盖住，而不是蓝色图像。
+    let c = at(50, 50);
+    assert!(
+        c[0] > 230 && c[2] < 26,
+        "中心应是红色（后画的实心四边形盖住图像），实际 {c:?} —— 图像被画在了后面"
+    );
+}
+
 /// 圆角图像的**四角必须是空的**。
 ///
 /// # 为什么这条能钉住 CPU 侧的遮罩
