@@ -221,8 +221,9 @@ Use get_props for a node's full properties; use screenshot only when visual pixe
     Tool {
         name: "get_props",
         description: "Dump the properties of one node. `path` is the child-index chain \
-from `get_tree` (e.g. `0.1.2`). Returns tag / key / rect (relative to parent) / styles \
-/ every property (`name = value (styled)` lines are overridden by later local values).",
+from `get_tree` (e.g. `0.1.2`, including the leading root marker `0`). Returns tag / key / \
+rect (ABSOLUTE pixels, same space as hover/click) / styles / every property \
+(`name = value (styled)` lines are overridden by later local values).",
         schema: r#"{"type": "object", "properties": {"path": {"type": "string", "description": "child-index chain, e.g. 0.1.2"}}, "required": ["path"]}"#,
         annotations: READ_ONLY,
     },
