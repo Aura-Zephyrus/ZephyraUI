@@ -157,6 +157,7 @@ pub struct UseNode {
 /// | `interactive` | [`zephyra_core::props::INTERACTIVE`] | 布尔 |
 /// | `focusable` | [`zephyra_core::props::FOCUSABLE`] | 布尔 —— 进 Tab 顺序、能获键盘焦点 |
 /// | `activatable` | [`zephyra_core::props::ACTIVATABLE`] | 布尔 —— 有焦点时空格/回车触发点击 |
+/// | `disabled` | [`zephyra_core::props::DISABLED`] | 布尔 —— 不响应点击、不参与键盘激活 |
 /// | `texture` | [`zephyra_core::props::IMAGE_TEXTURE`] | 字符串（纹理句柄） |
 /// | `uv` | [`zephyra_core::props::IMAGE_SRC`] | `x,y,w,h` 四个数 |
 /// | `width` / `height` | `WIDTH` / `HEIGHT` | 数值 —— **仅限 `fill:` 键**
@@ -173,6 +174,7 @@ pub const BARE_ATTRS: &[&str] = &[
     "interactive",
     "focusable",
     "activatable",
+    "disabled",
     "texture",
     "uv",
     "width",

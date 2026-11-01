@@ -8,6 +8,7 @@
 //! | 控件的 `.zstyle` 样式表（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
 //! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
 //! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
+//! | 控件的**状态模型**（[`checkbox`]） | 状态**存哪**（那是宿主的事） |
 //!
 //! # 结构的真相只有一份：`.zypui`
 //!
@@ -29,8 +30,10 @@
 //! 2. **本 crate 不依赖渲染后端。** 控件库的用户不该被迫引入 D3D12。
 //!    后端由应用（`gallery/`）用 feature 选。
 
+pub mod checkbox;
 pub mod styles;
 pub mod tokens;
 
+pub use checkbox::{CheckState, Checkbox, CheckboxGroup};
 pub use styles::{stylesheet, STYLESHEETS};
 pub use tokens as token_names;

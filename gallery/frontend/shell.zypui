@@ -60,7 +60,7 @@
     <TextLabel key="state-blurb" text="Wired controls change state on click. Display-only controls don't — that's a core boundary, not a bug." level="text-body"/>
     <Section key="state-wired" title="Wired to state">
       <DemoRow label="{tr('ui.checkbox')}">
-        <CheckBox key="state-check" label="Toggle me" checked="{@demo_check}"/>
+        <CheckBox key="state-check" label="Toggle me" state="{@demo_check}"/>
       </DemoRow>
       <DemoRow label="{tr('ui.toggle')}">
         <ToggleSwitch key="state-switch" checked="{@switch_on}"/>
@@ -333,9 +333,7 @@
   <PageRoot key="toggles" cls="page-toggles">
     <Section key="sec-check" title="Checkbox">
       <DemoRow label="{tr('ui.multiple')}">
-        <CheckBox key="check:alpha" label="Enable feature" checked="{@check_a}"/>
-        <CheckBox key="check:beta" label="Send analytics" checked="{@check_b}"/>
-        <CheckBox key="check:gamma" label="Beta channel" checked="{@check_c}"/>
+        <CheckBoxGroup gkey="group:checks" label="Select all" items="{@check_group_items}" state="{@check_group_state}"/>
       </DemoRow>
     </Section>
     <Section key="sec-radio" title="Radio">

@@ -33,6 +33,10 @@ pub const STYLESHEETS: &[(&str, &str)] = &[
     ("badge", include_str!("../controls-badge.zstyle")),
     ("button", include_str!("../controls-button.zstyle")),
     ("card", include_str!("../controls-card.zstyle")),
+    // 复选框族（勾号 + 半选横杠 + 复选框组）。放在 `toggle` **之前**：
+    // 单选框与开关留在 `toggle` 里，而 `Text.check-label` 两族共用 ——
+    // 它只有一份定义（在 `toggle` 里），所以两张表的先后不影响它。
+    ("checkbox", include_str!("../controls-checkbox.zstyle")),
     (
         "collections",
         include_str!("../controls-collections.zstyle"),

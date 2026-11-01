@@ -1,29 +1,18 @@
-/* CheckBox、RadioButton、ToggleSwitch —— Apple HIG 度量。
+/* RadioButton、ToggleSwitch —— Apple HIG 度量。
  *
  * 指示器 22×22，开关 44×24（把手 14）。
+ *
+ * ⚠ CheckBox / CheckBoxGroup 的规则在 `controls-checkbox.zstyle` —— 它们
+ * 是一族（指示器 + 勾号 + 半选横杠 + 组），与开关族不是一回事。
+ * 但 `Text.check-label` **两边都用**（单选框的标签也用它），所以它留在
+ * 本文件里，勾号族只在自己的表里。
  */
-
-Control.check-box {
-    direction: horizontal;
-    cross-align: center;
-    spacing: 10px;
-    height: 22px;
-}
 
 Control.radio-box {
     direction: horizontal;
     cross-align: center;
     spacing: 10px;
     height: 22px;
-}
-
-Container.check-indicator {
-    width: 22px;
-    height: 22px;
-    corner-radius: 6px;
-    background: @control_fill;
-    border-width: 1px;
-    border-color: @control_border_strong;
 }
 
 Container.radio-indicator {
@@ -35,41 +24,17 @@ Container.radio-indicator {
     border-color: @control_border_strong;
 }
 
-Container.check-indicator.checked {
-    background: @accent_fill;
-    border-color: @accent_fill;
-}
-
 Container.radio-indicator.checked {
     background: @accent_fill;
     border-color: @accent_fill;
-}
-
-Container.check-indicator.hovered {
-    background: @control_secondary;
 }
 
 Container.radio-indicator.hovered {
     background: @control_secondary;
 }
 
-Container.check-indicator.checked.hovered {
-    background: @accent_fill;
-}
-
 Container.radio-indicator.checked.hovered {
     background: @accent_fill;
-}
-
-Container.check-mark {
-    width: 10px;
-    height: 10px;
-    corner-radius: 2px;
-    background: transparent;
-}
-
-Container.check-mark.checked {
-    background: @on_accent_fill;
 }
 
 Container.radio-dot {
@@ -89,6 +54,11 @@ Text.check-label {
 }
 
 Text.check-label.checked {
+    text-color: @content;
+}
+
+/* 半选的组头与选中一样用正文色 —— 它同样是「有选择」的状态。 */
+Text.check-label.indeterminate {
     text-color: @content;
 }
 

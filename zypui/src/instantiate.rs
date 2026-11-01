@@ -282,6 +282,9 @@ fn build_node(
                     "activatable" => {
                         el_el.with(&props::ACTIVATABLE, PropertyValue::bool(v.truthy()))
                     }
+                    // 禁用：core 的命中测试与 `ActivationState` 都认这个属性，
+                    // 样式表则按它把控件画成灰的。
+                    "disabled" => el_el.with(&props::DISABLED, PropertyValue::bool(v.truthy())),
                     "uv" => match uv_of(&v) {
                         Some(r) => el_el.with(&props::IMAGE_SRC, PropertyValue::UvRect(r)),
                         None => el_el,

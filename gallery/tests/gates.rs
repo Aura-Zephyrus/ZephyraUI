@@ -100,12 +100,27 @@ type GateScripts = Vec<(&'static str, fn(&mut Gallery))>;
 fn interaction_scripts() -> GateScripts {
     vec![
         ("切到 guide", |g| g.route = "guide"),
-        ("勾上 alpha", |g| g.checked[0] = true),
-        ("再勾 beta 与 gamma", |g| {
-            g.checked[1] = true;
-            g.checked[2] = true;
+        // ⚠ 复选框组的状态**只在控件层的模型里**（`zephyra_ui::CheckboxGroup`），
+        // 门禁脚本不能直接改数组 —— 那样就绕过了「组头从子项派生」这条规则，
+        // 而那条规则正是本轮要钉的东西。
+        ("勾上 alpha", |g| {
+            g.check_group
+                .set_item_state("check:alpha", zephyra_ui::CheckState::Checked);
         }),
-        ("全部取消", |g| g.checked = [false, false, false]),
+        ("再勾 beta 与 gamma", |g| {
+            g.check_group
+                .set_item_state("check:beta", zephyra_ui::CheckState::Checked);
+            g.check_group
+                .set_item_state("check:gamma", zephyra_ui::CheckState::Checked);
+        }),
+        ("全部取消", |g| {
+            for key in ["check:alpha", "check:beta", "check:gamma"] {
+                g.check_group
+                    .set_item_state(key, zephyra_ui::CheckState::Unchecked);
+            }
+        }),
+        // 组头点一下 = 全选 / 全部不选。半选时点它 → 全选。
+        ("组头全选", |g| g.check_group.toggle_all()),
         ("选中第三个单选项", |g| g.radio = 2),
         ("选中第一个单选项", |g| g.radio = 0),
         ("开主开关", |g| g.switch_on = true),
@@ -3062,28 +3077,39 @@ fn every_interactive_key_is_wired_or_whitelisted() {
     // 1) 全路由 × 全族扫树，收集每个 INTERACTIVE key 与它所在的（路由, 族）。
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
-    let mut found: BTreeMap<&'static str, (&'static str, usize)> = BTreeMap::new();
+    let mut found: BTreeMap<&'static str, (&'static str, usize, bool)> = BTreeMap::new();
     let mut interactives = 0usize;
 
-    let mut collect = |g: &Gallery, found: &mut BTreeMap<&'static str, (&'static str, usize)>| {
-        let element = g.view(&ctx);
-        let root = Node::from_element(&element);
-        walk(&root, &mut |n: &Node| {
-            let interactive = n
-                .props()
-                .iter_local()
-                .any(|(k, _)| std::ptr::eq(k, &zephyra_core::props::INTERACTIVE));
-            if !interactive {
-                return;
-            }
-            interactives += 1;
-            if let Some(key) = n.key().and_then(|k| k.as_name()) {
-                // 同一个 key 可能出现在多个路由（语言切换按钮在 theme/testing
-                // 两页）——任一处接线即算接线，取第一次出现的位置即可。
-                found.entry(key).or_insert((g.route, g.ref_family));
-            }
-        });
-    };
+    let mut collect =
+        |g: &Gallery, found: &mut BTreeMap<&'static str, (&'static str, usize, bool)>| {
+            let element = g.view(&ctx);
+            let root = Node::from_element(&element);
+            walk(&root, &mut |n: &Node| {
+                let interactive = n
+                    .props()
+                    .iter_local()
+                    .any(|(k, _)| std::ptr::eq(k, &zephyra_core::props::INTERACTIVE));
+                if !interactive {
+                    return;
+                }
+                interactives += 1;
+                if let Some(key) = n.key().and_then(|k| k.as_name()) {
+                    // 同一个 key 可能出现在多个路由（语言切换按钮在 theme/testing
+                    // 两页）——任一处接线即算接线，取第一次出现的位置即可。
+                    //
+                    // ⚠ `disabled` 一并记下：**禁用的控件点了本就不该有反应**，
+                    // 那是它的正确行为而不是「空壳」。判据因此分成两路 ——
+                    // 禁用的必须**点不动**，没禁用的必须**点得动**。
+                    let disabled = n.props().iter_local().any(|(k, v)| {
+                        std::ptr::eq(k, &zephyra_core::props::DISABLED)
+                            && v.get::<bool>().unwrap_or(false)
+                    });
+                    found
+                        .entry(key)
+                        .or_insert((g.route, g.ref_family, disabled));
+                }
+            });
+        };
 
     for route in ROUTES
         .iter()
@@ -3112,7 +3138,8 @@ fn every_interactive_key_is_wired_or_whitelisted() {
 
     // 2) 逐 key 在扰动世界里真点一遍，比较点击前后的树指纹。
     let mut hollow: Vec<String> = Vec::new();
-    for (key, (route, family)) in &found {
+    let mut disabled_but_live: Vec<String> = Vec::new();
+    for (key, (route, family, disabled)) in &found {
         let mut wired = false;
         let mut seen_anywhere = false;
         // 世界 1/2：原路由 + 两个相位；世界 3：换一条路由（外壳/导航键在
@@ -3149,9 +3176,22 @@ fn every_interactive_key_is_wired_or_whitelisted() {
             shape_fingerprint(&before, &mut fp_before);
             shape_fingerprint(&after, &mut fp_after);
             if fp_before != fp_after {
+                if *disabled {
+                    // 禁用的控件**点了有反应** = 「禁用」没生效。
+                    //
+                    // 这不是空壳问题，是**反向**的问题：禁用态画成灰的、点下去
+                    // 却还是能切状态 —— 用户会以为程序坏了。
+                    disabled_but_live.push(format!("{key}（route {route}）"));
+                }
                 wired = true;
                 break;
             }
+        }
+
+        if *disabled {
+            // 禁用的 key 在所有世界里都点不动 = 通过（它**应该**如此）。
+            // 它不进 `hollow`：`hollow` 问的是「该动的有没有动」。
+            continue;
         }
 
         if wired || DISPLAY_ONLY.contains(key) {
@@ -3173,6 +3213,11 @@ fn every_interactive_key_is_wired_or_whitelisted() {
         "这些可交互控件点了没有任何状态变化（空壳按钮——要么接线，要么\
          在 DISPLAY_ONLY 里注明为什么不接）：\n  {}",
         hollow.join("\n  ")
+    );
+    assert!(
+        disabled_but_live.is_empty(),
+        "这些控件标了 disabled，点了却还有反应（「禁用」没生效）：\n  {}",
+        disabled_but_live.join("\n  ")
     );
 }
 
@@ -3219,7 +3264,11 @@ fn perturb(g: &mut Gallery, phase: usize, perturb_family: bool) {
     g.demo_combo = if p == 0 { 1 } else { 2 };
     g.color_idx = if p == 0 { 0 } else { 15 };
     g.spin = if p == 0 { 5 } else { 15 };
-    g.demo_check = p == 1;
+    g.demo_check.set_state(if p == 1 {
+        zephyra_ui::CheckState::Checked
+    } else {
+        zephyra_ui::CheckState::Unchecked
+    });
     g.switch_on = p == 1;
     g.pill_on = p == 1;
     g.notify_on = p == 1;
@@ -3248,4 +3297,325 @@ fn tree_has_key(root: &Node, key: &str) -> bool {
         }
     });
     hit
+}
+
+// ───────────────────── 复选框：三态与组聚合 ─────────────────────
+
+/// 节点上是否带某个分类名。
+fn has_class(n: &Node, name: &str) -> bool {
+    n.style_names().contains(&name)
+}
+
+/// **复选框的三态与复选框组的聚合必须与控件层的模型一致。**
+///
+/// # 为什么这条要有
+///
+/// 三态与组聚合是**画面上看不出来**的部分：
+///
+/// - 组头的半选**不是**用户摆出来的，是**从子项算出来**的；
+/// - 子项的「选中」是模型里的 `CheckState`，过界时变成一个**分类词**
+///   （`""` / `"checked"` / `"indeterminate"`）。
+///
+/// 任何一环对不上，画面上仍然是「一个能点的复选框」，只是状态是错的。
+/// 而状态错在复选框上尤其难查：点一下它会变，只是变得不对。
+///
+/// # 判据
+///
+/// 对参考页的「选择」族（本轮把复选框组放在那里）逐项核对：
+///
+/// 1. 组头的分类名 == 模型算出的组状态；
+/// 2. 每个子项的分类名 == 它自己的状态；
+/// 3. **只有组头带半选横杠那个节点**（三态才带，两态子项不带）；
+/// 4. 禁用项带 `disabled` 分类名、其余不带；
+/// 5. 点组头 / 点子项之后，树上立刻跟着变（不只是模型变了）。
+#[test]
+fn checkbox_states_on_the_tree_match_the_model() {
+    use zephyra_gallery::app::{CHECKS, CHECK_GROUP_KEY};
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    fn build(g: &Gallery, ctx: &Context<'_>) -> Node {
+        Node::from_element(&g.view(ctx))
+    }
+
+    /// 断言一个复选框节点的状态分类名与 `word` 一致。
+    fn assert_state(n: &Node, word: &str, what: &str) {
+        if word.is_empty() {
+            assert!(
+                !has_class(n, "checked") && !has_class(n, "indeterminate"),
+                "{what} 不该带任何状态分类名（模型说未选中）"
+            );
+        } else {
+            assert!(
+                has_class(n, word),
+                "{what} 的状态分类名与模型不符：模型说 `{word}`，树上没有"
+            );
+            let other = if word == "checked" {
+                "indeterminate"
+            } else {
+                "checked"
+            };
+            assert!(
+                !has_class(n, other),
+                "{what} 同时带了 `{other}` 与 `{word}` —— 两个状态互斥"
+            );
+        }
+    }
+
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = 1;
+
+    // 1) 组头 = 聚合态。
+    let root = build(&g, &ctx);
+    let header = find_by_key(&root, CHECK_GROUP_KEY).expect("复选框组的组头必须在树上");
+    assert_state(header, g.check_group.header_state().class_word(), "组头");
+
+    // 2) 子项 = 各自的状态。
+    for key in CHECKS {
+        let item = find_by_key(&root, key).unwrap_or_else(|| panic!("{key} 必须在树上"));
+        let model = g.check_group.item(key).expect("模型里也要有这个子项");
+        assert_state(item, model.class_word(), key);
+    }
+
+    // 3) 只有组头带半选横杠节点（三态才带）。
+    assert!(
+        find_by_key(header, "dash").is_some(),
+        "组头是三态的，必须带半选横杠节点（dash）"
+    );
+    for key in CHECKS {
+        let item = find_by_key(&root, key).unwrap_or_else(|| panic!("{key} 必须在树上"));
+        assert!(
+            find_by_key(item, "dash").is_none(),
+            "{key} 是两态的，不该带半选横杠节点"
+        );
+    }
+
+    // 4) 禁用项带 `disabled` 分类名，其余不带。
+    for key in CHECKS {
+        let item = find_by_key(&root, key).unwrap_or_else(|| panic!("{key} 必须在树上"));
+        let model = g.check_group.item(key).expect("模型里也要有这个子项");
+        assert_eq!(
+            has_class(item, "disabled"),
+            model.is_disabled(),
+            "{key} 的禁用分类名与模型不符"
+        );
+    }
+
+    // 5) 点组头 → 全选：树上组头变 checked、子项全变 checked。
+    g.click(CHECK_GROUP_KEY);
+    let root = build(&g, &ctx);
+    let header = find_by_key(&root, CHECK_GROUP_KEY).expect("组头必须在树上");
+    assert_state(header, "checked", "点组头后的组头");
+    for key in CHECKS {
+        if g.check_group.item(key).unwrap().is_disabled() {
+            continue;
+        }
+        let item = find_by_key(&root, key).unwrap_or_else(|| panic!("{key} 必须在树上"));
+        assert_state(item, "checked", &format!("点组头后的 {key}"));
+    }
+
+    // 6) 点一个子项 → 它自己变、组头变半选。
+    g.click("check:alpha");
+    let root = build(&g, &ctx);
+    let header = find_by_key(&root, CHECK_GROUP_KEY).expect("组头必须在树上");
+    assert_state(header, "indeterminate", "点一个子项后的组头");
+    let alpha = find_by_key(&root, "check:alpha").expect("check:alpha 必须在树上");
+    assert_state(alpha, "", "点过的 check:alpha");
+    let beta = find_by_key(&root, "check:beta").expect("check:beta 必须在树上");
+    assert_state(beta, "checked", "没点过的 check:beta");
+}
+
+/// **复选框组的组头必须能被键盘操作，且它的 key 在树上必须唯一。**
+///
+/// # 为什么这条独立于「状态与模型一致」那条
+///
+/// 那条查的是「画面上画出来的状态对不对」，这条查的是「按键盘有没有反应」。
+/// 两类失效**互不可见**：
+///
+/// - 状态画错了 → 一眼能看出来；
+/// - 键盘切不动 → 画面完全正常，鼠标也照常能点，只是按空格没反应。
+///
+/// 而「按 key 找节点」是**深度优先、第一个命中**（core 的
+/// `FocusState::write_state` 与 `ActivationState::is_activatable` 都这么找）。
+/// 于是只要组头那颗复选框的 key 与**别的节点**撞了（典型：组件体外层容器
+/// 拿走了同一个 key），焦点就会写到那个容器上、激活也因为容器没有
+/// `ACTIVATABLE` 而闩不住 —— 鼠标照常能点，键盘彻底失灵。
+///
+/// # 判据
+///
+/// 1. 组头 key 在**整棵树**上只出现一次；
+/// 2. `FocusState::focus` 之后 FOCUSED 落在**带 `check-box` 分类名**的那个
+///    节点上（而不是外层容器）；
+/// 3. `ActivationState::key_down` 对组头 key **闩得住**（Space/Enter 生效）；
+/// 4. 禁用的子项**闩不住**（禁用语义没被顺带破坏）。
+#[test]
+fn the_checkbox_group_header_is_keyboard_reachable() {
+    use zephyra_core::id::ElementKey;
+    use zephyra_core::input::activation::ActivationState;
+    use zephyra_core::input::focus::FocusState;
+    use zephyra_gallery::app::CHECK_GROUP_KEY;
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = 1;
+    let mut root = Node::from_element(&g.view(&ctx));
+
+    // 1) 组头 key 在树上唯一。
+    let mut hits = 0usize;
+    walk(&root, &mut |n: &Node| {
+        if n.key().and_then(|k| k.as_name()) == Some(CHECK_GROUP_KEY) {
+            hits += 1;
+        }
+    });
+    assert_eq!(
+        hits, 1,
+        "组头 key `{CHECK_GROUP_KEY}` 在树上出现了 {hits} 次 —— 按 key 找节点是 \
+         深度优先第一个命中，撞 key 就会把焦点与激活引到别的节点上"
+    );
+
+    // 2) 焦点落在组头那颗复选框上。
+    let mut fs = FocusState::new();
+    fs.focus(&mut root, Some(&ElementKey::Name(CHECK_GROUP_KEY)), ctx);
+    // 收集 (key, 分类名)：闭包不能把 `&Node` 带出去（生命周期不协变），
+    // 所以取它要的**值**。
+    let mut focused: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    walk(&root, &mut |n: &Node| {
+        let f = n.props().iter_local().any(|(k, v)| {
+            std::ptr::eq(k, &zephyra_core::props::FOCUSED) && v.get::<bool>().unwrap_or(false)
+        });
+        if f {
+            focused.push((
+                n.key().and_then(|k| k.as_name()).map(str::to_string),
+                n.style_names().iter().map(|s| s.to_string()).collect(),
+            ));
+        }
+    });
+    assert_eq!(focused.len(), 1, "焦点应当只落在一个节点上");
+    assert!(
+        focused[0].1.iter().any(|c| c == "check-box"),
+        "焦点落到了 {:?}（分类名 {:?}）上，而不是组头那颗复选框 —— 焦点环画不到复选框上",
+        focused[0].0,
+        focused[0].1
+    );
+
+    // 3) Space/Enter 闩得住组头。
+    let mut act = ActivationState::new();
+    assert!(
+        act.key_down(&root, Some(&ElementKey::Name(CHECK_GROUP_KEY)), ctx),
+        "组头按 Space/Enter 闩不住 —— 键盘切不动组头"
+    );
+
+    // 4) 禁用的子项闩不住。
+    let mut act = ActivationState::new();
+    assert!(
+        !act.key_down(&root, Some(&ElementKey::Name("check:locked")), ctx),
+        "禁用的子项竟然闩住了 —— 禁用语义被破坏了"
+    );
+}
+
+/// 无障碍树必须与画面**一致** —— 画出来的复选框要被 UIA 认成复选框、
+/// 名字念得出来、状态对得上、禁用项要报「不可用」。
+///
+/// # 为什么这条门禁在 gallery，而不是 `zephyra-uia`
+///
+/// `zephyra-uia` 的规则层只认**分类名**（`check-box` / `checked` / …）。
+/// 而「模板有没有发出正确的分类名」只有 gallery 自己知道 —— 规则层测不出
+/// 「模板忘了写 `check-box`」这类错。
+///
+/// 而这类错在画面上**完全看不出来**（控件照常显示、鼠标照常能点），
+/// 只有屏幕阅读器念出一个「按钮」而不是「复选框」时才暴露。
+///
+/// # 为什么能在 Linux CI 上跑
+///
+/// `zephyra-uia` 的规则层是**平台中立**的（COM 那一半在 `provider` 模块，
+/// `cfg(windows)`）—— 所以这条门禁在任何机器上都跑得了。
+#[test]
+fn the_accessibility_tree_matches_the_painted_controls() {
+    use zephyra_gallery::app::{CHECKS, CHECK_GROUP_KEY, CHECK_LABELS};
+    use zephyra_uia::{Role, ToggleState, WindowInfo};
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = 1;
+    let root = Node::from_element(&g.view(&ctx));
+
+    let win = WindowInfo {
+        name: "Zephyra Gallery".into(),
+        client: Rect::new(0.0, 0.0, 1400.0, 800.0),
+    };
+    let snap = zephyra_uia::rules::build(&root, &win);
+
+    // 恒真防御：树造失败时快照会只有窗口根 —— 那下面每条断言都会「因为找不到
+    // 而跳过」，变成恒真绿。这条先把它钉死。
+    assert!(
+        snap.elements.len() > 5,
+        "无障碍树只有 {} 个元素 —— 模板根本没产出控件？",
+        snap.elements.len()
+    );
+
+    /// 分类词 → UIA 开关状态。
+    fn toggle_of(word: &str) -> ToggleState {
+        match word {
+            "" => ToggleState::Off,
+            "checked" => ToggleState::On,
+            "indeterminate" => ToggleState::Indeterminate,
+            other => panic!("未知的分类词 `{other}`"),
+        }
+    }
+
+    // 1) 组头：复选框角色 + 名字 + 聚合出来的状态。
+    let header = snap
+        .find_by_key(CHECK_GROUP_KEY)
+        .expect("组头必须在无障碍树上");
+    assert_eq!(header.role, Role::CheckBox, "组头是复选框");
+    assert_eq!(header.name, "Select all", "组头的可访问名");
+    assert_eq!(
+        header.toggle,
+        Some(toggle_of(g.check_group.header_state().class_word())),
+        "组头的开关状态必须与模型聚合出来的状态一致"
+    );
+
+    // 2) 子项：角色 + 名字 + 各自的状态。
+    for (i, key) in CHECKS.iter().enumerate() {
+        let el = snap
+            .find_by_key(key)
+            .unwrap_or_else(|| panic!("{key} 必须在无障碍树上"));
+        assert_eq!(el.role, Role::CheckBox, "{key} 是复选框");
+        assert_eq!(el.name, CHECK_LABELS[i], "{key} 的可访问名");
+        let model = g.check_group.item(key).expect("模型里也要有这个子项");
+        assert_eq!(
+            el.toggle,
+            Some(toggle_of(model.class_word())),
+            "{key} 的开关状态必须与模型一致"
+        );
+    }
+
+    // 3) 禁用项：必须报「不可用」，否则屏幕阅读器还会念它、还会让它可操作。
+    let locked = snap
+        .find_by_key("check:locked")
+        .expect("禁用项必须在无障碍树上");
+    assert!(!locked.enabled, "禁用项必须报 IsEnabled=false");
+    let alpha = snap
+        .find_by_key("check:alpha")
+        .expect("普通项必须在无障碍树上");
+    assert!(alpha.enabled, "普通项必须报 IsEnabled=true");
+
+    // 4) 分组容器：暴露成 Group 角色，挂着组头与子项。
+    let group = snap
+        .elements
+        .iter()
+        .find(|e| e.role == Role::Group)
+        .expect("复选框组必须暴露成分组");
+    assert!(
+        group.children.len() >= 2,
+        "分组下面至少要有组头与子项，实际 {} 个",
+        group.children.len()
+    );
 }

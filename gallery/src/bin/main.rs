@@ -174,6 +174,30 @@ fn run_window_path(want_light: bool) {
         };
         view.route = resolved;
     }
+    // `--family <n>`：窗口路的起始参考族（`reference` 页里切哪一族）。
+    //
+    // ⚠ 与 `--route` 同款理由：参数必须**两边都解析**。`--family` 原本只在
+    // [`dump_cpu`] 里被消费，窗口路读不到 —— 于是「`--route reference
+    // --family 1`」开窗口，看到的仍是第 0 族（basics）。
+    //
+    // 这一条对**无障碍**尤其要紧：复选框组在 `toggles` 族里，要验 UIA 的
+    // 树就必须能开到那一族。
+    if let Some(fam) = flag_value(&args, "--family") {
+        match fam.parse::<usize>() {
+            Ok(n) if n < REF_FAMILIES.len() => view.ref_family = n,
+            Ok(_n) => {
+                eprintln!(
+                    "[gallery] --family 要 0..{} 的整数；族名见 --list-families",
+                    REF_FAMILIES.len() - 1
+                );
+                std::process::exit(2);
+            }
+            Err(_) => {
+                eprintln!("[gallery] --family 要整数；族名见 --list-families");
+                std::process::exit(2);
+            }
+        }
+    }
     let mut app = Bootstrap {
         inner: None,
         view: Some(view),
@@ -840,6 +864,25 @@ impl winit::application::ApplicationHandler for Bootstrap {
             let inner = self.inner.as_mut().expect("刚放进去的宿主");
             if let Err(e) = inner.enable_live_resize() {
                 eprintln!("[gallery] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+            }
+        }
+
+        // 无障碍（Windows UI Automation）—— 让屏幕阅读器与自动化脚本**看得见**
+        // 这个界面。
+        //
+        // 应用这一侧**一行代码都不用改**：无障碍树是从画出来的那棵树派生的
+        // （`zephyra-uia` 的 `rules::build`），所以它不会与画面漂移。
+        //
+        // 装序：必须在 `enable_live_resize` **之后** —— 两者都是
+        // `SetWindowLongPtrW(GWLP_WNDPROC)`，消息链才是
+        // `UIA → live_resize → winit`。
+        //
+        // 失败不是致命错误：没有无障碍，界面照常用。
+        #[cfg(all(windows, feature = "d3d12"))]
+        {
+            let inner = self.inner.as_mut().expect("刚放进去的宿主");
+            if let Err(e) = inner.enable_uia() {
+                eprintln!("[gallery] 装不上无障碍（UIA），屏幕阅读器读不到这个界面: {e}");
             }
         }
     }

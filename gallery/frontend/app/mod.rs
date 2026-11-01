@@ -948,8 +948,34 @@ fn time_part(key: &str) -> &'static str {
     }
 }
 
-/// 演示开关的三个 id（Basic Input 页）。
-pub const CHECKS: [&str; 3] = ["check:alpha", "check:beta", "check:gamma"];
+/// 复选框组的四个子项 id（选择页）。
+///
+/// 第四项是**禁用**的 —— 它演示三件事：禁用态画成灰的、点它没反应、
+/// 「全选」不捎带改它（禁用项也不参与组头聚合，见
+/// `zephyra_ui::CheckboxGroup::header_state` 的文档）。
+pub const CHECKS: [&str; 4] = ["check:alpha", "check:beta", "check:gamma", "check:locked"];
+
+/// 复选框组四个子项的文案。
+///
+/// 与 [`CHECKS`] 一一对应 —— 模板不再逐个写死 `label`，改由宿主把
+/// `id / label / state / disabled` 打包成记录列表喂给 `CheckBoxGroup`。
+pub const CHECK_LABELS: [&str; 4] = [
+    "Enable feature",
+    "Send analytics",
+    "Beta channel",
+    "Locked option",
+];
+
+/// 复选框组的**组头** key —— 点它 = 全选 / 全部不选。
+///
+/// 它同时是组头那颗复选框在**树上的 key**（宿主按它把点击分派回来）。
+///
+/// ⚠ 模板里它走 `CheckBoxGroup` 的 `gkey` **实参**而不是 Use 的 `key`
+/// 属性 —— 否则 zypui 的「实例补丁」会把它打在组件体的第一个元素（外层
+/// 容器）上，于是容器与组头**同 key**：按 key 找节点是深度优先第一个命中，
+/// 焦点会写到容器上（焦点环画不到复选框），Space/Enter 也闩不住组头。
+/// 详见 `ZephyraUI/ui/controls.zypui` 里 `CheckBoxGroup` 的注释。
+pub const CHECK_GROUP_KEY: &str = "group:checks";
 
 /// ComboBox 演示选项（`'static`：控件签名收静态切片，与 demo 的常量同手法）。
 pub const COMBO_OPTIONS: &[&str] = &["Mica", "Acrylic", "Tabbed", "None"];
@@ -973,8 +999,17 @@ pub struct Gallery {
     pub theme_intent: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     /// Home 页分段选中项。
     pub seg: &'static str,
-    /// 选择页的三个复选框（各自独立开关）。
-    pub checked: [bool; 3],
+    /// 选择页的**复选框组**（组头全选 + 三个各自独立的子项）。
+    ///
+    /// # 为什么用控件层给的状态模型，而不是 `[bool; 3]`
+    ///
+    /// 组头的「勾 / 半 / 不勾」是**从子项聚合派生**的，不是另存一份。
+    /// 另存一份就会出现两份真相 —— 子项变了、组头忘了改，而那种不一致在
+    /// 画面上完全看不出来：头还是画成「全选」，实际却只选了两个。
+    ///
+    /// 流转规则（半选点一下 = 全选、全不选 = 未选中、全选 = 已选中）
+    /// 与聚合规则都住在 `zephyra_ui::checkbox` 里，本页只负责「点哪个 key」。
+    pub check_group: zephyra_ui::CheckboxGroup,
     /// 单选组的**选中下标**（落在 `RADIO_ITEMS` 里）。
     ///
     /// # 为什么单选还要单独一个字段，不能复用 `checked`
@@ -1051,8 +1086,11 @@ pub struct Gallery {
     pub pill_on: bool,
     /// basics 页 color_picker 选中色格下标。
     pub color_idx: usize,
-    /// state 章 checkbox（独立于 toggles 页的 `checked`：教学页要自证）。
-    pub demo_check: bool,
+    /// state 章 checkbox（独立于选择页的组：教学页要自证）。
+    ///
+    /// 用控件层给的 `Checkbox` 而不是裸 `bool`：这一章教的是「状态怎么存」，
+    /// 而「复选框的状态是个枚举、两态框只会用到其中两个值」正是要教的事。
+    pub demo_check: zephyra_ui::Checkbox,
     /// state 章 segmented 选中段（`stseg:a` / `stseg:b` / `stseg:c`）。
     pub demo_seg: &'static str,
     /// state 章 combo 循环下标。
@@ -1323,7 +1361,8 @@ impl Default for Gallery {
             last_action: "",
             pill_on: false,
             color_idx: 0,
-            demo_check: true,
+            demo_check: zephyra_ui::Checkbox::new("state-check", "Toggle me")
+                .with_state(zephyra_ui::CheckState::Checked),
             demo_seg: "stseg:b",
             demo_combo: 0,
             subsel: "subdemo:a",
@@ -1337,7 +1376,24 @@ impl Default for Gallery {
             infobar_open: true,
             ref_exp: false,
             adv_expanded: false,
-            checked: [true, false, false],
+            check_group: {
+                // 组头 + 四个子项。初始勾上第一个（对应老版本 `[true, false, false]`），
+                // 于是组头一开始就是「半选」—— 一进页面就看得见三态。
+                //
+                // 第四项是**禁用**的：它不参与组头聚合，也不被「全选」捎带改。
+                let mut g = zephyra_ui::CheckboxGroup::new(CHECK_GROUP_KEY, "Select all");
+                for (i, (key, label)) in CHECKS.iter().zip(CHECK_LABELS).enumerate() {
+                    g.push(key, label);
+                    let item = g.item_mut(key).expect("刚 push 进去的子项必然存在");
+                    if i == 0 {
+                        item.set_state(zephyra_ui::CheckState::Checked);
+                    }
+                    if *key == "check:locked" {
+                        item.set_disabled(true);
+                    }
+                }
+                g
+            },
             radio: 0,
             glass: crate::app::glass::Glass::default(),
             switch_on: true,
@@ -1472,10 +1528,15 @@ impl Gallery {
             "seg:grid" => self.seg = "seg:grid",
             "seg:list" => self.seg = "seg:list",
             "seg:card" => self.seg = "seg:card",
-            // 复选框。
-            "check:alpha" => self.checked[0] = !self.checked[0],
-            "check:beta" => self.checked[1] = !self.checked[1],
-            "check:gamma" => self.checked[2] = !self.checked[2],
+            // 复选框组：组头 = 全选 / 全部不选；子项 = 只改自己。
+            //
+            // ⚠ 子项走**前缀分支**：`toggle_item` 认 key，找不到就返回 false
+            // （不改任何状态）。漏接的症状是「点了没反应」，而门禁
+            // `every_interactive_key_is_wired_or_whitelisted` 正是要消灭它。
+            CHECK_GROUP_KEY => self.check_group.toggle_all(),
+            _ if key.starts_with("check:") => {
+                self.check_group.toggle_item(key);
+            }
             // 单选：点哪个就选哪个。
             //
             // ⚠️ 写成 `self.radio = if self.radio == i { usize::MAX } else { i }`
@@ -1558,7 +1619,7 @@ impl Gallery {
             //
             // 这一章的职责是教「哪些控件真的接了状态」。若「Wired to state」
             // 区里的控件自己点了没反应，这一页就在说谎——比别页的空壳更糟。
-            "state-check" => self.demo_check = !self.demo_check,
+            "state-check" => self.demo_check.toggle(),
             // state 章演示的是「switch 接了什么」：与 settings 页共用
             // `switch_on`（旧首页 `live-switch` 的先例）——共享本身是教学
             // 内容：「同一个状态可以驱动两处视图」。
@@ -1785,7 +1846,27 @@ impl zypui::Host for Gallery {
             }
             // ---- 指南层 ----
             "cnt_text" => S(count_text(g.guide_count)),
-            "demo_check" => B(g.demo_check),
+            "demo_check" => S(g.demo_check.class_word()),
+            // 复选框组：**两个**绑定撑起整组 —— 组头的聚合态 + 子项列表。
+            //
+            // ⚠ 状态以**分类词**（"" / "checked" / "indeterminate"）过界，
+            // 不是布尔：模板要区分三个态，而布尔装不下第三个。分类词由
+            // `zephyra_ui::CheckState::class_word()` 产出，与样式表的
+            // `.checked` / `.indeterminate` 同名 —— 两处同改。
+            "check_group_state" => S(g.check_group.header_state().class_word()),
+            "check_group_items" => L(g
+                .check_group
+                .items()
+                .iter()
+                .map(|i| {
+                    rec(vec![
+                        ("id", S(i.key())),
+                        ("label", S(i.label())),
+                        ("state", S(i.class_word())),
+                        ("disabled", B(i.is_disabled())),
+                    ])
+                })
+                .collect()),
             "demo_segs" => demo_segs(),
             "demo_seg" => S(g.demo_seg),
             "demo_combo_text" => S(demo_combo_text(g.demo_combo)),
@@ -1820,9 +1901,6 @@ impl zypui::Host for Gallery {
             "color_idx" => F(g.color_idx as f32),
             "area_lines" => area_lines(g),
             // ---- toggles ----
-            "check_a" => B(g.checked[0]),
-            "check_b" => B(g.checked[1]),
-            "check_c" => B(g.checked[2]),
             "radio" => F(g.radio as f32),
             "radio_items" => L(RADIO_ITEMS.iter().map(|(id, l)| item(id, l)).collect()),
             "toggles_segs" => L(SEGS.iter().map(|(id, l)| item(id, l)).collect()),

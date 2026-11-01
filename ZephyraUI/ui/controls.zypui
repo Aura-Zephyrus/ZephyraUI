@@ -97,14 +97,74 @@
   <text text="{text}" class="text-caption"/>
 </component>
 
-<!-- 选中族共用骨架：指示器 + 标记常驻（状态不增删节点）。 -->
-<component name="CheckBox" params="label checked">
-  <control interactive="true" class="check-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <container key="indicator" class="check-indicator {checked ? 'checked'}">
-      <container key="mark" class="check-mark {checked ? 'checked'}"/>
+<!-- 复选框：`state` 是**状态分类词**（"" / "checked" / "indeterminate"），
+     由宿主侧的 `zephyra_ui::CheckState::class_word()` 产出 —— 模板只是个
+     管道，不认识「三态」是什么，状态语义与流转规则全在 Rust 侧。
+
+     `tristate` 是**结构开关**（不是状态值）：三态框才带半选横杠那个节点。
+     它是每个实例**固定**的，所以不产生「状态增删节点」的抖动。
+
+     `disabled` 走 core 的 `props::DISABLED`：命中测试与键盘激活都认它。
+
+     键盘可达：focusable 进 Tab 序、activatable 让 Space/Enter 触发点击
+     （core 的 `ActivationState` 复用 pressed 通道，应用零改动）。 -->
+<component name="CheckBox" params="label state tristate disabled">
+  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="check-box {state} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+    <container key="indicator" class="check-indicator {state} {focused ? 'focused'}">
+      <container key="mark" icon="check" class="check-mark {state}">
+        <if cond="tristate">
+          <container key="dash" class="check-dash {state}"/>
+        </if>
+      </container>
     </container>
-    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
+    <text key="label" text="{label}" class="{state} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
   </control>
+</component>
+
+<!-- 复选框组：组头是三态的「全选 / 全部不选」，子项是两态的平铺一层。
+
+     组头的 `state` 由宿主侧从子项**聚合派生**（不是单独存的）—— 存了两份
+     真相就会出现「子项变了、组头忘了改」，而那种不一致在画面上看不出来。
+
+     组头的 key 就是组 key（点组头 = 全选/全不选）；子项各自用 `e.id`
+     作 key：点子项只改自己。
+
+     ⚠ 组 key 走**实参** `gkey`，不走 Use 的 `key` 属性 —— 原因见下。
+
+     # 为什么组 key 不能是 Use 的 key
+
+     zypui 的「实例补丁」（`RootPatch`，见 `zypui/src/instantiate.rs`）会把
+     Use 的 key 打在**组件体的第一个元素**上。若 `CheckBoxGroup` 的第一个
+     元素就是外层容器，它会拿走组 key —— 于是「容器」与「组头那颗复选框」
+     **同 key**。而按 key 找节点是**深度优先、第一个命中**（core 的
+     `FocusState::write_state` / `ActivationState` 都这么找）。
+
+     同 key 的后果不是「树上多了一个节点」，而是两个**功能**坏掉：
+
+     - `FOCUSED` 写到外层容器上 → 焦点环画不到复选框上；
+     - 容器没有 `ACTIVATABLE` → Space/Enter **闩不住** → 键盘切不动。
+
+     这类失效在画面上完全看不出来（控件照常显示、鼠标照常能点），只有
+     用键盘的时候才发现「这颗框按空格没反应」。
+
+     所以组 key 改由实参 `gkey` 进来：组头那颗复选框的 key 就是 `gkey`
+     （唯一、可聚焦、可激活），外层容器另用一个 `grp:` 前缀的装饰性 key。
+     这与 `PageRoot` / `Section` 用 `id` 实参承载 key 是同一手法。
+
+     ⚠ 本组件体内**不要用内置词 `key`**：Use 不带 key ⇒ 实例 key 不会推进，
+     `{key}` 拿到的是**调用方**的实例 key。用 `{gkey}`。 -->
+<component name="CheckBoxGroup" params="gkey label items state">
+  <container key="{'grp:' + gkey}" class="check-group">
+    <CheckBox key="{gkey}" label="{label}" state="{state}" tristate="{true}"/>
+    <container key="{'items:' + gkey}" class="check-group-items">
+      <for var="e" index="i" list="items">
+        <container key="{'grow:' + str(i)}" class="check-group-row">
+          <container key="indent" class="check-indent"/>
+          <CheckBox key="{e.id}" label="{e.label}" state="{e.state}" disabled="{e.disabled}"/>
+        </container>
+      </for>
+    </container>
+  </container>
 </component>
 
 <component name="RadioButton" params="label checked">

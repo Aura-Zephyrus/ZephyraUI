@@ -9,8 +9,8 @@
 
 | 部分 | 内容 | 谁在消费 |
 |---|---|---|
-| `ui/controls.zypui` | 53 个控件的**结构**（声明式组件模板） | 应用的 `build.rs` 直接读这份文件编译 |
-| `controls-*.zstyle` | 15 份控件样式表，`src/styles.rs` 用 `include_str!` 内嵌 | `STYLESHEETS` |
+| `ui/controls.zypui` | 54 个控件的**结构**（声明式组件模板） | 应用的 `build.rs` 直接读这份文件编译 |
+| `controls-*.zstyle` | 16 份控件样式表，`src/styles.rs` 用 `include_str!` 内嵌 | `STYLESHEETS` |
 | `src/tokens.rs` | `@令牌` 名单镜像（对 `Theme::role()` 逐个校验） | `tokens::ALL` |
 
 **没有 Rust 控件构造器。** 曾经有 59 个（`src/controls/*.rs`，1900 行），与
@@ -73,11 +73,11 @@ zypuic::compile(&[(controls_name, controls_src), (shell_name, shell_src)])
 
 ## 控件清单
 
-53 个组件，见 `ui/controls.zypui`（按族分段，每段有注释说明度量出处）：
+54 个组件，见 `ui/controls.zypui`（按族分段，每段有注释说明度量出处）：
 
 Button / ToolButton / PillButton / RoundButton / Hyperlink / InfoBadge / DotBadge /
 Card / SettingCard / ClipCard / Expander / TextLabel / Caption / CheckBox /
-RadioButton / ToggleSwitch / Slider / ProgressBar / Segmented / NavItem / Menu /
+CheckBoxGroup / RadioButton / ToggleSwitch / Slider / ProgressBar / Segmented / NavItem / Menu /
 MenuItem / MenuBar / NavSubItem / SelectorBar / ErrorPage / ProgressRing / InfoBar /
 Toast / ToolTip / BusyIndicator / PageIndicator / DropDownButton / ComboBox /
 SpinBox / ColorPicker / ListView / TableView / SwipeView / Avatar / SettingItem /
@@ -88,9 +88,23 @@ TextField / TextArea / ScrollableTextArea / AutoSuggestBox / TextInputMenu …
 动画行为。已盘点的能力缺口和后续重写候选见
 [控件能力缺口与重写清单](../docs/todo/control-capability-audit.md)。
 
+### 状态模型在 Rust 侧（`src/checkbox.rs`）
+
+复选框是第一个带**真三态**的控件族，于是它的状态模型也住在控件层：
+
+| 类型 | 职责 |
+|---|---|
+| `CheckState` | 三态枚举（`Unchecked` / `Checked` / `Indeterminate`）+ 分类词 + 流转规则 |
+| `Checkbox` | 单个复选框（key / label / 状态 / 禁用） |
+| `CheckboxGroup` | 一个三态组头 + 一层两态子项；组头状态**由子项聚合派生** |
+
+理由写在 `src/checkbox.rs` 的模块文档里，一句话版本：**状态值与流转规则是
+规则，不是数据** —— 规则必须有一份权威实现，否则每个 app 各写一遍、各错一遍；
+而状态**存在哪**（跨帧留存）永远是宿主的事。
+
 ## 样式表
 
-15 份 `controls-*.zstyle`，由 `src/styles.rs` 用 `include_str!` 内嵌。
+16 份 `controls-*.zstyle`，由 `src/styles.rs` 用 `include_str!` 内嵌。
 
 **内嵌而不是运行时读磁盘**：让「改了表忘了重编」变成**编译错误**而不是运行时的
 静默失效。门禁吃的是**同一份** `STYLESHEETS`，所以不存在「图对、门禁绿」。

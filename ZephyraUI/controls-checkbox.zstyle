@@ -1,0 +1,135 @@
+/* CheckBox、CheckBoxGroup —— Apple HIG 度量。
+ *
+ * 指示器 22×22，勾号 12×12，半选横杠 12×2。
+ *
+ * 三态的画法：指示器是 22×22 的圆角方框，选中/半选时整块填成强调色；
+ * 里面的**标记**分两种 —— 选中是勾号图标（`check.svg`），半选是一条
+ * 12×2 的横杠（自绘的 Container，不用图标表里的资源）。
+ *
+ * ⚠ 勾号与横杠是**同一个节点的两个形状**，不是两个节点：
+ * `check-mark` 带着勾号图标，`check-dash` 是它的子节点。两者都**居中**，
+ * 所以半选时勾号被 `icon-color: transparent` 隐掉、横杠浮上来；
+ * 选中时反过来。少一个节点就少一处「状态增删节点」的抖动。
+ */
+
+Control.check-box {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 10px;
+    height: 22px;
+}
+
+Container.check-indicator {
+    width: 22px;
+    height: 22px;
+    corner-radius: 6px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border_strong;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.check-indicator.hovered {
+    background: @control_secondary;
+}
+
+Container.check-indicator.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.check-indicator.indeterminate {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+/* 已选中的指示器悬停时**不变色** —— 与 `check-indicator.hovered` 同特异性，
+   靠「后写的赢」压住它（`controls-checkbox.zstyle` 内按书写次序即优先级）。 */
+Container.check-indicator.checked.hovered {
+    background: @accent_fill;
+}
+
+Container.check-indicator.indeterminate.hovered {
+    background: @accent_fill;
+}
+
+/* 焦点环画在**指示器**上，而不是整颗控件上。
+ *
+ * 画在控件上会把 22px 高的标签行也描一圈（而且 `Control.check-box` 本身
+ * 没有边框，要描就得给它加一条），视觉上比 WinUI 的「框住方块」重得多。
+ *
+ * ⚠ 边框宽度从 1px 变 2px **不会**改布局：布局趟不看边框，边框画在节点
+ * 自己的矩形之内（见 `zephyra-core` 的 layout 无 border 处理）。 */
+Container.check-indicator.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
+/* 勾号：图标本身。未选中时整块透明（`icon-color` 走的是颜色通道，
+ * `transparent` 是合法的颜色值）。 */
+Container.check-mark {
+    width: 12px;
+    height: 12px;
+    icon-color: transparent;
+    direction: vertical;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.check-mark.checked {
+    icon-color: @on_accent_fill;
+}
+
+/* 半选横杠：自绘的 12×2 小条。
+ *
+ * 它是 `check-mark` 的**子节点** —— 两者都居中于 12×12 的标记框里，
+ * 于是横杠正好压在勾号的中段。半选时勾号被隐掉，只剩横杠。 */
+Container.check-dash {
+    width: 12px;
+    height: 2px;
+    corner-radius: 1px;
+    background: transparent;
+}
+
+Container.check-dash.indeterminate {
+    background: @on_accent_fill;
+}
+
+/* ⚠ 标签的规则**不在本文件**：`Text.check-label` 是复选框与单选框共用的
+ * （`RadioButton` 的标签也用它），所以它留在 `controls-toggle.zstyle`。
+ * 复制一份到这儿会变成两条同特异性规则 —— 后写的赢，而两份一旦漂移，
+ * 画面上就是「单选框的标签和复选框的不一样」这种查不出来的怪事。 */
+
+/* 禁用态：整颗控件（含标签）一起压暗。
+ *
+ * 禁用是**行为**上的（core 的命中测试与 `ActivationState` 都认
+ * `props::DISABLED`），这里是它的视觉对应物。 */
+Control.check-box.disabled {
+    opacity: 0.45;
+}
+
+/* ---- CheckBoxGroup ----
+ *
+ * 组 = 一个三态的组头（就是「全选 / 全部不选」那颗）+ 一层平铺的两态子项。
+ * 子项**缩进**在组头标签的起线上（32px = 指示器 22 + 间距 10）。 */
+
+Container.check-group {
+    direction: vertical;
+    spacing: 6px;
+}
+
+Container.check-group-items {
+    direction: vertical;
+    spacing: 6px;
+}
+
+Container.check-group-row {
+    direction: horizontal;
+    cross-align: center;
+}
+
+Container.check-indent {
+    width: 32px;
+    height: 22px;
+}

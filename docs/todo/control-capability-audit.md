@@ -51,17 +51,31 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 以下组件也不会自行切换业务状态，但这是控件层的声明式边界，不应单独据此判为无效：
 
 - `ToolButton`、`PillButton`、`RoundButton`、`Hyperlink`
-- `CheckBox`、`RadioButton`、`ToggleSwitch`、`Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
+- `RadioButton`、`ToggleSwitch`、`Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
+- `CheckBox` / `CheckBoxGroup`（2026-11-01 已补齐三态与键盘，见下）
 - `Slider`、`Expander`、`SettingExpander`、`InfoBar` 的关闭项
 - `MenuItem`、`MenuBarItem`、`ListView` 行、`SwipeView` 页点、`DatePicker` 日期格
 
 这些组件提供 `key` / `INTERACTIVE` / 状态样式所需的结构；点击、拖动、键盘或关闭后要做什么，以及新状态何时回到 `view()`，属于使用它们的应用。**但 `Slider` 目前只有传值与绘制 fill 的结构，不会把拖动位置反算成值**，因此与普通受控按钮不同，仍在上方列为需要补足的交互能力。
 
+**`CheckBox` / `CheckBoxGroup` 已补齐三态、禁用与键盘**（2026-11-01）：
+`CheckBox` 从「只画一个勾」升级为真三态控件（`Unchecked` / `Checked` /
+`Indeterminate`），`tristate` 是 `.zypui` 里的**结构开关**（三态框才带半选横杠
+那个节点），状态**值**与流转**规则**住在控件层 `ZephyraUI/src/checkbox.rs`
+（`CheckState` / `Checkbox` / `CheckboxGroup`），状态**存在哪**仍是宿主的事。
+新增 `CheckBoxGroup`：一个三态组头（= 全选 / 全部不选）+ 一层两态子项，
+组头状态**由子项聚合派生**（不另存一份真相），禁用子项既不被「全选」捎带改、
+也不参与聚合（否则组头会卡在半选、点了永远没反应）。
+键盘：Space 与 Enter 都切换，复用 core 的 `ActivationState`（应用零改动）；
+焦点环画在**指示器**上而不是整颗控件。UIA 侧给出 `IToggleProvider` 图案，
+On / Off / Indeterminate 跨进程可读（见
+[2026-11-01-checkbox-tristate](../dev-log/2026-11-01-checkbox-tristate.md)）。
+
 **`Button` 已从「纯受控声明」升级为有原生交互行为的控件**（2026-10-30）：
 声明 `focusable` / `activatable` 进 Tab 序，焦点环走 `focused` 类；Space / Enter 经
 core `ActivationState` 复用 pressed 通道触发点击，应用零改动。它是第一个消费
 「键盘/IME 契约 + 焦点状态机」地基的控件，也是后续重写（TextField 编辑态、
-CheckBox/Segmented 键盘激活等）的打样。`ToolButton` / `PillButton` 等其余按钮族
+Segmented 键盘激活等）的打样（`CheckBox` 已于 2026-11-01 照同一模式补齐）。`ToolButton` / `PillButton` 等其余按钮族
 尚未接入，下一步可照同一模式补。
 
 **`Button` 支持可插拔材质**（2026-10-30）：`.zstyle` 用 `material:` 声明纯色 /
