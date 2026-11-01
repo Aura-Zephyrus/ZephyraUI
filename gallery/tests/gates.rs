@@ -1126,19 +1126,19 @@ fn compare_trees(warm: &Node, cold: &Node, path: &mut String) -> Vec<String> {
     out
 }
 
-// -------------------------------------------------- 门禁 13：Mica 相关的边界
+// -------------------------------------------------- 门禁 13：半透明令牌的边界
 
-/// 半透明标题栏令牌必须真的半透明 —— 否则 `backdrop=true` 也不会有可见效果。
+/// 半透明令牌必须真的半透明——否则所有用它的表面全都失去层次。
 ///
 /// # 为什么这条重要
 ///
-/// Mica 材质画在窗口**背后**，只有在"应用没把那块涂满不透明色"时才透得出。
-/// 所以「材质是否可见」不取决于平台层，而取决于这个令牌的 alpha。
-/// 若它被改成不透明，`ApplyOutcome.backdrop == true` 照样成立，而画面上
-/// **完全看不出差别** —— 那种缺陷没有任何测试能自动发现（`--dump-cpu` 也没有
-/// 背后材质），只能靠这条门禁。
+/// `@surface_alt_translucent` 目前由控件层的按钮（hover 面）使用。它曾经服务
+/// gallery 标题栏的 Mica 外观，DWM backdrop 移除后（2026-11，见
+/// `docs/dev-log/2026-11-01-window-transparent.md`）控件侧用途仍在，令牌的
+/// 「半透明」语义不能被顺手改成实色 —— 那会把按下/悬停的层次结构悄悄抹平，
+/// 而这类缺陷没有像素层门禁是看不见的。
 #[test]
-fn the_mica_titlebar_token_is_actually_translucent() {
+fn the_translucent_surface_token_is_actually_translucent() {
     let dark = Theme::builtin(ThemeVariant::Dark);
     let light = Theme::builtin(ThemeVariant::Light);
 
@@ -1153,7 +1153,7 @@ fn the_mica_titlebar_token_is_actually_translucent() {
         assert!(
             translucent.a < 1.0,
             "{name}: 半透明令牌的 alpha 应当 < 1.0，实际 {} —— \
-             等于不透明的话 Mica 永远透不出来",
+             等于不透明的话悬停/按下的层次永远透不出来",
             translucent.a
         );
         assert!(
@@ -1172,38 +1172,6 @@ fn the_mica_titlebar_token_is_actually_translucent() {
             solid
         );
     }
-}
-
-/// 应用必须**无条件**发 `.mica` 分类名 —— 平台能不能开是平台层的事。
-///
-/// # 判据为什么这样定
-///
-/// 若让应用先问「平台支持吗」再决定发不发分类名，那么「不支持」这条分支
-/// 在 Windows 上永远走不到（测试环境就是 Win11），于是它**恒不被执行**。
-/// 而一旦将来真有不支持的平台，忘记加 `cfg` 就会编译失败或行为分叉。
-///
-/// 现在的形态是「无条件表达意图 + 平台层回答能力 + 样式表保证降级可读」，
-/// 三个环节都可在各自平台上测试。
-#[test]
-fn the_app_always_asks_for_the_mica_look() {
-    let theme = Theme::builtin(ThemeVariant::Dark);
-    let ctx = Context::new(&theme);
-    let sheet = merged_sheet();
-    let mut g = Gallery::default();
-    assert!(g.mica, "默认就应当请求 Mica 外观");
-
-    let mut root = laid_out("guide");
-    sheet.apply_all(&mut root);
-
-    // 找标题栏节点：它的样式分类名里应当有 `mica`。
-    let mut found = false;
-    walk(&root, &mut |n: &Node| {
-        if n.key().map(|k| k.to_string()).as_deref() == Some("titlebar") {
-            found = n.style_names().contains(&"mica");
-        }
-    });
-    assert!(found, "标题栏必须带 `mica` 分类名（Mica 是默认请求）");
-    let _ = (&mut g, ctx);
 }
 // ---------------------------------- 门禁 12（重写后）：路由表与页面表必须一致
 
@@ -3269,7 +3237,6 @@ fn perturb(g: &mut Gallery, phase: usize, perturb_family: bool) {
         zephyra_ui::CheckState::Unchecked
     });
     g.pill_on = p == 1;
-    g.mica = p == 1;
     g.wants_dark = p == 1;
     if perturb_family {
         // 族切换器（`ref:*`）常驻 reference 页，所以扰动族不会让它的 key

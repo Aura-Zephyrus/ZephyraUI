@@ -23,7 +23,7 @@
 |---|---|
 | [api/props.md](api/props.md) | 全部受支持的样式属性 |
 | [zypui-style.md](zypui-style.md) | `.zypui` 排版规范（属性顺序 / 一元素一行 / 缩进），由 `zypuic` 测试钉住 |
-| [win/](win/) | Windows 平台概念（DWM / Mica / flip model …） |
+| [win/](win/) | Windows 平台概念（DWM / 透明窗口 / flip model …） |
 
 ## 设计约束
 

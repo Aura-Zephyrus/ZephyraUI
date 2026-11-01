@@ -251,6 +251,7 @@ fn scaffolded_stylesheet_passes_its_own_check() {
     let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap())
         .expect("generated ZephyraUI.json must be valid JSON");
     assert_eq!(config["window"]["frameless"], false);
+    assert_eq!(config["window"]["transparent"], false);
 
     let reports = zstylec::check(&[sheet]).expect("generated stylesheet must be readable");
     assert!(

@@ -7,8 +7,7 @@
 //! 能力位符合文档 —— 否则一个 Linux 桌面上跑起来就炸，而症状是首帧没有画面。
 
 use zephyra_platform::{
-    ApplyOutcome, BackdropKind, CornerPreference, Platform, ThemePreference, WindowChrome,
-    WindowHandle,
+    ApplyOutcome, CornerPreference, Platform, ThemePreference, WindowChrome, WindowHandle,
 };
 
 use super::linux::{
@@ -145,7 +144,7 @@ fn the_live_probe_never_panics_and_answers_honestly() {
         "Linux 上「查询」两类事实是支持的"
     );
     assert!(
-        !caps.backdrop && !caps.dark_mode,
+        !caps.dark_mode,
         "「按请求设置」在 Linux 上没有可移植实现 —— 报 true 等于骗上层"
     );
 }
@@ -160,23 +159,8 @@ fn apply_window_chrome_reports_every_item_as_not_applied() {
     assert!(!out.all_applied());
     assert_eq!(
         out.to_string(),
-        "dark=false corner=false caption=false border=false backdrop=false"
+        "dark=false corner=false caption=false border=false"
     );
-}
-
-/// 上层传 Mica 时也必须如实报 false —— 「没生效」与「请求了 None」是两件事，
-/// 宿主靠这个决定 clear 用不用透明色。
-#[test]
-fn a_backdrop_request_is_still_reported_as_not_applied() {
-    let linux = Linux::with_facts(None, Vec::new(), None);
-    let out = linux.apply_window_chrome(
-        WindowHandle::from_raw(0x1234),
-        WindowChrome {
-            backdrop: BackdropKind::Mica,
-            ..WindowChrome::default()
-        },
-    );
-    assert!(!out.backdrop);
 }
 
 #[test]

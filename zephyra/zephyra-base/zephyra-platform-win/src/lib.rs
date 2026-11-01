@@ -32,7 +32,7 @@
 // Linux 上对应的实现是 `zephyra-platform-linux`，两者互不认识。
 
 use zephyra_platform::{
-    ApplyOutcome, BackdropKind, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,
+    ApplyOutcome, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,
 };
 
 mod live_resize;
@@ -65,23 +65,18 @@ impl Platform for Windows {
     fn capabilities(&self) -> Capabilities {
         let build = build_number();
         // 门槛全部来自文档（docs/developer/win/01）：
-        //   dark mode  / corner  → Windows 11 Build 22000
-        //   backdrop（ Mica/Acrylic）→ Windows 11 Build 22621
-        //   caption/border color   → 文档未在本页标版本，按 22000 保守处理
+        //   dark mode  / corner              → Windows 11 Build 22000
+        //   caption/border color             → 文档未在本页标版本，按 22000 保守处理
         //
-        // ⚠️ 本仓**不实现 backdrop**：官方路线要求 Windows App SDK，本仓不引入。
-        //    所以 `backdrop: false` 是**当前事实**，不是"还没查"。
+        // 系统背景材质（Mica 一类）的位已随 DWM backdrop 一并移除：
+        // 逐像素 alpha 的「透出背后」走窗口透明模式，不走材质，见
+        // docs/developer/win/07-window-transparent.md。
         let w11 = build >= 22_000;
-        // 材质门槛比其它属性高一档：`DWMWA_SYSTEMBACKDROP_TYPE` 文档写明
-        // "supported starting with Windows 11 Build 22621"（22H2），
-        // 而 dark mode / corner 是 22000。差一个 build，所以分开判。
-        let mica = build >= 22_621;
         Capabilities {
             dark_mode: w11,
             corner_preference: w11,
             caption_color: w11,
             border_color: w11,
-            backdrop: mica,
             system_theme_query: true,
             // `GetUserPreferredUILanguages` 自 Windows 2000 起可用，
             // 与 build 无关 —— 所以这里恒 true，不跟着 `w11` 走。
@@ -111,7 +106,6 @@ impl Platform for Windows {
                 corner: false,
                 caption_color: false,
                 border_color: false,
-                backdrop: false,
             }
         }
     }
@@ -156,7 +150,6 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
             corner: false,
             caption_color: false,
             border_color: false,
-            backdrop: false,
         };
     }
 
@@ -195,30 +188,11 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
         _ => false,
     };
 
-    // 背景材质：`DWMWA_SYSTEMBACKDROP_TYPE = 38`（Build 22621+）。
-    //
-    // 能力位保护：低于 22621 时 DWM 不认这个属性，调用会返回 `E_INVALIDARG`。
-    // 我们不靠报错来判断（那会把"版本不够"和"真失败"混在一起），
-    // 而是**先问能力位**。
-    //
-    // `BackdropKind::None` **也要写**（`DWMSBT_NONE`）：不写的话属性停留在
-    // 默认 `DWMSBT_AUTO`，而文档说 AUTO 由 DWM 决定、**可能仍然画**材质 ——
-    // 于是"关掉 Mica"关不掉。
-    let backdrop = if caps.backdrop {
-        match dwm_backdrop(chrome.backdrop) {
-            Some(kind) => set_dwm(hwnd, DwmAttr::SystemBackdropType, &kind),
-            None => false,
-        }
-    } else {
-        false
-    };
-
     ApplyOutcome {
         dark,
         corner,
         caption_color,
         border_color,
-        backdrop,
     }
 }
 
@@ -244,35 +218,6 @@ enum DwmAttr {
     CaptionColor,
     /// `DWMWA_WINDOW_CORNER_PREFERENCE` = 33，`DWM_WINDOW_CORNER_PREFERENCE`。
     WindowCornerPreference,
-    /// `DWMWA_SYSTEMBACKDROP_TYPE` = 38，`DWM_SYSTEMBACKDROP_TYPE`。
-    ///
-    /// 门槛比上面几个高一档：Build 22621（22H2）。见 [`Platform::capabilities`]。
-    SystemBackdropType,
-}
-
-/// [`BackdropKind`] → DWM 材质枚举。
-///
-/// 取值来自 `DWM_SYSTEMBACKDROP_TYPE`（`docs/developer/win/02-mica.md` §1），用
-/// `windows` crate 的**强类型常量**，不写裸数字。
-#[cfg(windows)]
-fn dwm_backdrop(
-    kind: BackdropKind,
-) -> Option<windows::Win32::Graphics::Dwm::DWM_SYSTEMBACKDROP_TYPE> {
-    use windows::Win32::Graphics::Dwm::{
-        DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TABBEDWINDOW, DWMSBT_TRANSIENTWINDOW,
-    };
-    Some(match kind {
-        // `BackdropKind::None` 的语义是"**不**画材质" ⇒ `DWMSBT_NONE`，
-        // 不能用 `DWMSBT_AUTO`：文档说 AUTO 会"由 DWM 决定"，可能仍然画。
-        // 显式 NONE 才是"确定不画"。
-        BackdropKind::None => DWMSBT_NONE,
-        // DWMSBT_MAINWINDOW：长生命周期窗口 = Mica（默认变体）。
-        BackdropKind::Mica => DWMSBT_MAINWINDOW,
-        // DWMSBT_TABBEDWINDOW：Mica Alt（备用变体）。
-        BackdropKind::MicaAlt => DWMSBT_TABBEDWINDOW,
-        // DWMSBT_TRANSIENTWINDOW：Acrylic。
-        BackdropKind::Acrylic => DWMSBT_TRANSIENTWINDOW,
-    })
 }
 
 #[cfg(windows)]
@@ -280,15 +225,14 @@ impl DwmAttr {
     /// 转为 `windows` crate 的枚举 newtype。
     fn raw(self) -> windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE {
         use windows::Win32::Graphics::Dwm::{
-            DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
-            DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
+            DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
         };
         match self {
             Self::UseImmersiveDarkMode => DWMWA_USE_IMMERSIVE_DARK_MODE,
             Self::BorderColor => DWMWA_BORDER_COLOR,
             Self::CaptionColor => DWMWA_CAPTION_COLOR,
             Self::WindowCornerPreference => DWMWA_WINDOW_CORNER_PREFERENCE,
-            Self::SystemBackdropType => DWMWA_SYSTEMBACKDROP_TYPE,
         }
     }
 }
@@ -334,14 +278,6 @@ impl AsDwmValue for I32 {
 
 #[cfg(windows)]
 impl AsDwmValue for ColorRef {
-    fn as_bytes(&self) -> [u8; 4] {
-        self.0.to_le_bytes()
-    }
-}
-
-/// `DWM_SYSTEMBACKDROP_TYPE` 是 newtype 包 `i32`，按 4 字节传。
-#[cfg(windows)]
-impl AsDwmValue for windows::Win32::Graphics::Dwm::DWM_SYSTEMBACKDROP_TYPE {
     fn as_bytes(&self) -> [u8; 4] {
         self.0.to_le_bytes()
     }

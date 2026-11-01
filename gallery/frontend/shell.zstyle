@@ -27,10 +27,6 @@ Container.titlebar {
     background: @surface_alt;
 }
 
-Container.titlebar.mica {
-    background: @surface_alt_translucent;
-}
-
 /* ⚠ 这里**没有** `Text.app-title` / `Text.page-title` 两条规则。
  *
  * 源码发的是 `text_label("app-title", ..., "text-body-strong")` —— 「分类名」是

@@ -185,6 +185,12 @@ pub struct HostWindow<V: View> {
     /// 存的是 `isize` 而不是 `windows::…::HWND`：`HWND` 是 `Send`/`Sync` 的
     /// 门槛更高（它带裸指针），而本结构体要在 `Arc` 里被别的线程碰到。
     hwnd: Option<isize>,
+    /// 本窗口是否透明（逐像素 alpha 进合成器）。
+    ///
+    /// 它决定**清屏色**：透明窗口清成 alpha=0（premultiplied 语义下 RGB 随
+    /// alpha 归零），不透明窗口清成主题底色。创建时确定，运行期不变 ——
+    /// 与「资源拓扑创建时定」同一取舍。
+    transparent: bool,
 }
 
 impl<V: View> HostWindow<V> {
@@ -197,10 +203,32 @@ impl<V: View> HostWindow<V> {
     /// 都是同步 API，不像 wgpu 的设备请求那样需要 `block_on` 两个 future
     /// —— 所以本 crate **不再依赖 pollster**。
     pub fn new_lenient(event_loop: &ActiveEventLoop, view: V) -> Self {
-        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
+        Self::new_lenient_opts(event_loop, view, zephyra_app_config::WindowOpts::default())
+    }
+
+    /// [`Self::new_lenient`] + **按窗口的创建时选项**。
+    ///
+    /// # 为什么透明是 per-window 参数而不是进程级开关
+    ///
+    /// 「不同窗口可以有不同定义」是本次的硬要求（`window.transparent` 只是
+    /// 主窗口默认值）。透明目前只能由**创建时**决定 —— 窗口的 alpha 语义一旦
+    /// 交给 DWM/合成器就固定了，事后翻转意味着资源拓扑重建，那是 resize 都
+    /// 不用的重量级操作。
+    ///
+    /// 隐含规则：**transparent ⇒ frameless**。系统标题栏是实色矩形，叠在
+    /// alpha 窗口上语义不成立；配置里两个都写时透明优先于「带装饰」。
+    pub fn new_lenient_opts(
+        event_loop: &ActiveEventLoop,
+        view: V,
+        opts: zephyra_app_config::WindowOpts,
+    ) -> Self {
+        let config = zephyra_app_config::load_from_current_dir();
+        let transparent = opts.transparent.unwrap_or(config.window.transparent);
+        let frameless = config.window.frameless || transparent;
         let attrs = Window::default_attributes()
             .with_title("ZephyraUI")
-            .with_decorations(!frameless);
+            .with_decorations(!frameless)
+            .with_transparent(transparent);
         let window = std::sync::Arc::new(event_loop.create_window(attrs).expect("create_window"));
         // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
         // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
@@ -226,7 +254,12 @@ impl<V: View> HostWindow<V> {
         // 两条路的调用方式完全一致（见 `surface` 模块文档），所以这里没有回退分支：
         // 启用后 DComp 建树失败就是失败，不静默退回 —— 那会让"我开了 DComp 却没生效"
         // 无从排查。
-        let use_dcomp = dcomp_enabled();
+        //
+        // 透明是另一条强制启用 DComp 的理由：普通 HWND 交换链实测拒收
+        // `PREMULTIPLIED`（`surface.rs` 建 HWND 交换链处的注释），只有 composition
+        // 交换链能把 alpha 交给合成器。所以 transparent=true 时无视
+        // `ZEPHYRA_DCOMP=0` 直接走 DComp —— 那不是配置覆盖，是「透明只能走这条路」。
+        let use_dcomp = dcomp_enabled() || transparent;
         let hwnd = surface::hwnd_of(window.as_ref())
             .map(|h| windows::Win32::Foundation::HWND(h as *mut _))
             .ok_or_else(|| panic!("DComp 需要 Win32 HWND；非 Windows 后端尚未实现渲染器"))
@@ -238,6 +271,12 @@ impl<V: View> HostWindow<V> {
             Ok(s) => s,
             Err(e) => {
                 if use_dcomp {
+                    if transparent {
+                        // 透明窗口没有「退回普通 DXGI」这个选项：普通交换链拒收
+                        // premultiplied（见上面 dcomp_enabled 处的注释），退过去
+                        // 不是降级，是把窗口**悄悄**变回不透明 —— 那是改定义。
+                        panic!("透明窗口必须走 DComp，而 DComp 建链失败: {e}");
+                    }
                     // 建树失败不能静默：少了 DComp 特性窗口依然完全可用，为此启动失败
                     // 是本末倒置；但**必须让用户看得见**，否则无从排查。
                     eprintln!("[zephyra] DComp 不可用（{e}），退回普通 DXGI 交换链");
@@ -248,11 +287,16 @@ impl<V: View> HostWindow<V> {
             }
         };
         eprintln!(
-            "[zephyra] 呈现路径: {}",
+            "[zephyra] 呈现路径: {}{}",
             if use_dcomp {
                 "DirectComposition"
             } else {
                 "DXGI swapchain"
+            },
+            if transparent {
+                "（透明窗口）"
+            } else {
+                ""
             }
         );
         let renderer = Renderer::new(&gpu.device).expect("编译着色器 / 建管线");
@@ -290,6 +334,7 @@ impl<V: View> HostWindow<V> {
             profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
             uia: None,
             hwnd: Some(raw_hwnd),
+            transparent,
         }
     }
 
@@ -643,7 +688,7 @@ impl<V: View> HostWindow<V> {
                 return RenderReport::default();
             }
         };
-        let clear = self.theme.surface;
+        let clear = clear_color(self.transparent, self.theme.surface);
         let report = self.renderer.render(RenderCtx {
             context: &self.gpu.context,
             device: &self.gpu.device,
@@ -1261,5 +1306,28 @@ pub fn panel(key: &'static str, bg: Color, radius: f32) -> Element {
         .with(&props::CORNER_RADIUS, PropertyValue::float(radius))
 }
 
+/// 本帧的清屏色。**纯函数**：透明窗口清成 alpha=0，否则用主题底色。
+///
+/// # 为什么是纯函数
+///
+/// 「透明 ⇒ alpha=0」是本轮唯一一条 `--dump-cpu` 看不见的判据（CPU 路不呈现
+/// 窗口），而它在 D3D11 / D3D12 两个后端各有一份。抽出来就能在没有 GPU 的机器
+/// 上断言，免得它被顺手改回不透明 —— 那种退化的症状只是「窗口看着是实色」，
+/// 像极了「应用根背景写死了」，隔一层排查成本。
+///
+/// premultiplied 的换算（RGB × alpha）在渲染器里做，这里只表达语义，
+/// 见 `tests/d3d11_draw.rs::clear_color_is_premultiplied`。
+pub fn clear_color(transparent: bool, surface: Color) -> Color {
+    if transparent {
+        surface.with_alpha(0.0)
+    } else {
+        surface
+    }
+}
+
 // `srgb_bytes` 已搬到 `zephyra_fx::pixels`（它与后端无关）。上面的
 // `pub use zephyra_fx::srgb_bytes` 让调用点不用改。
+
+#[cfg(test)]
+#[path = "tests/lib_tests.rs"]
+mod tests;

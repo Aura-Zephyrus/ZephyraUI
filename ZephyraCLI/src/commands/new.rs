@@ -179,7 +179,8 @@ files = ["frontend/app.zstyle"]
 fn app_config_json() -> String {
     r#"{
   "window": {
-    "frameless": false
+    "frameless": false,
+    "transparent": false
   }
 }
 "#
@@ -211,7 +212,9 @@ cargo run --no-default-features --features d3d11
 - `frontend/app.zstyle`：外观和布局样式；源码描述元素与状态，不硬编码颜色或字号。
 - `zephyra.toml`：应用名、初始物理像素尺寸和样式表入口。
 - `ZephyraUI.json`：窗口选项。通过 `zephyra run`、`dev`、`build` 生成的程序会嵌入它；
-  `window.frameless: true` 会移除系统标题栏，自绘标题栏和拖动行为由应用实现。
+  `window.frameless: true` 会移除系统标题栏，自绘标题栏和拖动行为由应用实现；
+  `window.transparent: true` 开启窗口透明模式（逐像素 alpha，含 frameless；
+  见 docs/developer/win/07-window-transparent.md）。
 - `Cargo.toml`：后端 feature 与本机 ZephyraUI 源码依赖路径；迁移到其他机器时应调整路径。
 
 ## 常用开发命令

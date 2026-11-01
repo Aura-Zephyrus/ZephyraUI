@@ -333,14 +333,14 @@ impl Theme {
         Some(match name {
             "surface" => self.surface,
             "surface_alt" => self.surface_alt,
-            // 半透明变体：让系统背景材质（Mica/Acrylic）从底下透出来。
+            // 半透明变体：让窗口**背后**的东西（桌面；透明窗口模式，见
+            // docs/developer/win/07-window-transparent.md）从底下透出来。
             //
-            // 材质画在窗口**背后**（`DWMWA_SYSTEMBACKDROP_TYPE`），所以它只在
-            // "应用没把那块涂满不透明色"时可见。这个令牌就是那个"没涂满"的口子。
+            // 它只在"应用没把那块涂满不透明色"时可见，所以这个令牌就是那个
+            // "没涂满"的口子；控件层的按钮 hover 面也用它（层次而非材质）。
             //
-            // alpha 取 0.85 而不是更低：Mica 本身已带一层 tint，再压太狠会让
-            // 标题栏文字失去对比。0.85 下深色主题标题栏仍清晰，浅色主题也不会
-            // 泛白到看不清。
+            // alpha 取 0.85 而不是更低：再压太狠会让压在上面的文字失去对比。
+            // 0.85 下深色主题标题栏仍清晰，浅色主题也不会泛白到看不清。
             "surface_alt_translucent" => self.surface_alt.with_alpha(0.85),
             "content" => self.content,
             "content_secondary" => self.content_secondary,

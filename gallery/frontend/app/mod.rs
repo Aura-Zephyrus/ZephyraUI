@@ -711,7 +711,10 @@ pub const CHECK_LABEL_KEYS: [&str; 4] = [
 pub const CHECK_GROUP_KEY: &str = "group:checks";
 
 /// ComboBox 演示选项（`'static`：控件签名收静态切片，与 demo 的常量同手法）。
-pub const COMBO_OPTIONS: &[&str] = &["Mica", "Acrylic", "Tabbed", "None"];
+///
+/// 取的是本仓**应用内**已有的材质名（纯色 / 磨砂 / 液态玻璃）：DWM 系统材质
+/// （Mica/Acrylic）已于 2026-11 移除，演示数据不该再引用一个不存在的功能。
+pub const COMBO_OPTIONS: &[&str] = &["Solid", "Frosted", "Glass", "None"];
 
 /// Gallery 应用状态。
 #[derive(Debug, Clone)]
@@ -750,9 +753,6 @@ pub struct Gallery {
     /// 列表里是**有意的**：它的四个参数是物理量（厚度 / 折射率 / 色散 / 倒角
     /// 宽度），既没有 `@令牌` 对应物，也不随主题变化。
     pub glass: crate::app::glass::Glass,
-    /// 是否请求 Mica 材质外观（标题栏半透明）。true = 应用想要；false = 实色。
-    /// 平台能不能真的开由 zephyra-platform-win 回答，不影响这里。
-    pub mica: bool,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1080,7 +1080,6 @@ impl Default for Gallery {
                 g
             },
             glass: crate::app::glass::Glass::default(),
-            mica: true,
             // dump 路默认走基准画布：静态图必须与 1400×800 窗口路同基准，
             // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
             viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
@@ -1370,7 +1369,6 @@ impl zypui::Host for Gallery {
         Some(match name {
             // ---- 外壳 ----
             "route" => S(g.route),
-            "mica" => B(g.mica),
             "compact" => B(g.is_compact()),
             "enter_class" => S(g.enter_class().unwrap_or("")),
             "route_title" => S(g.tr(route_key(g.route))),

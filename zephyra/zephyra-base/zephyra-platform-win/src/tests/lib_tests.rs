@@ -39,45 +39,6 @@ fn capability_bits_match_documented_thresholds() {
         build >= 22_000,
         "DWMWA_WINDOW_CORNER_PREFERENCE 的文档门槛是 Build 22000"
     );
-    assert_eq!(
-        caps.backdrop,
-        build >= 22_621,
-        "DWMWA_SYSTEMBACKDROP_TYPE 的文档门槛是 Build 22621（22H2），\
-             比 dark mode / corner 的 22000 高一档"
-    );
-}
-
-#[test]
-fn mica_request_with_null_handle_does_nothing() {
-    // 判据用**空句柄**：这是不碰 DWM 的最短路径，于是"没生效"唯一可能的
-    // 原因就是"压根没调"。真窗口上的 Mica 是否真透出来，由截图门禁在
-    // 像素层核对（docs/developer/win/02 §4）——API 返回成功**不能**证明材质可见。
-    let out = Windows.apply_window_chrome(
-        WindowHandle::from_raw(0),
-        WindowChrome {
-            backdrop: BackdropKind::Mica,
-            ..Default::default()
-        },
-    );
-    assert!(!out.backdrop, "空句柄不该声称材质生效");
-}
-
-#[test]
-#[cfg(windows)]
-fn every_material_has_a_matching_dwm_enum() {
-    // 文档表（docs/developer/win/02 §1）：Mica=MAINWINDOW(2)、Acrylic=TRANSIENT(3)、
-    // MicaAlt=TABBED(4)、None=NONE(1)。
-    //
-    // 判据只查"映射存在且合法"，不查具体数值 —— 数值由 `windows` crate 的
-    // 强类型常量保证（写错数字编不过）。
-    for kind in [
-        BackdropKind::None,
-        BackdropKind::Mica,
-        BackdropKind::MicaAlt,
-        BackdropKind::Acrylic,
-    ] {
-        assert!(dwm_backdrop(kind).is_some(), "{kind:?} 没有对应的 DWM 枚举");
-    }
 }
 
 #[test]

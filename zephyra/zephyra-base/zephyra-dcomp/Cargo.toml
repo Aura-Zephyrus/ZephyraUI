@@ -55,9 +55,14 @@ windows = { version = "0.62", features = [
 
 # smoke 测试要真建窗口，因此额外需要 D3D / GDI / COM / 动态库装载四个 feature。
 # 只在 dev-dependencies 里 —— 它们不进正式产物。
+#
+# `Win32_Graphics_Dwm` 是 2026-11 窗口透明模式加的：透明探针需要模拟 winit
+# `with_transparent` 的 Windows 实现路线（`DwmEnableBlurBehindWindow` 空区域），
+# 该 API 只在 Dwm 模块里。仍不进 `[dependencies]`——facts 层 feature 纪律不变。
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62", features = [
     "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",
     "Win32_System_LibraryLoader",

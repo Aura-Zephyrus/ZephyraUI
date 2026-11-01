@@ -72,14 +72,13 @@ impl Platform for Linux {
         // 只有「查」是真的；「按请求设置」逐项为 false。理由逐条写在模块文档的表里。
         //
         // ⚠ 这里**不能**因为「Linux 上有 gsettings 能改主题」就把 `dark_mode` 报 true：
-        // 那改的是**整个桌面**的主题，不是这一个窗口。应用据此决定要不要画 Mica，
+        // 那改的是**整个桌面**的主题，不是这一个窗口。应用据此决定要不要跟随，
         // 报 true 而实际什么都没发生，比报 false 难查得多。
         Capabilities {
             dark_mode: false,
             corner_preference: false,
             caption_color: false,
             border_color: false,
-            backdrop: false,
             system_theme_query: true,
             system_language_query: true,
         }
@@ -105,7 +104,6 @@ impl Platform for Linux {
             corner: false,
             caption_color: false,
             border_color: false,
-            backdrop: false,
         }
     }
 }

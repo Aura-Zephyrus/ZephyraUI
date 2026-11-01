@@ -5,7 +5,7 @@
 //!
 //! 「Windows 专属优化」与「通用代码混在一起」是本仓明令禁止的（见
 //! [`REWRITE.md`](../../../../ZephyraUI/REWRITE.md) 的 D1）。但完全不抽象也不行：
-//! 应用要能问一句「这台机器支持 Mica 吗」，而答案在 Linux 上是「不支持」。
+//! 应用要能问一句「这台机器支持 DWM 圆角吗」，而答案在 Linux 上是「不支持」。
 //!
 //! 于是这里只做一件事：**定义"能力"是什么**，不含任何 `cfg(windows)`。
 //! 实现分两个 crate：
@@ -17,12 +17,20 @@
 //!
 //! ```ignore
 //! let caps = platform.capabilities();
-//! if caps.backdrop { /* 画 Mica */ } else { /* 画实色 —— 降级不是错误 */ }
+//! if caps.corner_preference { /* 设圆角 */ } else { /* 方角 —— 降级不是错误 */ }
 //! ```
 //!
 //! ⚠️ **能力位缺失必须是"降级"，不能是"报错"**。理由：桌面 Linux / Wayland / X11
-//! 上没有 Mica 是常态，不是故障。把"平台不支持"当成错误上报，等于让 Linux 上
+//! 上没有 DWM 圆角是常态，不是故障。把"平台不支持"当成错误上报，等于让 Linux 上
 //! 每个应用一启动就红。
+//!
+//! # 系统背景材质（Mica 一类）为什么**不**在本抽象里
+//!
+//! DWM backdrop 曾在本层有一席（`BackdropKind` / `DWMWA_SYSTEMBACKDROP_TYPE`），
+//! 2026-11 随窗口透明模式一起移除：材质与逐像素 alpha 是两套互相排挤的合成
+//! 路线，而透明（`window.transparent` / `WindowOpts`）才是应用真正要的那条
+//! 「背后透出来」的通路。见 `docs/developer/win/07-window-transparent.md`；删除
+//! 的完整决策记在 `docs/dev-log/2026-11-01-window-transparent.md`。
 //!
 //! # 为什么窗口句柄用 `usize` 而不是 `HWND`
 //!
@@ -139,31 +147,6 @@ impl CornerPreference {
     }
 }
 
-/// 背景材质。
-///
-/// ⚠️ 这些是**材质类别**，不是像素效果。Windows 文档对 `DWMSBT_MAINWINDOW` 的
-/// 措辞是「For Windows 11, this corresponds to Mica in its default variant.
-/// **The material effect might change with future Windows releases.**」
-/// —— 所以"选 Mica"表达的是"要那一类材质"，不是"要那个颜色"。
-///
-/// 材质是**系统画在窗口背后**的，因此只在"应用没把那块涂满不透明色"时可见。
-/// 平台层只回答"能不能开"，"要不要留透明"是应用/样式层的责任。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BackdropKind {
-    /// 不画任何背景材质（对应 `DWMSBT_NONE`）。
-    ///
-    /// ⚠️ 必须是**显式的"不画"**，不能映射到 `DWMSBT_AUTO`：文档说 AUTO 由
-    /// DWM 决定、可能仍然画材质 —— 那样"关掉 Mica"就关不掉。
-    #[default]
-    None,
-    /// Mica 默认变体（`DWMSBT_MAINWINDOW`）。Win11 22621+。
-    Mica,
-    /// Mica Alt（`DWMSBT_TABBEDWINDOW`），适合带标签页标题栏的窗口。
-    MicaAlt,
-    /// Acrylic（`DWMSBT_TRANSIENTWINDOW`）。Win11 22621+。
-    Acrylic,
-}
-
 /// 应用向平台**请求**的窗口外观。
 ///
 /// 只收**意图**，不收平台类型；平台不认的字段会被忽略并在
@@ -178,8 +161,6 @@ pub struct WindowChrome {
     pub caption_color: Option<u32>,
     /// 窗口边框颜色（0xRRGGBB；`None` = 交给系统）。
     pub border_color: Option<u32>,
-    /// 背景材质。
-    pub backdrop: BackdropKind,
 }
 
 impl WindowChrome {
@@ -190,7 +171,6 @@ impl WindowChrome {
             corner,
             caption_color: None,
             border_color: None,
-            backdrop: BackdropKind::None,
         }
     }
 }
@@ -210,14 +190,12 @@ pub struct ApplyOutcome {
     pub caption_color: bool,
     /// 边框颜色是否生效。
     pub border_color: bool,
-    /// 背景材质是否生效。
-    pub backdrop: bool,
 }
 
 impl ApplyOutcome {
     /// 全部生效（用于测试与"降级了吗"的快速判断）。
     pub const fn all_applied(self) -> bool {
-        self.dark && self.corner && self.caption_color && self.border_color && self.backdrop
+        self.dark && self.corner && self.caption_color && self.border_color
     }
 }
 
@@ -226,8 +204,8 @@ impl fmt::Display for ApplyOutcome {
         // 一行写清"哪些没生效"。trace 直接打这行。
         write!(
             f,
-            "dark={} corner={} caption={} border={} backdrop={}",
-            self.dark, self.corner, self.caption_color, self.border_color, self.backdrop
+            "dark={} corner={} caption={} border={}",
+            self.dark, self.corner, self.caption_color, self.border_color
         )
     }
 }
@@ -246,11 +224,6 @@ pub struct Capabilities {
     pub caption_color: bool,
     /// 能否按请求设置边框颜色。
     pub border_color: bool,
-    /// 能否设置系统背景材质（Mica / Mica Alt / Acrylic）。
-    ///
-    /// ⚠️ `true` 只表示"**调用会被接受**"，不表示"画面上看得见" ——
-    /// 材质画在窗口**背后**，应用必须给根留透明。见 [`BackdropKind`]。
-    pub backdrop: bool,
     /// 能否**查询**系统深浅色（不能查询 ≠ 不能设置）。
     pub system_theme_query: bool,
     /// 能否**查询**系统语言偏好（不能查询 => 回落默认语言，不钉死界面）。
@@ -265,7 +238,6 @@ impl Capabilities {
             corner_preference: false,
             caption_color: false,
             border_color: false,
-            backdrop: false,
             system_theme_query: false,
             system_language_query: false,
         }

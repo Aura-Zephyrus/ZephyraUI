@@ -17,7 +17,7 @@
 use windows::core::w;
 use windows::core::Interface;
 use windows::core::{IUnknown, PCWSTR};
-use windows::Win32::Foundation::{HMODULE, HWND, RECT};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
@@ -29,7 +29,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, HWND_TOPMOST, SWP_NOSIZE, SWP_SHOWWINDOW, WNDCLASSEXW,
     WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW,
 };
-
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -227,5 +226,114 @@ fn explicit_none_device_also_builds_a_tree() {
             .expect("None 应落到 null device");
         assert_eq!(comp_none.visual_count(), 0);
         assert!(comp_none.commit().is_ok());
+    }
+}
+
+/// **透明窗口探针**：模拟 winit `with_transparent(true)` 的 Windows 实现路线
+/// （默认重定向表面 + `DwmEnableBlurBehindWindow` 空区域 ⇒ DWM 按逐像素 alpha
+/// 合成该窗口），然后走「premultiplied composition swapchain + visual + commit」
+/// 整链。这条链就是 D3D11 / D3D12 后端窗口透明赖以成立的前提 —— 窗口状态与
+/// 合成器之间没有中间层，任何一步报错都会显式打进测试输出。
+///
+/// # 为什么不在这里断言「画面真的透」
+///
+/// 本测试拿不到屏幕上的合成结果（合成器在 DWM 手里）。像素级的透出验证靠
+/// 宿主路 `ZEPHYRA_FRAME_DUMP` 读回后缓冲 alpha，以及人的肉眼；这里钉住的
+/// 是「窗口 alpha 状态 + premultiplied 链**不互相拒绝**」这一最便宜的真机前提。
+///
+/// 与既有三条一样自开窗口（`DWMWA` 透明与 target 绑定都对同一个 HWND 生效，
+/// 复用句柄会互相踩）。
+#[test]
+fn premultiplied_chain_survives_an_alpha_window() {
+    unsafe {
+        let _hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+        eprintln!("[1] alpha window");
+        let hinstance: HINSTANCE = GetModuleHandleW(PCWSTR::null()).unwrap().into();
+        let class_name = w!("ZEPHYRA_DCOMP_TRANSPARENT_TEST");
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(wnd_proc),
+            hInstance: hinstance,
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        RegisterClassExW(&wc);
+        // 刻意**不带** `WS_EX_NOREDIRECTIONBITMAP`：winit 的透明路线就是在默认
+        // 重定向表面上叠加 blur-behind 空区域，本探针必须复刻同一形态。
+        let hwnd = CreateWindowExW(
+            Default::default(),
+            class_name,
+            w!("zephyra-dcomp transparent smoke"),
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            400,
+            300,
+            None,
+            None,
+            Some(hinstance),
+            None,
+        )
+        .expect("CreateWindowExW(transparent)");
+
+        // 空区域（0×0 矩形）= 纯逐像素 alpha，无系统模糊：winit 窗口这条路
+        // 只取「DWM 接受窗口 alpha」这一效果，不取 blur 材质本身。
+        use windows::Win32::Graphics::Dwm::{
+            DwmEnableBlurBehindWindow, DWM_BB_ENABLE, DWM_BLURBEHIND,
+        };
+        let empty_region = windows::Win32::Graphics::Gdi::CreateRectRgn(0, 0, 0, 0);
+        let bb = DWM_BLURBEHIND {
+            dwFlags: DWM_BB_ENABLE,
+            fEnable: true.into(),
+            hRgnBlur: empty_region,
+            fTransitionOnMaximized: false.into(),
+        };
+        DwmEnableBlurBehindWindow(hwnd, &bb)
+            .expect("DwmEnableBlurBehindWindow（winit 透明实现路线）");
+        eprintln!("[2] alpha window ok");
+
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            100,
+            100,
+            0,
+            0,
+            SWP_NOSIZE | SWP_SHOWWINDOW,
+        )
+        .expect("SetWindowPos");
+
+        let device = create_d3d11_device();
+        let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
+            device.cast().expect("QI IDXGIDevice");
+
+        let mut comp =
+            zephyra_dcomp::DcompCompositor::new(hwnd, &dxgi_device).expect("DcompCompositor::new");
+
+        let mut r = RECT::default();
+        windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut r)
+            .expect("GetClientRect");
+        let (cw, ch) = ((r.right - r.left) as u32, (r.bottom - r.top) as u32);
+
+        let swapchain_device: IUnknown = device.cast().expect("QI IUnknown");
+        let swapchain = zephyra_dcomp::create_composition_swapchain(
+            &swapchain_device,
+            (cw, ch),
+            &zephyra_dcomp::SwapchainDesc::default(),
+        )
+        .expect("create_composition_swapchain（premultiplied）");
+
+        let ui_slot = comp.add_visual_on_top().expect("add_visual_on_top");
+        comp.set_content_swapchain(&ui_slot, &swapchain)
+            .expect("set_content_swapchain");
+        comp.commit().expect("commit");
+        comp.wait_for_commit().expect("wait_for_commit");
+        zephyra_dcomp::present_one(&swapchain, 0).expect("present_one");
+
+        comp.destroy();
+        assert!(comp.is_destroyed());
+        println!("premultiplied_chain_survives_an_alpha_window: all APIs OK ({cw}x{ch})");
     }
 }

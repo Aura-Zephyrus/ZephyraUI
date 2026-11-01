@@ -91,7 +91,7 @@ D3D11 与 D3D12 是**两个独立 crate**，互不依赖。换后端不用改核
 ## 平台概念
 
 - [窗口属性（DWM）](win/01-window-attributes.md)
-- [Mica / Acrylic](win/02-mica.md)
+- [窗口透明模式](win/07-window-transparent.md)
 - [系统主题通知](win/04-sys-theme.md)
 - [flip model](win/05-flip-model.md)
 - [交换效果](win/06-swap-effects.md)

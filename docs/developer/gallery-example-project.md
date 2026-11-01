@@ -29,7 +29,7 @@
   ├─ state      状态管理      哪些控件真的接了状态、click() 统一入口在哪
   ├─ styling    样式表        分类名怎么发、令牌怎么引、affects_layout 是干什么的
   ├─ layout     布局与响应式   无滚动意味着什么、断点三档、触控 44
-  ├─ theme      主题与国际化  暗/亮、Mica、三语切换
+  ├─ theme      主题与国际化  暗/亮、三语切换
   └─ testing    门禁与出图    --dump-cpu 出图、--list-routes、树级门禁怎么接
 附录（Reference）
   └─ reference  控件参考      一页内分 10 族，每族一组控件（复用现有页面内容）
@@ -101,10 +101,10 @@ Menus / Navigation / Status / Dialogs / Liquid Glass / Paging。每族直接复�
 
 ### 5. `theme` — 主题与国际化
 
-暗/亮切换（`Arc<AtomicU8>` 主题意图 + Bootstrap 对账）、Mica 半透明标题栏、
-三语切换（中/英/日，走 `Gallery::tr` 与 `Preferences` 协商）。这一章基本是现有
-`settings` 页的内容，但按「主题与语言」这条任务线重新组织，并补上
-「为什么意图走共享格而不是直接引用」的说明。
+暗/亮切换（`Arc<AtomicU8>` 主题意图 + Bootstrap 对账）、三语切换（中/英/日，走
+`Gallery::tr` 与 `Preferences` 协商）。这一章基本是现有 `settings` 页的内容，但按
+「主题与语言」这条任务线重新组织，并补上「为什么意图走共享格而不是直接引用」
+的说明。（DWM Mica 外观已于 2026-11 移除，标题栏回到实色令牌。）
 
 ### 6. `testing` — 门禁与出图
 
@@ -151,8 +151,7 @@ Menus / Navigation / Status / Dialogs / Liquid Glass / Paging。每族直接复�
 | `root_container_writes_no_fixed_size` | 根容器写死尺寸 |
 | `root_container_still_fills_client_area_at_baseline` | 根容器不铺满 |
 | `shell_layout_geometry` | 外壳几何漂了 |
-| `the_mica_titlebar_token_is_actually_translucent` | Mica 令牌不半透明 |
-| `the_app_always_asks_for_the_mica_look` | 没请求 Mica 外观 |
+| `the_translucent_surface_token_is_actually_translucent` | 半透明令牌被改成实色 |
 | `glass_params_are_not_hard_coded` | 折射参数写死（effects 页仍在） |
 | `glass_param_tables_line_up` | 参数表与文本表错位 |
 | `glass_param_keys_all_wired` | 参数按钮没接线 |

@@ -348,7 +348,7 @@
 
 <page name="Window">
   <container key="window" class="window">
-    <container key="titlebar" class="titlebar {@mica ? 'mica' : ''}">
+    <container key="titlebar" class="titlebar">
       <TextLabel key="app-title" text="{tr('ui.zephyraui-gallery')}" level="text-body-strong"/>
       <container key="search" class="search">
         <container key="search-icon" icon="search" class="search-icon"/>

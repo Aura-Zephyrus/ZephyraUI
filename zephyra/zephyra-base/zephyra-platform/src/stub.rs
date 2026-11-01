@@ -15,7 +15,7 @@
 //! # 为什么这里返回 `false` 而不是 `todo!()`
 //!
 //! `todo!()` 会让任何跑到这里的测试直接 panic，而"平台不支持"是**正常运行路径**
-//! —— Linux 上没 Mica、没 DWM 是常态。把它做成 panic，等于逼着上层到处写
+//! —— Linux 上没有 DWM 是常态。把它做成 panic，等于逼着上层到处写
 //! `cfg` 绕过抽象，而那正是本层要消灭的东西。
 
 use crate::{ApplyOutcome, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle};
@@ -59,7 +59,6 @@ impl Platform for Stub {
             corner: false,
             caption_color: false,
             border_color: false,
-            backdrop: false,
         }
     }
 }

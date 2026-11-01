@@ -260,7 +260,10 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   BMP，给「肉眼才看得见」的故障留证据）、`ZEPHYRA_MSAA`、`ZEPHYRA_ADAPTER`、
   `ZEPHYRA_FONT`（字体覆盖）、`ZEPHYRA_FRAMELESS=1|0`（强制无边框/带系统标题栏，
   优先于 `ZephyraUI.json` 的 `window.frameless`；配置按 cwd 解析，直接运行
-  `target/debug/<exe>` 时 cwd 往往不含它——自绘标题栏的应用用这条与 cwd 无关）。
+  `target/debug/<exe>` 时 cwd 往往不含它——自绘标题栏的应用用这条与 cwd 无关）、
+  `ZEPHYRA_TRANSPARENT=1|0`（同款覆盖，钉住主窗口默认值 `window.transparent`；
+  窗口透明指逐像素 alpha 进合成器，不是 DWM 材质——见
+  `docs/developer/win/07-window-transparent.md`）。
   `--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`：
   不开窗口、不碰 GPU，出 BMP——**无显示器的环境也能验整条链**。
 - `#![deny(rustdoc::broken_intra_doc_links)]` 只在 12 个 `lib.rs` 里。**bin 目标不受

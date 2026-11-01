@@ -126,11 +126,11 @@ pub struct HostWindow<V: View> {
     engine: std::cell::RefCell<TextEngine>,
     /// 已上传的图集字形数，用来避免每帧重传 4MB。
     atlas_revision_uploaded: u64,
-    /// 窗口背后**真的**挂着系统背景材质（Mica/Acrylic）。
+    /// 本窗口是否透明（逐像素 alpha 进合成器）。
     ///
-    /// ⚠️ 记的是「实际生效」而不是「应用请求了」——平台不支持时后者为真、
-    /// 前者为假，而两者对 clear 色（透明 vs 不透明）与根背景的处理**不同**。
-    backdrop_active: bool,
+    /// resolution 在 [`Self::new_lenient_opts`] 里做完：`WindowOpts` 显式给定
+    /// 优先，否则读主窗口配置 `window.transparent`。创建时确定，运行期不变。
+    transparent: bool,
     /// 帧计数。只给 `trace` 用。
     /// 系统语言偏好（首帧读一次后缓存）。
     ///
@@ -255,13 +255,39 @@ pub fn should_draw_frame(state: SwapState, device_dead: bool) -> bool {
     !matches!(state, SwapState::Failed)
 }
 
+/// 本帧的清屏色。**纯函数**：透明窗口清成 alpha=0，否则用主题底色。
+///
+/// 与 `zephyra-winit` 的同名函数是**同一判据的两份实现**——两个后端各写一份
+/// 是因为它们不互相依赖（后端三原则），但判据必须一致，所以两边各有一条
+/// 无 GPU 门禁（本 crate 见 `tests/transparent_clear_gate.rs`）。不抽到共享
+/// crate 的理由：`zephyra-fx` 是「后端无关的那一半」的住处，而 clear 色是
+/// **窗口呈现策略**，不是绘制词汇。
+///
+/// 抽成纯函数的理由与 [`should_draw_frame`] 相同：`--dump-cpu` 不呈现窗口，
+/// 这条判据只有在真窗口下才看得见，而没有门禁的结论会烂掉。
+pub fn clear_color(
+    transparent: bool,
+    surface: zephyra_core::core::Color,
+) -> zephyra_core::core::Color {
+    if transparent {
+        surface.with_alpha(0.0)
+    } else {
+        surface
+    }
+}
+
 impl<V: View> HostWindow<V> {
     /// 建窗口与 GPU 资源，**找不到系统字体时不 panic**。
     ///
     /// 字体缺失不该让整个应用起不来：文本不显示，其余部分照常。这与「崩溃」之间的
     /// 差别很大 —— 后者让「这台机器没装字体」变成「这个程序不能跑」。
     pub fn new_lenient(event_loop: &ActiveEventLoop, view: V) -> Self {
-        Self::new_lenient_sized(event_loop, view, DEFAULT_WINDOW_SIZE)
+        Self::new_lenient_opts(
+            event_loop,
+            view,
+            DEFAULT_WINDOW_SIZE,
+            zephyra_app_config::WindowOpts::default(),
+        )
     }
 
     /// [`Self::new_lenient`] + **指定初始客户区尺寸**（**物理像素**）。
@@ -285,11 +311,36 @@ impl<V: View> HostWindow<V> {
     /// `new_lenient` 保留默认尺寸，是为了不改变既有调用点（按视口自适应的应用
     /// 不受影响）。
     pub fn new_lenient_sized(event_loop: &ActiveEventLoop, view: V, size: (u32, u32)) -> Self {
-        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
+        Self::new_lenient_opts(
+            event_loop,
+            view,
+            size,
+            zephyra_app_config::WindowOpts::default(),
+        )
+    }
+
+    /// [`Self::new_lenient_sized`] + **按窗口的创建时选项**。
+    ///
+    /// 透明是 per-window 参数（[`zephyra_app_config::WindowOpts`]，显式给定
+    /// 优先于 `window.transparent`），且**transparent ⇒ frameless**：
+    /// 系统标题栏是实色矩形，叠在 alpha 窗口上语义不成立。
+    /// 窗口属性之外，DComp 迷你链（composition swapchain + premultiplied）
+    /// 才是 alpha 真正进合成器的通路 —— 这条**本来就**是本后端的唯一呈现
+    /// 路径，所以透明在本后端只差 winit 的 `with_transparent` 与清屏色。
+    pub fn new_lenient_opts(
+        event_loop: &ActiveEventLoop,
+        view: V,
+        size: (u32, u32),
+        opts: zephyra_app_config::WindowOpts,
+    ) -> Self {
+        let config = zephyra_app_config::load_from_current_dir();
+        let transparent = opts.transparent.unwrap_or(config.window.transparent);
+        let frameless = config.window.frameless || transparent;
         let attrs = Window::default_attributes()
             .with_title("ZephyraUI (D3D12)")
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1))
-            .with_decorations(!frameless);
+            .with_decorations(!frameless)
+            .with_transparent(transparent);
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
@@ -303,8 +354,13 @@ impl<V: View> HostWindow<V> {
         // 所以先全局打开；有了焦点系统后改成随焦点开关。
         window.set_ime_allowed(true);
         eprintln!(
-            "[zephyra-d3d12] 窗口装饰: {}",
-            if frameless { "frameless" } else { "system" }
+            "[zephyra-d3d12] 窗口装饰: {}{}",
+            if frameless { "frameless" } else { "system" },
+            if transparent {
+                "（透明窗口）"
+            } else {
+                ""
+            }
         );
         let size = window.inner_size();
         // 宿主必须能**自己说出**坐标系：「点哪儿不好使」这类问题的头号嫌疑就是
@@ -409,7 +465,7 @@ impl<V: View> HostWindow<V> {
 
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
-            backdrop_active: false,
+            transparent,
             frames: 0,
             system_languages: zephyra_platform_win::current().system_languages(),
             last_frame_at: None,
@@ -558,26 +614,15 @@ impl<V: View> HostWindow<V> {
     ///    应用代码一个字不改。
     ///
     /// 返回值即 [`zephyra_platform::ApplyOutcome`]，逐项说明"哪些真的生效了"。
-    ///
-    /// 取 `&mut self`：它会记下材质是否生效（影响每帧的 clear 色）。
     pub fn apply_window_chrome(
-        &mut self,
+        &self,
         chrome: zephyra_platform::WindowChrome,
     ) -> zephyra_platform::ApplyOutcome {
         // 复用本文件已有的句柄提取（`raw_window_handle` 路径），不重复造轮子。
         // 拿不到（理论上只在非 Windows 上）⇒ 0 号句柄 ⇒ 平台层静默跳过。
         let raw = hwnd_of(self.window.as_ref()).unwrap_or(0) as usize;
-        let outcome = zephyra_platform_win::current()
-            .apply_window_chrome(zephyra_platform::WindowHandle::from_raw(raw), chrome);
-        // 记下「材质是否真的生效」：它决定 clear 用不用透明色（见 `render_pass`）。
-        // 请求 Mica 但平台不支持 ⇒ 仍是实色 clear，不能当成已生效。
-        self.backdrop_active =
-            outcome.backdrop && chrome.backdrop != zephyra_platform::BackdropKind::None;
-        if trace_enabled() {
-            // 「界面全对、就是标题栏没变暗」这类问题只有这一行能查。
-            eprintln!("[trace] 窗口外观 {chrome:?} -> {outcome}");
-        }
-        outcome
+        zephyra_platform_win::current()
+            .apply_window_chrome(zephyra_platform::WindowHandle::from_raw(raw), chrome)
     }
 
     /// 拉取调试层消息（`ZEPHYRA_D3D12_DEBUG=1` 时才有内容）。
@@ -875,19 +920,7 @@ impl<V: View> HostWindow<V> {
                 }
             }
         };
-        // 清屏色：默认是主题底色（不透明）。
-        //
-        // **启用系统背景材质时改成全透明**：材质（Mica/Acrylic）是 DWM 画在
-        // 窗口**背后**的，只有我们把后缓冲清成 alpha=0、且应用根背景半透明，
-        // 材质才透得出来。清成不透明底色 = 材质被自己的 clear 挡住，等于没开。
-        //
-        // 判据是「材质是否真的生效」（`ApplyOutcome.backdrop`），而不是
-        // 「应用是否请求了」——请求了但平台不支持时，仍��不透明色。
-        let clear = if self.backdrop_active {
-            self.theme.surface.with_alpha(0.0)
-        } else {
-            self.theme.surface
-        };
+        let clear = clear_color(self.transparent, self.theme.surface);
         // 折射 / 可分离混合要读「本帧**已经画在目标上**的内容」，必须把目标当**资源**
         // 传进去。取失败时传 `None`：那 14 个模式会退回 `SrcOver`，画面仍然正确只是少了效果。
         //

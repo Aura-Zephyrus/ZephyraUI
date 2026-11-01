@@ -930,25 +930,19 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // 样式表是第一优先级证明物：「源码里没有样式」要能看到它接上了。
         app.set_styler(install(build_sheet()));
 
-        // 窗口外观：应用只说「我要暗色 + 大圆角 + Mica」，能不能做到由平台层回答。
+        // 窗口外观：应用只说「我要暗色 + 大圆角」，能不能做到由平台层回答。
         //
-        // ⚠️ 这里**没有一行 Win32 代码** —— 暗色/圆角/Mica 走 DWM，判定走
+        // ⚠️ 这里**没有一行 Win32 代码** —— 暗色/圆角走 DWM，判定走
         // `zephyra-platform-win`，句柄转换在宿主里。Linux 上这段原样编译，
-        // 只是平台层返回「不支持」，界面自动退回实色。
+        // 只是平台层返回「不支持」，界面自动退回系统默认。
         //
         // 颜色留空（`None`）＝交给系统：本仓自绘标题栏，系统配色只在
         // 「深色模式」这一位上参与，其余由 `gallery.zstyle` 管。
-        //
-        // Mica：材质画在**窗口背后**，而我们自绘整窗（`Container.window` 有
-        // 不透明背景）——所以必须同时让根背景半透明（`gallery.zstyle` 的
-        // `Container.window.backdrop-on` 分类名，由 Gallery 的状态决定）才透得出
-        // 材质。两者缺一不可，见 `docs/developer/win/02-mica.md` §3。
         let _ = app.apply_window_chrome(zephyra_platform::WindowChrome {
             dark: true,
             corner: zephyra_platform::CornerPreference::Round,
             caption_color: None,
             border_color: None,
-            backdrop: zephyra_platform::BackdropKind::Mica,
         });
 
         // 首帧必须在这里补：交换链建好了、DComp 提交了，但从未 present 过的话，

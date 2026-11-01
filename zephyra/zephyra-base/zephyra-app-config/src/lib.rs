@@ -24,6 +24,37 @@ pub struct AppConfig {
 pub struct WindowConfig {
     /// Create the window without operating-system decorations.
     pub frameless: bool,
+    /// Create the window with per-pixel alpha (content can be translucent).
+    ///
+    /// This is the **main-window default**; a single window can override it at
+    /// creation time via [`WindowOpts`]. Transparent implies frameless: the
+    /// system titlebar would be an opaque rectangle on top of an alpha window.
+    /// Delivery is backend's business (DComp / winit transparent attribute /
+    /// Vulkan PRE_MULTIPLIED probe) — see `docs/developer/win/07-window-transparent.md`.
+    pub transparent: bool,
+}
+
+/// Per-window options resolved **at creation time** (not from the config file).
+///
+/// # Why it lives here instead of in each backend
+///
+/// All three backends must share the same semantics ("different windows can have
+/// different definitions"), and they already depend on this crate — one shared
+/// definition makes that structural rather than incidental.
+///
+/// # Multi-window (TODO, not this round)
+///
+/// A future `windows` section in `ZephyraUI.json` may define named window
+/// states; newly created windows pick a definition by key and fall back to the
+/// main-window section (`window`). This struct is the shape that path plugs
+/// into: the named definitions would carry the same fields resolved here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WindowOpts {
+    /// Transparency of this window. `None` = follow the main-window default
+    /// ([`WindowConfig::transparent`], and `Default` for this struct means
+    /// exactly that); `Some(_)` overrides it — that is the "per-window
+    /// definition" entry point.
+    pub transparent: Option<bool>,
 }
 
 /// Load configuration from a project root.
@@ -59,10 +90,22 @@ pub fn load_from_project_root(root: &Path) -> Result<AppConfig, String> {
 /// root silently drops the setting and the OS titlebar reappears on top of the app's
 /// own. All three window backends read frameless through this function, so one
 /// override covers every backend.
+///
+/// `ZEPHYRA_TRANSPARENT` (`1`/`0`) does the same for [`WindowConfig::transparent`]
+/// — the main-window default, still overridable per window via
+/// [`WindowOpts`]. It is the manual verification switch for the transparent
+/// window mode (`ZEPHYRA_TRANSPARENT=1 cargo run …` docks onto any live app);
+/// per-window definitions live in [`WindowOpts`], not here.
 pub fn load_from_current_dir() -> AppConfig {
     let mut config = load_resolved();
-    let override_value = std::env::var("ZEPHYRA_FRAMELESS").ok();
-    apply_frameless_override(&mut config, override_value.as_deref());
+    apply_frameless_override(
+        &mut config,
+        std::env::var("ZEPHYRA_FRAMELESS").ok().as_deref(),
+    );
+    apply_transparent_override(
+        &mut config,
+        std::env::var("ZEPHYRA_TRANSPARENT").ok().as_deref(),
+    );
     config
 }
 
@@ -75,6 +118,16 @@ fn apply_frameless_override(config: &mut AppConfig, value: Option<&str>) {
     match value {
         Some("1") => config.window.frameless = true,
         Some("0") => config.window.frameless = false,
+        _ => {}
+    }
+}
+
+/// Apply a `ZEPHYRA_TRANSPARENT` override; same contract as
+/// [`apply_frameless_override`].
+fn apply_transparent_override(config: &mut AppConfig, value: Option<&str>) {
+    match value {
+        Some("1") => config.window.transparent = true,
+        Some("0") => config.window.transparent = false,
         _ => {}
     }
 }

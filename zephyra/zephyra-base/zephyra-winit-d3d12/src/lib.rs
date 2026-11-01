@@ -109,8 +109,8 @@ pub use surface::{DebugInfo, DescriptorHeap, Gpu, Offscreen, Staging, SurfaceErr
 // 设备消失 / resize 失败的「这一帧该不该画」判据，以及「设备恢复要不要现在试」的
 // 间隔判据。见 `host::should_draw_frame` / `host::should_attempt_recovery`
 // 与 `tests/device_lost_gate.rs`：两者都是纯函数，所以能在没有 GPU 的机器上门禁。
+pub use host::{clear_color, should_attempt_recovery, should_draw_frame, SwapState};
 pub use host::{run_with, HostWindow};
-pub use host::{should_attempt_recovery, should_draw_frame, SwapState};
 pub use swapchain::Swapchain;
 pub use winit;
 pub use zephyra_fx::{Frame, InputState, View, Z_INDEX};

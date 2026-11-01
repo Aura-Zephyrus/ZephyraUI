@@ -55,7 +55,6 @@ pub struct HostWindow<V: View> {
     dirty: bool,
     engine: std::cell::RefCell<TextEngine>,
     atlas_revision_uploaded: u64,
-    backdrop_active: bool,
     system_languages: Vec<String>,
     frames: usize,
     last_frame_at: Option<std::time::Instant>,
@@ -85,12 +84,36 @@ impl<V: View> HostWindow<V> {
 
     /// 建一个指定客户区尺寸的宿主。
     pub fn new_lenient_sized(event_loop: &ActiveEventLoop, view: V, size: (u32, u32)) -> Self {
-        let frameless = zephyra_app_config::load_from_current_dir().window.frameless;
+        Self::new_lenient_opts(
+            event_loop,
+            view,
+            size,
+            zephyra_app_config::WindowOpts::default(),
+        )
+    }
+
+    /// [`Self::new_lenient_sized`] + **按窗口的创建时选项**。
+    ///
+    /// 透明是 per-window 参数（[`zephyra_app_config::WindowOpts`]，显式给定
+    /// 优先于 `window.transparent`），且**transparent ⇒ frameless**。
+    /// 本后端的交换链 clear 恒为 alpha=0、composite alpha 探测恒首选
+    /// `PRE_MULTIPLIED`（见 `surface.rs`），所以透明在这里**只**差 winit 的
+    /// `with_transparent`（X11 侧换 ARGB visual）。
+    pub fn new_lenient_opts(
+        event_loop: &ActiveEventLoop,
+        view: V,
+        size: (u32, u32),
+        opts: zephyra_app_config::WindowOpts,
+    ) -> Self {
+        let config = zephyra_app_config::load_from_current_dir();
+        let transparent = opts.transparent.unwrap_or(config.window.transparent);
+        let frameless = config.window.frameless || transparent;
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("ZephyraUI")
                 .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
-                .with_decorations(!frameless),
+                .with_decorations(!frameless)
+                .with_transparent(transparent),
         ) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -99,8 +122,13 @@ impl<V: View> HostWindow<V> {
             }
         };
         eprintln!(
-            "[zephyra] 窗口装饰: {}",
-            if frameless { "frameless" } else { "system" }
+            "[zephyra] 窗口装饰: {}{}",
+            if frameless { "frameless" } else { "system" },
+            if transparent {
+                "（透明窗口）"
+            } else {
+                ""
+            }
         );
         // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
         // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
@@ -173,7 +201,6 @@ impl<V: View> HostWindow<V> {
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: u64::MAX,
-            backdrop_active: false,
             system_languages,
             frames: 0,
             last_frame_at: None,
@@ -254,14 +281,11 @@ impl<V: View> HostWindow<V> {
 
     /// 按应用请求设置窗口外观。
     pub fn apply_window_chrome(
-        &mut self,
+        &self,
         chrome: zephyra_platform::WindowChrome,
     ) -> zephyra_platform::ApplyOutcome {
-        let outcome = zephyra_platform_linux::current()
-            .apply_window_chrome(window_handle_of(&self.window), chrome);
-        self.backdrop_active =
-            outcome.backdrop && chrome.backdrop != zephyra_platform::BackdropKind::None;
-        outcome
+        zephyra_platform_linux::current()
+            .apply_window_chrome(window_handle_of(&self.window), chrome)
     }
 
     /// 一帧什么都没做时返回的东西。
@@ -648,11 +672,6 @@ impl<V: View> HostWindow<V> {
             self.dirty = true;
         }
         (changed, out)
-    }
-
-    /// 窗口是否背后真的挂着系统背景材质。
-    pub fn backdrop_active(&self) -> bool {
-        self.backdrop_active
     }
 }
 

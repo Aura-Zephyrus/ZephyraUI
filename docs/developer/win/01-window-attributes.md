@@ -46,7 +46,7 @@ Rin-UI `RinUI/core/theme.py` 是我们要照抄的参照物，但它的实现里
    门槛是 Build 22621（22H2）—— 与它一致；但 `is_win11()`（22000）就启用
    dark mode 也与文档一致（22000）。这条它没错，记录在此以免后来人误改。
 
-## 4. Mica / Acrylic：本仓走不了官方路线（**记账，不假装能做**）
+## 4. Mica / Acrylic：曾走 DWM 属性路线，2026-11 移除（**记账**）
 
 官方文档 `apply-mica-win32` 的前置条件明确写着：
 
@@ -54,11 +54,18 @@ Rin-UI `RinUI/core/theme.py` 是我们要照抄的参照物，但它的实现里
 
 路线是 `MicaController` + `DispatcherQueue` + `Compositor` + `CreateWindowTarget`
 —— 依赖 WinRT 与 Windows App SDK 运行时。本仓是**纯 Rust + winit + DComp + D3D12**，
-不引入 WinAppSDK（那会引入一整套 COM/WinRT 初始化依赖）。
+不引入 WinAppSDK。本仓曾用 `DWMWA_SYSTEMBACKDROP_TYPE`（22621+）走 DWM 属性路线，
+2026-11 起**整条移除**：`BackdropKind` / `WindowChrome.backdrop` /
+`ApplyOutcome.backdrop` / `Capabilities.backdrop` 全部删除，gallery 的 `.mica`
+分类名一并清掉。
 
-结论：**Mica/Acrylic 在本轮不做**，且不是因为"没查到 API"，而是因为**官方路线需要
-本仓刻意不引入的运行时**。若将来要做，接入点是 `docs/portability.md` 里记的
-`Platform::backdrop()` 能力位 —— 上层已按"平台不给就降级为实色"写好。
+**为什么删**：DWM 材质与逐像素 alpha 是两套互相排挤的合成路线（backdrop 类型
+一设，窗口就走 opaque 合成）；而应用真正要的「背后透出来」由**窗口透明模式**
+给出（`window.transparent` / `WindowOpts::transparent`，per-window），
+D3D11/D3D12 走 DComp premultiplied composition swapchain，Vulkan 走
+`PRE_MULTIPLIED` 探测。当前事实层记录见
+[`win/07-window-transparent.md`](07-window-transparent.md)；完整决策与
+「排除的假设」在 `docs/dev-log/2026-11-01-window-transparent.md`。
 
 ## 5. 对本仓的影响（→ 代码位置）
 
