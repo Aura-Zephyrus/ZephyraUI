@@ -18,7 +18,9 @@
 //! |---|---|
 //! | `check-box` | 复选框 |
 //! | `button` | 按钮 |
-//! | `check-group` | 分组 |
+//! | `check-group` / `radio-group` | 分组 |
+//! | `switch` | 开关 |
+//! | `radio-box` | 单选钮 |
 //!
 //! 分类名是本仓控件的**结构标记**（`check-box` 就是复选框那个控件），不是
 //! 纯装饰 —— 它决定外观，而外观与语义本来就是一回事（「长得像复选框的东西」
@@ -45,16 +47,24 @@ const ROLE_BY_CLASS: &[(&str, Role)] = &[
     ("check-box", Role::CheckBox),
     ("button", Role::Button),
     ("check-group", Role::Group),
+    ("radio-group", Role::Group),
+    ("switch", Role::Switch),
+    ("radio-box", Role::RadioButton),
 ];
 
 /// 开关状态的分类名 → 状态。
 ///
 /// 只认控件**自己**身上的分类名：`check-box` 的 `state` 实参直接落在控件的
-/// class 列表里（`class="check-box {state} …"`），所以「勾上了吗」不需要
-/// 下钻到子节点。
+/// class 列表里（`class="check-box {state} …"`），开关的 `on` 同样在控件自己
+/// 身上（`class="switch {checked ? 'on'} …"`），所以「开关了吗」不需要下钻到
+/// 子节点 —— 下钻的子节点在无障碍树里**不存在**（装饰层不留痕）。
+///
+/// `on` 与 `checked` 都是「已打开 / 已选中」，只是两族的词汇不同：
+/// 复选框与单选钮用 `checked`，开关用 `on`。
 const TOGGLE_BY_CLASS: &[(&str, ToggleState)] = &[
     ("checked", ToggleState::On),
     ("indeterminate", ToggleState::Indeterminate),
+    ("on", ToggleState::On),
 ];
 
 /// 窗口层面的信息 —— 宿主知道，规则不知道。
@@ -140,7 +150,10 @@ fn role_of(node: &Node) -> Option<Role> {
 /// 造一个元素。
 fn element_of(node: &Node, id: usize, parent: usize, role: Role, win: &WindowInfo) -> Element {
     let toggle = match role {
-        Role::CheckBox => Some(toggle_of(node)),
+        // 复选框与开关都走 TogglePattern；单选钮的「选中」在 UIA 里是
+        // SelectionItem 的 IsSelected —— 同一个 `toggle` 字段装两种语义，
+        // 图案按 `role` 分派（见 `provider.rs` 的 `GetPatternProvider`）。
+        Role::CheckBox | Role::Switch | Role::RadioButton => Some(toggle_of(node)),
         _ => None,
     };
     Element {
@@ -260,6 +273,26 @@ mod tests {
             .with_children([text_node("label", "Enable feature")]);
         let node = Node::from_element(&el);
         assert_eq!(accessible_name(&node), "Enable feature");
+    }
+
+    #[test]
+    fn the_switch_and_radio_families_get_their_roles() {
+        let sw = Elem::new(NodeTag::Control).style("switch").style("on");
+        let node = Node::from_element(&sw);
+        assert_eq!(role_of(&node), Some(Role::Switch));
+        assert_eq!(toggle_of(&node), ToggleState::On);
+
+        let radio = Elem::new(NodeTag::Control)
+            .style("radio-box")
+            .style("checked");
+        let node = Node::from_element(&radio);
+        assert_eq!(role_of(&node), Some(Role::RadioButton));
+        assert_eq!(toggle_of(&node), ToggleState::On);
+
+        // 装饰子节点不许抢角色：`switch-track` 与 `switch` 是两个分类名。
+        let track = Elem::new(NodeTag::Container).style("switch-track");
+        let node = Node::from_element(&track);
+        assert_eq!(role_of(&node), None, "switch-track 是装饰层，不是开关本体");
     }
 
     #[test]

@@ -35,6 +35,21 @@ pub enum Role {
     CheckBox,
     /// 按钮。
     Button,
+    /// 开关（两态：开 / 关）。
+    ///
+    /// # 为什么 UIA 里没有「Switch」
+    ///
+    /// UIA 的 ControlType 表里**没有** Switch —— 开关只能报成
+    /// `UIA_CheckBoxControlTypeId` + TogglePattern。屏读器于是念「复选框，
+    /// 已选定」而不是「开关，已打开」。这是平台的既有限制，不是本仓的选择；
+    /// `class_name` 仍报 `Switch`，让 Inspect 里能区分两者。
+    Switch,
+    /// 单选钮。
+    ///
+    /// 状态不是 TogglePattern 而是 **SelectionItem**：单选钮的「选中」是
+    /// 「在一组里挑了一个」，不是「这个开关被打开了」。两套图案在 UIA 里
+    /// 的语义不同 —— 报错了屏读器会念「复选框」而不是「单选钮」。
+    RadioButton,
     /// 分组容器（复选框组这类）。
     Group,
     /// 窗口根。
@@ -89,6 +104,10 @@ pub struct Element {
     /// 角色。
     pub role: Role,
     /// 开关状态（`None` = 这个元素没有 Toggle 图案）。
+    ///
+    /// 单选钮也用它表示「选中了吗」（`On` = 选中），但那**不**意味着它
+    /// 暴露 TogglePattern —— 单选钮暴露的是 SelectionItem，两者按 `role`
+    /// 分派，见 `provider.rs` 的 `GetPatternProvider`。
     pub toggle: Option<ToggleState>,
     /// 是否可用（禁用态为 `false`）。
     pub enabled: bool,

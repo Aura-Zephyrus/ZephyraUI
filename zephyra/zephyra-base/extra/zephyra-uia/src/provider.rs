@@ -69,20 +69,22 @@ use windows::Win32::UI::Accessibility::{
     IInvokeProvider, IInvokeProvider_Impl, IRawElementProviderFragment,
     IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl,
     IRawElementProviderFragment_Impl, IRawElementProviderSimple, IRawElementProviderSimple_Impl,
-    IToggleProvider, IToggleProvider_Impl, NavigateDirection, NavigateDirection_FirstChild,
-    NavigateDirection_LastChild, NavigateDirection_NextSibling, NavigateDirection_Parent,
-    NavigateDirection_PreviousSibling, ProviderOptions, ProviderOptions_RefuseNonClientSupport,
-    ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
-    ToggleState as UiaToggleState, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
-    UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId,
-    UIA_ControlTypePropertyId, UIA_FrameworkIdPropertyId, UIA_GroupControlTypeId,
-    UIA_HasKeyboardFocusPropertyId, UIA_InvokePatternId, UIA_IsContentElementPropertyId,
-    UIA_IsControlElementPropertyId, UIA_IsEnabledPropertyId,
+    ISelectionItemProvider, ISelectionItemProvider_Impl, IToggleProvider, IToggleProvider_Impl,
+    NavigateDirection, NavigateDirection_FirstChild, NavigateDirection_LastChild,
+    NavigateDirection_NextSibling, NavigateDirection_Parent, NavigateDirection_PreviousSibling,
+    ProviderOptions, ProviderOptions_RefuseNonClientSupport, ProviderOptions_ServerSideProvider,
+    ProviderOptions_UseComThreading, ToggleState as UiaToggleState, UIA_AutomationIdPropertyId,
+    UIA_BoundingRectanglePropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_FrameworkIdPropertyId,
+    UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_InvokePatternId,
+    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsInvokePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsTogglePatternAvailablePropertyId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId,
-    UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_WindowControlTypeId,
-    UiaAppendRuntimeId, UiaHostProviderFromHwnd, UiaRect,
+    UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RadioButtonControlTypeId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    UIA_ToggleToggleStatePropertyId, UIA_WindowControlTypeId, UiaAppendRuntimeId,
+    UiaHostProviderFromHwnd, UiaRect,
 };
 
 use crate::model::{Element, Role, Snapshot, ToggleState};
@@ -168,6 +170,11 @@ fn class_name(role: Role) -> &'static str {
     match role {
         Role::CheckBox => "CheckBox",
         Role::Button => "Button",
+        // 开关在 UIA 里**没有**自己的 ControlType（只有 CheckBox），
+        // 但类名是我们自己的分类名 —— 报 `Switch` 让 Inspect 里能把它
+        // 与真正的复选框区分开。
+        Role::Switch => "Switch",
+        Role::RadioButton => "RadioButton",
         Role::Group => "Group",
         Role::Window => "Window",
     }
@@ -198,7 +205,8 @@ fn class_name(role: Role) -> &'static str {
     IRawElementProviderFragment,
     IRawElementProviderFragmentRoot,
     IToggleProvider,
-    IInvokeProvider
+    IInvokeProvider,
+    ISelectionItemProvider
 )]
 struct ElementProvider {
     /// 元素身份：`None` = 窗口根，`Some(key)` = 按控件 key 认的那个元素。
@@ -222,6 +230,11 @@ impl ElementProvider {
     fn control_type(role: Role) -> i32 {
         match role {
             Role::CheckBox => UIA_CheckBoxControlTypeId.0,
+            // ⚠ UIA 的 ControlType 表里**没有** Switch —— 开关只能报成
+            // CheckBox（外加 TogglePattern）。这是平台限制，见 `Role::Switch`
+            // 的文档。
+            Role::Switch => UIA_CheckBoxControlTypeId.0,
+            Role::RadioButton => UIA_RadioButtonControlTypeId.0,
             Role::Button => UIA_ButtonControlTypeId.0,
             Role::Group => UIA_GroupControlTypeId.0,
             Role::Window => UIA_WindowControlTypeId.0,
@@ -357,7 +370,9 @@ impl IRawElementProviderSimple_Impl for ElementProvider_Impl {
         // 找不到就判定「这个元素不支持 Toggle 图案」，客户端于是读不到图案，
         // 而元素、名字、角色全都正常（极具迷惑性）。
         if patternid.0 == UIA_TogglePatternId.0 {
-            if el.toggle.is_none() {
+            // 单选钮**不**暴露 TogglePattern —— 它的「选中」是 SelectionItem。
+            // 两套图案同时交出去会让屏读器既念「已勾选」又念「已选中」。
+            if el.toggle.is_none() || el.role == Role::RadioButton {
                 // 微软文档：这个元素不支持这个图案 ⇒ **成功 + NULL**（不是错误码）。
                 return Ok(null_interface::<IUnknown>());
             }
@@ -380,6 +395,14 @@ impl IRawElementProviderSimple_Impl for ElementProvider_Impl {
                 return Ok(null_interface::<IUnknown>());
             }
             let pattern = ComObjectInterface::<IInvokeProvider>::as_interface_ref(self).to_owned();
+            return pattern.cast::<IUnknown>();
+        }
+        if patternid.0 == UIA_SelectionItemPatternId.0 {
+            if el.role != Role::RadioButton {
+                return Ok(null_interface::<IUnknown>());
+            }
+            let pattern =
+                ComObjectInterface::<ISelectionItemProvider>::as_interface_ref(self).to_owned();
             return pattern.cast::<IUnknown>();
         }
         // 不支持的图案 ⇒ 成功 + NULL（微软文档的写法：「this example returns a
@@ -418,7 +441,19 @@ impl IRawElementProviderSimple_Impl for ElementProvider_Impl {
             x if x == UIA_HasKeyboardFocusPropertyId.0 => Ok(VARIANT::from(el.focused)),
             x if x == UIA_IsOffscreenPropertyId.0 => Ok(VARIANT::from(el.offscreen)),
             x if x == UIA_IsTogglePatternAvailablePropertyId.0 => {
-                Ok(VARIANT::from(el.toggle.is_some()))
+                // 单选钮不报 Toggle 图案（见 `GetPatternProvider`）。
+                Ok(VARIANT::from(
+                    el.toggle.is_some() && el.role != Role::RadioButton,
+                ))
+            }
+            x if x == UIA_IsSelectionItemPatternAvailablePropertyId.0 => {
+                Ok(VARIANT::from(el.role == Role::RadioButton))
+            }
+            x if x == UIA_SelectionItemIsSelectedPropertyId.0 => {
+                if el.role != Role::RadioButton {
+                    return Err(Error::from_hresult(E_FAIL));
+                }
+                Ok(VARIANT::from(el.toggle == Some(ToggleState::On)))
             }
             x if x == UIA_IsInvokePatternAvailablePropertyId.0 => {
                 Ok(VARIANT::from(el.role == Role::Button))
@@ -669,6 +704,76 @@ impl IInvokeProvider_Impl for ElementProvider_Impl {
     }
 }
 
+/// SelectionItem 图案 —— 单选钮用这一套（理由同上：由元素对象自己实现）。
+///
+/// # 为什么单选钮不是 TogglePattern
+///
+/// 两者的**语义**不同：
+///
+/// | 图案 | 说的是 | 谁用 |
+/// |---|---|---|
+/// | Toggle | 「这个开关被打开了」 | 复选框、开关 |
+/// | SelectionItem | 「在一组里挑中了我」 | 单选钮、列表项 |
+///
+/// 报错的屏读器会念「复选框，已勾选」，而用户听到的应该是「单选钮，
+/// 已选中」—— 两句话对用户意味着完全不同的交互（前者可再点取消，
+/// 后者点一下不会取消）。
+///
+/// # `AddToSelection` / `RemoveFromSelection` 为什么要报「不支持」
+///
+/// 单选组是**单选**容器：同时选中两项在语义上不存在，而「取消选中」同样
+/// 不存在（单选组至少留一项）。给它们一个「看起来成功但什么都没发生」的
+/// 返回值是更坏的答案 —— 客户端会以为操作生效了。
+impl ISelectionItemProvider_Impl for ElementProvider_Impl {
+    fn Select(&self) -> windows::core::Result<()> {
+        let Some(key) = self.element_key() else {
+            return Err(Error::from_hresult(E_FAIL));
+        };
+        trace!("SelectionItem.Select key={key}");
+        crate::push_action(crate::Action::Select(key));
+        Ok(())
+    }
+
+    fn AddToSelection(&self) -> windows::core::Result<()> {
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+
+    fn RemoveFromSelection(&self) -> windows::core::Result<()> {
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+
+    fn IsSelected(&self) -> windows::core::Result<windows::core::BOOL> {
+        let Some(el) = self.with_element(|el| el.clone()) else {
+            return Err(Error::from_hresult(E_FAIL));
+        };
+        if el.role != Role::RadioButton {
+            return Err(Error::from_hresult(E_FAIL));
+        }
+        Ok(windows::core::BOOL::from(
+            el.toggle == Some(ToggleState::On),
+        ))
+    }
+
+    /// 选中项的**容器**（那个单选组）。
+    ///
+    /// # 为什么返回父元素而不是 null
+    ///
+    /// 客户端靠它知道「这些单选钮属于同一组」—— 上下键在组内移动就靠这条
+    /// 关系。父元素不是分组（`Role::Group`）时退回 null：那时没有可报的容器，
+    /// 而「成功 + NULL」是 UIA 表达「没有」的写法。
+    fn SelectionContainer(&self) -> windows::core::Result<IRawElementProviderSimple> {
+        let parent_key = self
+            .with_element(|el| el.parent)
+            .flatten()
+            .and_then(|id| crate::current().and_then(|s| s.get(id).map(|p| p.key.clone())))
+            .filter(|k| !k.is_empty());
+        match parent_key {
+            Some(key) => Ok(provider_for(Some(key))),
+            None => Ok(null_interface::<IRawElementProviderSimple>()),
+        }
+    }
+}
+
 // --------------------------------------------------------------- 缓存与工具
 
 // 根提供者的缓存。
@@ -864,18 +969,29 @@ pub(crate) fn raise_toggle_state_changed(key: &str, old: ToggleState, new: Toggl
     let Some(snapshot) = crate::current() else {
         return false;
     };
-    if snapshot.find_by_key(key).is_none() {
+    let Some(el) = snapshot.find_by_key(key) else {
         return false;
-    }
+    };
     let provider = provider_for(Some(key.to_string()));
-    let old = VARIANT::from(old.uia_value());
-    let new = VARIANT::from(new.uia_value());
+    // ⚠ 单选钮的「选中」在 UIA 里**不是** ToggleToggleState，而是
+    // SelectionItem.IsSelected（一个 BOOL）。报错属性时客户端收不到
+    // 它在听的那条事件 —— 屏读器于是永远不念「已选中」。
+    let (property, old, new) = if el.role == Role::RadioButton {
+        (
+            UIA_SelectionItemIsSelectedPropertyId,
+            VARIANT::from(old == ToggleState::On),
+            VARIANT::from(new == ToggleState::On),
+        )
+    } else {
+        (
+            UIA_ToggleToggleStatePropertyId,
+            VARIANT::from(old.uia_value()),
+            VARIANT::from(new.uia_value()),
+        )
+    };
     unsafe {
         windows::Win32::UI::Accessibility::UiaRaiseAutomationPropertyChangedEvent(
-            &provider,
-            UIA_ToggleToggleStatePropertyId,
-            &old,
-            &new,
+            &provider, property, &old, &new,
         )
     }
     .is_ok()

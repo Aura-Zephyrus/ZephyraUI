@@ -199,7 +199,10 @@ impl Bridge {
                 // 只移焦点 —— `pressed` 通道没动。
                 (true, false)
             }
-            Action::Toggle(key) | Action::Invoke(key) => {
+            // `Select`（单选钮的 SelectionItem）与 `Toggle` / `Invoke` 走**同一条**
+            // 路径：它们对应用来说都是「在这个 key 上按了一下」。单选语义由应用
+            // 的单选组规则处理 —— 无障碍层不该知道「同组其余取消」这件事。
+            Action::Toggle(key) | Action::Invoke(key) | Action::Select(key) => {
                 let Some(elem_key) = element_key_of(root, key) else {
                     return (false, false);
                 };

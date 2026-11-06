@@ -84,10 +84,17 @@ static ACTIONS: Mutex<Vec<Action>> = Mutex::new(Vec::new());
 /// 一个来自无障碍侧的动作请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// 「把这个复选框切一下」（Toggle 图案）。
+    /// 「把这个复选框 / 开关切一下」（Toggle 图案）。
     Toggle(String),
     /// 「按一下这个按钮」（Invoke 图案）。
     Invoke(String),
+    /// 「选中这个单选钮」（SelectionItem 图案）。
+    ///
+    /// 与 [`Action::Invoke`] 走到**同一条**应用路径（一次点击），但语义不同：
+    /// 单选钮的「选中」由应用按单选组规则处理（同组其余取消），
+    /// 而 Invoke 只是「按一下」。分成两个变体是为了让诊断日志读得出
+    /// 「这是屏读器在挑单选钮」而不是「有人在按按钮」。
+    Select(String),
     /// 「把焦点移到这个元素」。
     Focus(String),
 }
@@ -96,7 +103,7 @@ impl Action {
     /// 动作针对的控件 key。
     pub fn key(&self) -> &str {
         match self {
-            Action::Toggle(k) | Action::Invoke(k) | Action::Focus(k) => k,
+            Action::Toggle(k) | Action::Invoke(k) | Action::Select(k) | Action::Focus(k) => k,
         }
     }
 }
