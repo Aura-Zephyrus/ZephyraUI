@@ -183,20 +183,70 @@
   </container>
 </component>
 
-<component name="RadioButton" params="label checked">
-  <control interactive="true" class="radio-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <container key="indicator" class="radio-indicator {checked ? 'checked'}">
+<!-- 单选钮：两态的「挑一个」。
+     `checked` 是**状态分类词**（"" / "checked"），由宿主侧的
+     `zephyra_ui::RadioGroup::option_class_word()` 产出 —— 模板不认识
+     「单选」是什么，状态语义与流转规则全在 Rust 侧。
+
+     文案走**双通道**：`label_key` 是语义 key（控件内部 `tr()` 翻译），
+     `label` 是已翻译的文案（动态文本用）。与 CheckBox 同纪律。
+
+     键盘可达：focusable 进 Tab 序、activatable 让 Space/Enter 触发点击
+     （core 的 `ActivationState` 复用 pressed 通道，应用零改动）。
+     `disabled` 走 core 的 `props::DISABLED`：命中测试与键盘激活都认它。 -->
+<component name="RadioButton" params="label label_key checked disabled">
+  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="radio-box {checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+    <container key="indicator" class="radio-indicator {checked ? 'checked'} {focused ? 'focused'}">
       <container key="mark" class="radio-dot {checked ? 'checked'}"/>
     </container>
-    <text key="label" text="{label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{checked ? 'checked'} {press ? 'pressed' : (hover ? 'hovered' : '')} check-label"/>
   </control>
 </component>
 
-<component name="ToggleSwitch" params="checked">
-  <control interactive="true" class="switch {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <container key="track" class="switch-track {checked ? 'on'}">
-      <container key="knob" class="switch-knob"/>
+<!-- 开关：一比一复刻 iOS LiquidToggle（Apache-2.0，`E:\AndroidLiquidGlass` 的
+     `LiquidToggle.kt` + `DampedDragAnimation.kt`；本仓的对应实现是
+     `ZephyraUI/src/toggle.rs`，控制弹簧曲线与物理状态）。
+
+     轨道 64×28（圆角 99 = capsule，内边距 2），把手 40×24（capsule），
+     行程 20px。
+
+     ⚠ `on` 这个状态分类词落在**控件自己**身上（不只是 `switch-track`
+     子节点）—— 无障碍树按「元素自己的分类名」读开关状态，状态若只落在
+     子节点上，屏读器读到的一直是「关」。
+
+     `key="label"` 的文本子节点是**无障碍名**的来源（UIA 规则的既有约定）：
+     没有它，开关在屏幕阅读器里是个没有名字的控件。
+
+     把手 / 轨道的背板**全部走动态绑定**（结构值走 `Val::Raw` —— 与 filter /
+     decoration 同一条路；track_bg / knob_bg 是 `Color` 结构值）：
+
+     - `track_bg`：轨道颜色 = `lerp(track, accent, fraction)`，fraction 弹簧
+       每帧推进，颜色随把手位置连续过渡（原版 `drawRect(lerp(...))`）；
+     - `knob_bg`：把手白罩 = `White @ (1 − press)`，按住时让出折射面；
+     - `knob_filter`：`[BackdropBlur(8dp·(1−press)), Refraction(5dp·press,
+       10dp·press, dispersion 0.2, ior 1.5)]`（原版 `blur(8dp·(1−p))` +
+       `lens(5dp·p, 10dp·p, chromaticAberration = true)`）；
+     - `knob_decoration`：`Decorations::control_with_progress(press)` ——
+       高光 Ambient(宽/1.5, alpha = press) / 投影 Shadow(4dp, #000@0.05) 恒定 /
+       内阴影 InnerShadow(4dp · press)。**装饰落在把手上**（原版 drawBackdrop
+       挂 knob 上），不是整行。
+     - `knob_x` = `fraction × 20px`；`knob_scale_x / knob_scale_y` 是两个独立的
+       临界阻尼弹簧（ζ=1，ω=√250），无速度拉伸（已整体删除）。
+
+     `animated` 原样作为分类词落在**轨道**上（与 `InfoBadge` 的 `severity` 同一
+     手法）：调用方传 `"animated"` 时轨道带上这个词，
+     `.switch-track.on.animated { main-align: start }` 把静态 `.on { end }`
+     压掉 —— 两者必须互斥，否则位移叠加成双倍。
+     - 不传这些 `knob_*` / `track_bg` / `knob_*` 值时两个属性不实例化
+       （`as_f32` 失败或 Raw 类型不匹配 → 按「没设」降级），把手退回静态
+       `main-align` 布局、轨道色退回样式表的 `.switch-track` / `.on` 静态色
+       —— 与静态演示的观感一致。 -->
+<component name="ToggleSwitch" params="label label_key checked disabled knob_x knob_scale_x knob_scale_y track_bg knob_bg knob_filter knob_decoration animated">
+  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="switch {checked ? 'on'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+    <container key="track" background="{track_bg}" class="switch-track {checked ? 'on'} {focused ? 'focused'} {disabled ? 'disabled'} {animated}">
+      <container key="knob" translate-x="{knob_x}" scale-x="{knob_scale_x}" scale-y="{knob_scale_y}" background="{knob_bg}" filter="{knob_filter}" decoration="{knob_decoration}" class="switch-knob"/>
     </container>
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{checked ? 'on'} {press ? 'pressed' : (hover ? 'hovered' : '')} switch-label"/>
   </control>
 </component>
 

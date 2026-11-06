@@ -16,6 +16,15 @@
 //! 宿主每帧在 `sync_input` 里调 [`FocusState::focus`]（写 FOCUSED 属性到当前/上一个
 //! 节点），并在收到 Tab 事件时调 [`FocusState::tab`]（移动焦点）。
 //!
+//! # 焦点环为什么默认不显示（`focus-visible`）
+//!
+//! 焦点是**键盘**概念：鼠标点一下开关不该多出一圈蓝边（桌面应用的通行做法，
+//! 也是 `focus_ring` 令牌文档里「键盘用户看不到焦点位置」的本意）。于是状态机
+//! 区分「谁有焦点」（[`FocusState::focused`]，鼠标/键盘都设）与「焦点环可见」
+//! （[`FocusState::is_visible`]，只有 Tab 才置真）。宿主把后者连同焦点一起报告
+//! 给应用，应用的 `focused` 分类名因此只对键盘来源生效；Space / Enter 与
+//! 无障碍读的仍是前者，点击后照样能键盘激活。
+//!
 //! # Tab 顺序怎么决定
 //!
 //! **树深度优先遍历**（从左到右），收集 `FOCUSABLE=true` 的节点，顺序即文档序——
@@ -52,6 +61,13 @@ pub struct FocusState {
     /// 这个字段是**已经写进树**的（这帧的实际状态）。两者可能因为「目标节点
     /// 没找到」而短暂不一致。
     written: Option<ElementKey>,
+    /// 焦点环是否可见（`focus-visible` 语义）。
+    ///
+    /// 鼠标点击设焦点时是 `false`（键盘焦点仍成立，只是**不该画环**——点了
+    /// 一下开关就多出一圈蓝边，那不是用户要的反馈）；Tab 移动焦点时是 `true`
+    /// （键盘用户看不到焦点在哪，必须画环）。两个后端消费它的方式不同：
+    /// 激活 / 无障碍读 [`Self::focused`]（永远真实），视觉读 [`Self::is_visible`]。
+    visible: bool,
     /// 焦点变化版本号。宿主比较它决定要不要重绘。
     revision: u64,
 }
@@ -68,6 +84,7 @@ impl FocusState {
         Self {
             focused: None,
             written: None,
+            visible: false,
             revision: 0,
         }
     }
@@ -75,6 +92,16 @@ impl FocusState {
     /// 当前拥有焦点的节点（目标，不保证已写进树）。
     pub fn focused(&self) -> Option<&ElementKey> {
         self.focused.as_ref()
+    }
+
+    /// 焦点环是否该画（`focus-visible`）。
+    ///
+    /// 只在焦点由**键盘**引入（Tab）时为真；鼠标点击设焦点时为假 —— 焦点
+    /// 本身成立（Space / Enter / 无障碍照常工作），但视觉上不画焦点环。
+    /// 宿主把 [`Self::focused`] 与它一起报告给应用，应用据此决定要不要发
+    /// `focused` 分类名。
+    pub fn is_visible(&self) -> bool {
+        self.visible
     }
 
     /// 焦点状态的版本号。
@@ -91,6 +118,8 @@ impl FocusState {
     /// 保持原状——用户点了一个不可聚焦的地方，焦点就应该让给那个点（通常随后
     /// 由 Tab 重新进入）。这符合「点击空白处取消焦点」的常见交互。
     ///
+    /// 鼠标设焦点**不显示焦点环**（`focus-visible` 语义，见 [`Self::is_visible`]）。
+    ///
     /// 返回是否发生了变化。
     pub fn focus(
         &mut self,
@@ -105,15 +134,22 @@ impl FocusState {
             Some(_) => None, // 点了不可聚焦的地方 = 取消焦点
             None => None,
         };
-        if focused == self.focused {
-            // 目标没变；但可能上一次 written 与 focused 不一致（例如目标节点
-            // 之前没找到），仍需补齐写入。
-            if self.written == self.focused {
-                return false;
-            }
-        } else {
+        let mut changed = false;
+        if focused != self.focused {
             self.focused = focused;
+            changed = true;
+        }
+        // 鼠标点击即便落在**同一个**已聚焦节点上，也要把环收掉（用户此刻在
+        // 用鼠标，键盘环不该出来）。可见性变化同样算一次状态变化。
+        if self.visible {
+            self.visible = false;
+            changed = true;
+        }
+        if changed {
             self.revision += 1;
+        } else if self.written == self.focused {
+            // 目标与可见性都没变，且上次已写进树：无事可做。
+            return false;
         }
         self.write_state(root);
         true
@@ -147,6 +183,8 @@ impl FocusState {
             None => order[0].clone(),
         };
         self.focused = Some(next);
+        // 键盘引入的焦点 → 显示焦点环。
+        self.visible = true;
         self.revision += 1;
         self.write_state(root);
         true
@@ -157,10 +195,11 @@ impl FocusState {
     /// 把 `false` 写回当前节点，并清空内部状态——否则失焦后再点回来，
     /// 旧焦点会一直写着 true。
     pub fn clear(&mut self, root: Option<&mut Node>) -> bool {
-        if self.focused.is_none() && self.written.is_none() {
+        if self.focused.is_none() && self.written.is_none() && !self.visible {
             return false;
         }
         self.focused = None;
+        self.visible = false;
         self.revision += 1;
         if let Some(root) = root {
             self.write_state(root);

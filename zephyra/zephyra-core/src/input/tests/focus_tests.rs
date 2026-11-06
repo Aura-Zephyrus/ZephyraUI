@@ -333,6 +333,59 @@ fn revision_stable_when_tab_finds_nothing() {
     assert_eq!(fs.revision(), r0, "没发生焦点变化，revision 不该动");
 }
 
+// ───────────────────────── 焦点环可见性（focus-visible） ─────────────────────────
+
+#[test]
+fn tab_focus_shows_the_ring() {
+    let mut root = tree();
+    let mut fs = FocusState::new();
+    fs.tab(&mut root, false, ctx());
+    assert!(fs.is_visible(), "Tab 引入的焦点必须让焦点环可见");
+}
+
+#[test]
+fn mouse_focus_does_not_show_the_ring() {
+    let mut root = tree();
+    let mut fs = FocusState::new();
+    let c = ctx();
+    fs.tab(&mut root, false, ctx()); // 先让环可见
+    assert!(fs.is_visible());
+    // 鼠标点同一节点：焦点不变，但环必须收掉。
+    fs.focus(&mut root, Some(&crate::id::ElementKey::Name("a")), c);
+    assert!(fs.focused().is_some(), "鼠标点击仍然设置焦点（行为未变）");
+    assert!(!fs.is_visible(), "鼠标点击不该留下焦点环");
+    assert!(
+        node_named(&root, "a").unwrap().is_focused(ctx()),
+        "FOCUSED 属性照常写入（激活 / 无障碍读它）"
+    );
+}
+
+#[test]
+fn clicking_the_same_focused_node_still_clears_the_ring_and_bumps_revision() {
+    let mut root = tree();
+    let mut fs = FocusState::new();
+    let c = ctx();
+    fs.tab(&mut root, false, ctx()); // a，可见
+    let r = fs.revision();
+    fs.focus(&mut root, Some(&crate::id::ElementKey::Name("a")), c);
+    assert!(fs.revision() > r, "可见性变化必须让宿主知道要重绘");
+}
+
+#[test]
+fn clear_also_hides_the_ring() {
+    let mut root = tree();
+    let mut fs = FocusState::new();
+    fs.tab(&mut root, false, ctx());
+    fs.clear(Some(&mut root));
+    assert!(!fs.is_visible());
+}
+
+#[test]
+fn no_focus_means_ring_not_visible() {
+    let fs = FocusState::new();
+    assert!(!fs.is_visible());
+}
+
 // ─────────────────────────────── 帮助函数 ───────────────────────────────
 
 fn node_named<'a>(root: &'a Node, name: &str) -> Option<&'a Node> {

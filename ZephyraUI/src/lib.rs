@@ -8,7 +8,7 @@
 //! | 控件的 `.zstyle` 样式表（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
 //! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
 //! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
-//! | 控件的**状态模型**（[`checkbox`]） | 状态**存哪**（那是宿主的事） |
+//! | 控件的**状态模型**（[`checkbox`] / [`toggle`]） | 状态**存哪**（那是宿主的事） |
 //! | 控件**自身语义**的文案（[`i18n`]） | 应用自己的文案表 |
 //!
 //! # 结构的真相只有一份：`.zypui`
@@ -43,6 +43,7 @@
 pub mod checkbox;
 pub mod i18n;
 pub mod styles;
+pub mod toggle;
 pub mod tokens;
 
 pub use checkbox::{CheckState, Checkbox, CheckboxGroup};
@@ -51,4 +52,5 @@ pub use i18n::{
     KEY_PARAMS, NAMESPACE,
 };
 pub use styles::{stylesheet, STYLESHEETS};
+pub use toggle::{RadioGroup, RadioOption, ToggleSwitch, KNOB_PRESSED_SCALE, KNOB_TRAVEL};
 pub use tokens as token_names;

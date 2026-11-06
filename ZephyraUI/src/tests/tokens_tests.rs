@@ -61,6 +61,8 @@ fn every_core_role_appears_in_list() {
         roles::CONTROL_SECONDARY,
         roles::CONTROL_TERTIARY,
         roles::CONTROL_STRONG,
+        roles::SWITCH_ACCENT,
+        roles::SWITCH_TRACK,
         roles::CONTROL_BORDER,
         roles::CONTROL_BORDER_STRONG,
         roles::DIVIDER,

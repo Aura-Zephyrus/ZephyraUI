@@ -23,6 +23,7 @@ publish = false
 # **换一个应用还能用吗？** 控件样式表能，导航栏的路由表不能。
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-fx = { path = "../zephyra/zephyra-fx" }
 
 # ⚠️ 控件的**文案**归应用，不归这里：同一个 Button 在不同应用里
 # 叫 "确定" / "OK" / "Submit"。控件只发 key，文案表是应用的。

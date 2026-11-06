@@ -1,6 +1,6 @@
-/* RadioButton、ToggleSwitch —— Apple HIG 度量。
+/* RadioButton、ToggleSwitch。
  *
- * 指示器 22×22，开关 44×24（把手 14）。
+ * 指示器 22×22；开关 64×28（把手 40×24，一比一复刻 iOS LiquidToggle）。
  *
  * ⚠ CheckBox / CheckBoxGroup 的规则在 `controls-checkbox.zstyle` —— 它们
  * 是一族（指示器 + 勾号 + 半选横杠 + 组），与开关族不是一回事。
@@ -22,6 +22,10 @@ Container.radio-indicator {
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border_strong;
+    /* 单选点（.radio-dot）与复选框的勾（.check-indicator）同规格：
+     * 指示器必须把子节点居中，否则圆点画在左上角。 */
+    main-align: center;
+    cross-align: center;
 }
 
 Container.radio-indicator.checked {
@@ -35,6 +39,19 @@ Container.radio-indicator.hovered {
 
 Container.radio-indicator.checked.hovered {
     background: @accent_fill;
+}
+
+/* 焦点环画在**指示器**上（不是整个控件）—— 焦点环是一圈描边，
+   画在外层容器上会连标签一起框住，那读起来像「这一行被选中了」。 */
+Container.radio-indicator.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
+/* 禁用：整组一起变淡 —— 只灰指示器的话，标签还是正常色，
+   读起来像「这颗不能点，但字还能选」。 */
+Control.radio-box.disabled {
+    opacity: 0.45;
 }
 
 Container.radio-dot {
@@ -66,38 +83,92 @@ Text.check-label.hovered {
     text-color: @content;
 }
 
-/* ---- ToggleSwitch ---- */
+/* ---- ToggleSwitch —— 一比一复刻 iOS LiquidToggle ---- */
+/*
+ * 规格（与 AndroidLiquidGlass 的 LiquidToggle.kt / DampedDragAnimation.kt 对齐）：
+ *
+ *     轨道   64×28，Capsule（corner-radius 99），内边距 2
+ *     把手   40×24，Capsule
+ *     行程   64 − 2×2 − 40 = 20px（knob_x = fraction × 20，见控件层 `KNOB_TRAVEL`）
+ *     轨道色 lerp（#787878 20% → #34C759）   —— 深浅各异，见 `switch_track` / `switch_accent` 令牌
+ *
+ * 颜色**不走两个静态分类名**：原版是 `drawRect(lerp(trackColor, accentColor, fraction))`
+ * —— 颜色随把手位置连续过渡，`.on` 只在静态兜底路径里起作用。绑定了动画
+ * （`animated` + `track_bg`）时，这条 `.on` 规则会被**本地**属性覆盖。
+ *
+ * 把手的玻璃主体（白罩 / 模糊 / 折射 / 装饰）全部由宿主逐帧绑定驱动 ——
+ * 白罩 = `White @ (1 − press)`、`[blur(8dp·(1−press)), lens(5dp·press, 10dp·press)]`、
+ * `Highlight.Ambient(alpha = press)`、`InnerShadow(4dp·press, alpha = press)`，
+ * 详见 `.zypui` 的 ToggleSwitch 注释与 `zephyra_ui::ToggleSwitch` 模型。 */
 
 Control.switch {
     direction: horizontal;
     cross-align: center;
-    height: 24px;
+    spacing: 10px;
+    height: 28px;
 }
 
+/* 静态兜底色：不绑定动画时的双色开关（旧行为）。绑定时被本地色覆盖。 */
 Container.switch-track {
-    width: 44px;
-    height: 24px;
+    width: 64px;
+    height: 28px;
     corner-radius: 99px;
-    padding: 5px;
+    padding: 2px;
     direction: horizontal;
     main-align: start;
     cross-align: center;
-    background: @control_strong;
-    border-width: 1px;
-    border-color: @content_disabled;
+    background: @switch_track;
 }
 
 Container.switch-track.on {
     main-align: end;
-    background: @accent_fill;
-    border-color: @accent_fill;
+    background: @switch_accent;
 }
 
+/* 绑定了动画（`animated` 分类词由调用方写上去）：把手位置完全由
+   `translate-x = fraction * 20px` 决定 —— `main-align: end` 在这种形态下
+   是**双倍位移**，所以强制回到 start。两者互斥，缺了这条会出现
+   「开关一半位移」的症状。 */
+Container.switch-track.on.animated {
+    main-align: start;
+}
+
+/* 焦点环画在**轨道**上（与单选钮同理：只框控件本身，不框标签）。 */
+Container.switch-track.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
+/* 禁用：轨道与把手一起变淡。 */
+Container.switch-track.disabled {
+    opacity: 0.45;
+}
+
+/* 把手：40×24 Capsule。背景是**动态值**（`White @ (1 − press)`，由宿主每帧
+   绑定 via `knob_bg`）—— 静态 `.zstyle` 里只给兜底白。玻璃主体（模糊 +
+   折射 + 高光/内阴影/投影）也由宿主绑定的 `knob_filter` / `knob_decoration`
+   驱动，这条规则不表达它们。 */
 Container.switch-knob {
-    width: 14px;
-    height: 14px;
+    width: 40px;
+    height: 24px;
     corner-radius: 99px;
-    background: @content;
+    background: #ffffff;
+}
+
+/* 开关的标签。单独一份类名（不复用 check-label）——
+   开关的标签在轨道**右侧**，字号与单选钮一致但语义不同，
+   分开之后两族各自调字号不必互相牵连。 */
+Text.switch-label {
+    text-size: 15px;
+    text-color: @content_secondary;
+}
+
+Text.switch-label.on {
+    text-color: @content;
+}
+
+Text.switch-label.hovered {
+    text-color: @content;
 }
 
 /* ---- Slider ---- */

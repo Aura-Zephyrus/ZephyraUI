@@ -67,12 +67,28 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 以下组件也不会自行切换业务状态，但这是控件层的声明式边界，不应单独据此判为无效：
 
 - `ToolButton`、`PillButton`、`RoundButton`、`Hyperlink`
-- `RadioButton`、`ToggleSwitch`、`Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
+- `RadioButton` / `ToggleSwitch`（2026-11-02 已补齐状态模型、键盘与无障碍，见下）
+- `Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
 - `CheckBox` / `CheckBoxGroup`（2026-11-01 已补齐三态与键盘，见下）
 - `Slider`、`Expander`、`SettingExpander`、`InfoBar` 的关闭项
 - `MenuItem`、`MenuBarItem`、`ListView` 行、`SwipeView` 页点、`DatePicker` 日期格
 
 这些组件提供 `key` / `INTERACTIVE` / 状态样式所需的结构；点击、拖动、键盘或关闭后要做什么，以及新状态何时回到 `view()`，属于使用它们的应用。**但 `Slider` 目前只有传值与绘制 fill 的结构，不会把拖动位置反算成值**，因此与普通受控按钮不同，仍在上方列为需要补足的交互能力。
+
+**`RadioButton` / `ToggleSwitch` 已补齐状态模型、键盘与无障碍**（2026-11-02）：
+两者的状态**值**与流转**规则**住在控件层 `ZephyraUI/src/toggle.rs`
+（`ToggleSwitch` 两态、`RadioGroup` / `RadioOption` 单选互斥）。开关**没有**半选
+——半选是「组里选了一部分」的派生态，开关没有组。
+文案走双通道（`label_key` → 控件内部 `tr()`；`label` → 动态文本），
+两个组件都补了 `focusable` / `activatable` / `disabled` 与焦点环、禁用态规则；
+开关补了 `key="label"` 文本子节点（无障碍名的来源），状态类 `on` 落在
+**控件自己**身上（只落在子节点 `switch-track` 上时屏读器会一直念「关」）。
+UIA 侧：`switch` → `Role::Switch`（ControlType 复用 CheckBox —— UIA 没有
+Switch 类型），仍走 TogglePattern；`radio-box` → `Role::RadioButton` +
+`ISelectionItemProvider`（`Select` / `IsSelected`，`SelectionContainer` 报父分组），
+状态变化事件改报 `SelectionItemIsSelected` 而不是 `ToggleToggleState`。
+参考页新增第三族「Switches」；门禁 `the_switch_family_is_exposed_with_the_right_roles`
+钉住角色、名字与「恰好一项选中」。
 
 **`CheckBox` / `CheckBoxGroup` 已补齐三态、禁用与键盘**（2026-11-01）：
 `CheckBox` 从「只画一个勾」升级为真三态控件（`Unchecked` / `Checked` /

@@ -81,6 +81,8 @@ pub const KEY_PARAMS: &[(&str, &str)] = &[
     ("RoundButton", "label_key"),
     ("CheckBox", "label_key"),
     ("CheckBoxGroup", "label_key"),
+    ("RadioButton", "label_key"),
+    ("ToggleSwitch", "label_key"),
 ];
 
 /// 这个实参是不是「语义 key」型（按 [`KEY_PARAMS`] 判定）。
@@ -216,13 +218,15 @@ mod tests {
     }
 
     #[test]
-    fn key_param_contract_covers_the_button_and_checkbox_families() {
+    fn key_param_contract_covers_the_button_and_selection_families() {
         for (component, param) in [
             ("Button", "label_key"),
             ("PillButton", "label_key"),
             ("RoundButton", "label_key"),
             ("CheckBox", "label_key"),
             ("CheckBoxGroup", "label_key"),
+            ("RadioButton", "label_key"),
+            ("ToggleSwitch", "label_key"),
         ] {
             assert!(
                 is_key_param(component, param),

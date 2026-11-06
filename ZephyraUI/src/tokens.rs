@@ -29,6 +29,8 @@ pub const CONTROL_FILL_PRESSED: &str = roles::CONTROL_FILL_PRESSED;
 pub const CONTROL_SECONDARY: &str = roles::CONTROL_SECONDARY;
 pub const CONTROL_TERTIARY: &str = roles::CONTROL_TERTIARY;
 pub const CONTROL_STRONG: &str = roles::CONTROL_STRONG;
+pub const SWITCH_ACCENT: &str = roles::SWITCH_ACCENT;
+pub const SWITCH_TRACK: &str = roles::SWITCH_TRACK;
 
 // ---- 描边层 ----
 pub const CONTROL_BORDER: &str = roles::CONTROL_BORDER;
@@ -74,6 +76,8 @@ pub const ALL: &[&str] = &[
     CONTROL_SECONDARY,
     CONTROL_TERTIARY,
     CONTROL_STRONG,
+    SWITCH_ACCENT,
+    SWITCH_TRACK,
     CONTROL_BORDER,
     CONTROL_BORDER_STRONG,
     DIVIDER,

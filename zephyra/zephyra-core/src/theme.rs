@@ -131,6 +131,12 @@ pub struct Theme {
     pub control_tertiary: Color,
     /// 语义层：控件强填充（滑条轨道一类的实心底）。
     pub control_strong: Color,
+    /// 语义层：开关「开」态颜色 —— 一比一复刻 iOS LiquidToggle 的 switch tint
+    /// （浅色 `#34C759`、深色 `#30D158`）。`ToggleSwitch` 专用。
+    pub switch_accent: Color,
+    /// 语义层：开关「关」态颜色 —— iOS 的 switch off tint
+    /// （浅色 `#787878` @ 20%、深色 `#787880` @ 36%）。`ToggleSwitch` 专用。
+    pub switch_track: Color,
     /// 语义层：控件描边。
     pub control_border: Color,
     /// 语义层：控件强描边（未选中复选框的框）。
@@ -208,6 +214,12 @@ impl Theme {
             control_secondary: Color::rgba(1.0, 1.0, 1.0, 0.0837),
             control_tertiary: Color::rgba(1.0, 1.0, 1.0, 0.0419),
             control_strong: Color::rgba(1.0, 1.0, 1.0, 0.5442),
+            switch_accent: Color::rgb(
+                0x30 as f32 / 255.0,
+                0xd1 as f32 / 255.0,
+                0x58 as f32 / 255.0,
+            ),
+            switch_track: Color::rgba(120.0 / 255.0, 120.0 / 255.0, 128.0 / 255.0, 0.36),
             control_border: Color::rgba(0.0, 0.0, 0.0, 0.09),
             control_border_strong: Color::rgba(1.0, 1.0, 1.0, 0.6047),
             divider: Color::rgba(1.0, 1.0, 1.0, 0.0837),
@@ -285,6 +297,12 @@ impl Theme {
             control_secondary: Color::rgba(0.976, 0.976, 0.976, 0.5),
             control_tertiary: Color::rgba(0.976, 0.976, 0.976, 0.3),
             control_strong: Color::rgba(0.0, 0.0, 0.0, 0.4458),
+            switch_accent: Color::rgb(
+                0x34 as f32 / 255.0,
+                0xc7 as f32 / 255.0,
+                0x59 as f32 / 255.0,
+            ),
+            switch_track: Color::rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.2),
             control_border: Color::rgba(0.0, 0.0, 0.0, 0.06),
             control_border_strong: Color::rgba(0.0, 0.0, 0.0, 0.6063),
             divider: Color::rgba(0.0, 0.0, 0.0, 0.0803),
@@ -350,6 +368,8 @@ impl Theme {
             "control_fill_hover" => self.control_fill_hover,
             "control_fill_pressed" => self.control_fill_pressed,
             "accent_fill" => self.accent_fill,
+            "switch_accent" => self.switch_accent,
+            "switch_track" => self.switch_track,
             "on_accent_fill" => self.on_accent_fill,
             "focus_ring" => self.focus_ring,
             "focus_inner" => self.focus_inner,
@@ -400,6 +420,8 @@ pub mod roles {
     pub const CONTROL_SECONDARY: &str = "control_secondary";
     pub const CONTROL_TERTIARY: &str = "control_tertiary";
     pub const CONTROL_STRONG: &str = "control_strong";
+    pub const SWITCH_ACCENT: &str = "switch_accent";
+    pub const SWITCH_TRACK: &str = "switch_track";
     pub const CONTROL_BORDER: &str = "control_border";
     pub const CONTROL_BORDER_STRONG: &str = "control_border_strong";
     pub const DIVIDER: &str = "divider";
