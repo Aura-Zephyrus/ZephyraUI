@@ -70,8 +70,9 @@ hover 是 `.hovered`，动画是 `.enter-3`。
 |---|---|---|
 | 不透明度 | `DisplayList` 的 `Quad.fill` 是 `Color`（含 alpha），但容器没有"整体 alpha" | ✅ `props::OPACITY` 落到**背景 / 描边 / 文字 / 图像 / 图标**五处，并沿父子链**相乘** |
 | 位置 | 布局算出 rect，绘制直接读 rect | ✅ 新增 `props::TRANSLATE_X/Y`，绘制时加一个**不影响布局盒与命中测试**的偏移 |
+| 缩放 | core 只有位移，没有 scale | ✅ 新增 `props::SCALE_X/Y`（`PropertyKey::new`，不影响布局与命中测试）。**绕元素中心、只作用本节点自己的外观**（背景 / 描边 / 图像 / 图标 / 装饰）：文字不缩放、子节点不跟随。非等比时圆角 / 描边 / 图像边长取两轴较小值，非法值（≤ 0 / 非有限）按 1.0 处理。 |
 
-两条能力由 `zephyra-core/tests/paint_transform_tests.rs`（15 条）钉住，
+三条能力由 `zephyra-core/tests/paint_transform_tests.rs`（25 条）钉住，
 接线由 `ZephyraUI/tests/anim_wiring_tests.rs`（7 条）钉住，
 过程与取舍见 [`task-anim-wire.md`](../dev-log/task-anim-wire.md)。
 

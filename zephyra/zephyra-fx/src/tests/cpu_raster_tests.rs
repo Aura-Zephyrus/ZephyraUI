@@ -142,6 +142,7 @@ fn a_solid_drawn_after_an_image_covers_it() {
             stroke: None,
             filter: Default::default(),
             blend: Default::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();

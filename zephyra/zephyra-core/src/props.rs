@@ -158,6 +158,35 @@ pub static TRANSLATE_X: PropertyKey = PropertyKey::new("TranslateX", PropertyVal
 /// 绘制时 Y 偏移（DIP）。见 [`TRANSLATE_X`]。
 pub static TRANSLATE_Y: PropertyKey = PropertyKey::new("TranslateY", PropertyValue::float(0.0));
 
+/// 绘制时 X 缩放（以元素矩形中心为原点）。
+///
+/// # 语义（与 [`TRANSLATE_X`] 的差别）
+///
+/// 与偏移一样是**纯绘制**属性（`affects_layout() == false`），不改布局盒、
+/// 不改命中测试。但作用面不同：
+///
+/// - 偏移**沿父链累加**，带着整棵子树一起动；
+/// - 缩放**只作用于本节点自己的外观** —— 背景 / 描边 / 图像 / 图标 /
+///   玻璃装饰，想在子节点上缩放就自己再写一遍 `scale-x` / `scale-y`。
+///
+/// # 为什么不做成"带子树的变换"
+///
+/// 文字的字形四边形按元素原点缓存（见 [`crate::paint::Command::Text`]），
+/// 若缩放要连文字一起放大，就得给那条命令再加一个缩放字段并改三后端的
+/// 顶点展开 —— 那是独立一轮。当前用它的场景（开关把手按压时拉伸）是叶子
+/// 节点，没有子树也没有文字，所以先把语义钉死在"本节点外观"上，并在这条
+/// 注释里写清楚，而不是让调用方以为它能当 CSS `transform` 用。
+///
+/// # 非法值
+///
+/// `<= 0` 与非有限值一律按 `1.0`（不缩放）处理：负值意味着镜像，而四类
+/// 图元的矩形 / 圆角 / 描边都没有镜像语义（圆角会成为反向外框）；非有限值
+/// 会让顶点变 NaN，表现为"整块不画"。
+pub static SCALE_X: PropertyKey = PropertyKey::new("ScaleX", PropertyValue::float(1.0));
+
+/// 绘制时 Y 缩放。见 [`SCALE_X`]。
+pub static SCALE_Y: PropertyKey = PropertyKey::new("ScaleY", PropertyValue::float(1.0));
+
 /// 合成层（决定后端如何切 render pass）。
 pub static LAYER: PropertyKey =
     PropertyKey::new("Layer", PropertyValue::layer(crate::paint::Layer::Content));
@@ -210,6 +239,25 @@ pub static MATERIAL: PropertyKey = PropertyKey::new(
 pub static MATERIAL_PARAMS: PropertyKey = PropertyKey::new(
     "MaterialParams",
     PropertyValue::material_params(crate::filter::MaterialParams::none()),
+);
+
+/// 玻璃装饰（`decoration`）：镜面高光 / 外投影 / 内阴影。
+///
+/// # 为什么它与 [`FILTER`] / [`MATERIAL`] 是第三件事
+///
+/// | 属性 | 描述什么 |
+/// |---|---|
+/// | [`FILTER`] | 这条命令**自己**要多经过什么处理（模糊 / 投影 / 折射） |
+/// | [`MATERIAL`] | 高层的表面选型（纯色 / 磨砂 / 液态玻璃） |
+/// | 本属性 | 一块玻璃的**装饰四件套**：各画在内容的哪一侧 |
+///
+/// 层序（外投影在内容下、高光与内阴影在内容上）是**契约**，所以它不能塞进
+/// 滤镜链 —— 链里没有"这一层在内容之上"的表达。见 [`crate::decoration`]。
+///
+/// 不可继承：与 [`FILTER`] 同理。
+pub static DECORATIONS: PropertyKey = PropertyKey::new(
+    "Decorations",
+    PropertyValue::decorations(crate::decoration::Decorations::none()),
 );
 
 /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]，即普通 alpha 合成）。

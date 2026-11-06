@@ -177,6 +177,16 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "translate-y",
         key: &props::TRANSLATE_Y,
     },
+    // 绘制时缩放（以元素中心为原点，只作用于本节点自身外观）。
+    // 与偏移同为 `PropertyKey::new`，改它只重绘。
+    Prop {
+        css: "scale-x",
+        key: &props::SCALE_X,
+    },
+    Prop {
+        css: "scale-y",
+        key: &props::SCALE_Y,
+    },
     Prop {
         css: "layer",
         key: &props::LAYER,
@@ -198,6 +208,11 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop {
         css: "material-params",
         key: &props::MATERIAL_PARAMS,
+    },
+    // 玻璃装饰：高光 / 外投影 / 内阴影（写在哪一侧由契约定，不由样式表定）。
+    Prop {
+        css: "decoration",
+        key: &props::DECORATIONS,
     },
     // ---- 图像 / 图标 ----
     Prop {

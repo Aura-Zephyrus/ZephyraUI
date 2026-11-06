@@ -188,6 +188,20 @@ impl Rect {
         }
     }
 
+    /// 四边各外扩 `o` 的副本（`o` 的四边可不同、可为 0）。
+    ///
+    /// 玻璃装饰的离屏边界用它把滤镜外扩与**外投影**外扩并起来 —— 两者
+    /// 是"逐边取大"的关系（见 [`crate::filter::Outset::union`]），这里只做
+    /// 纯几何的"按一份 outset 挪边"。
+    pub const fn outset_by(&self, o: crate::filter::Outset) -> Rect {
+        Rect::new(
+            self.x - o.left,
+            self.y - o.top,
+            self.width + o.left + o.right,
+            self.height + o.top + o.bottom,
+        )
+    }
+
     /// 右边界。
     pub fn right(&self) -> f32 {
         self.x + self.width

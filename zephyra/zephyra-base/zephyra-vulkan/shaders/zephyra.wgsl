@@ -645,6 +645,98 @@ fn fs_refraction(i: VsOut) -> @location(0) vec4f {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  透镜（原版 `lens()`）—— 与 HLSL 的 `PSLens` 手抄对应
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 逐字转译 `RoundedRectRefractionWithDispersionShaderString`。与 `fs_refraction`
+// 是**不同的公式**：位移剖面是 `circleMap(1 - -sd / height) * amount`，方向来自
+// `gradSdRoundedRect`（倒角半径 `min(radius * 1.5, min(half_size))`），并按
+// `(cx·cy)/(hx·hy)` 做 7 通道分色。
+
+/// `gradSdRoundedRect` 的逐字转译。
+fn grad_sd_rounded_rect(coord: vec2f, half_size: vec2f, radius: f32) -> vec2f {
+    let corner_coord = abs(coord) - (half_size - vec2f(radius, radius));
+    if (corner_coord.x >= 0.0 || corner_coord.y >= 0.0) {
+        return sign(coord) * normalize(max(corner_coord, vec2f(0.0, 0.0)));
+    }
+    let grad_x = select(0.0, 1.0, corner_coord.x >= corner_coord.y);
+    return sign(coord) * vec2f(grad_x, 1.0 - grad_x);
+}
+
+fn circle_map(x: f32) -> f32 {
+    return 1.0 - sqrt(1.0 - x * x);
+}
+
+@fragment
+fn fs_lens(i: VsOut) -> @location(0) vec4f {
+    let half_size = i.half_size;
+    // `offset = -padding` 在本仓恒为 0（见 `offscreen::lens_composite_quad`）。
+    let centered_coord = i.local - half_size;
+    let radius = i.corner.x;
+    let refraction_height = i.color.g;
+    // 原版以负数写入 uniform：沿外法线向内采样 = 放大。
+    let refraction_amount = -i.corner.y;
+
+    let sd = sd_round_rect(centered_coord, half_size, radius);
+    let uv = dst_uv(i);
+    if (-sd >= refraction_height) {
+        return textureSampleLevel(g_dst, g_smp, uv, 0.0);
+    }
+    let mask = saturate(-sd / 1.0);
+    let sd_in = min(sd, 0.0);
+
+    let d = circle_map(1.0 - -sd_in / refraction_height) * refraction_amount;
+    let grad_radius = min(radius * 1.5, min(half_size.x, half_size.y));
+    let grad = normalize(grad_sd_rounded_rect(centered_coord, half_size, grad_radius));
+    let px2uv = vec2f(dpdx(uv.x), dpdy(uv.y));
+    let base = d * grad * px2uv;
+    let dispersion_intensity =
+        (centered_coord.x * centered_coord.y) / (half_size.x * half_size.y);
+    let dispersed = base * dispersion_intensity;
+
+    var color = vec4f(0.0, 0.0, 0.0, 0.0);
+
+    let red = textureSampleLevel(g_dst, g_smp, saturate2(uv + base + dispersed), 0.0);
+    color.r += red.r / 3.5;
+    color.a += red.a / 7.0;
+
+    let orange =
+        textureSampleLevel(g_dst, g_smp, saturate2(uv + base + dispersed * (2.0 / 3.0)), 0.0);
+    color.r += orange.r / 3.5;
+    color.g += orange.g / 7.0;
+    color.a += orange.a / 7.0;
+
+    let yellow =
+        textureSampleLevel(g_dst, g_smp, saturate2(uv + base + dispersed * (1.0 / 3.0)), 0.0);
+    color.r += yellow.r / 3.5;
+    color.g += yellow.g / 3.5;
+    color.a += yellow.a / 7.0;
+
+    let green = textureSampleLevel(g_dst, g_smp, saturate2(uv + base), 0.0);
+    color.g += green.g / 3.5;
+    color.a += green.a / 7.0;
+
+    let cyan =
+        textureSampleLevel(g_dst, g_smp, saturate2(uv + base - dispersed * (1.0 / 3.0)), 0.0);
+    color.g += cyan.g / 3.5;
+    color.b += cyan.b / 3.0;
+    color.a += cyan.a / 7.0;
+
+    let blue =
+        textureSampleLevel(g_dst, g_smp, saturate2(uv + base - dispersed * (2.0 / 3.0)), 0.0);
+    color.b += blue.b / 3.0;
+    color.a += blue.a / 7.0;
+
+    let purple = textureSampleLevel(g_dst, g_smp, saturate2(uv + base - dispersed), 0.0);
+    color.r += purple.r / 7.0;
+    color.b += purple.b / 3.0;
+    color.a += purple.a / 7.0;
+
+    // 预乘空间：rgb 与 a 一起乘遮罩。
+    return color * mask;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  背景模糊（磨砂玻璃）—— 与 HLSL 的 `PSBackdropBlur` 手抄对应
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -693,4 +785,102 @@ fn fs_backdrop_blur(i: VsOut) -> @location(0) vec4f {
     // 保持预乘不变量（rgb ≤ a）。
     let a = bg.a * mask;
     return vec4f(bg.rgb * mask, a);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  玻璃装饰（高光 / 外投影挖洞 / 内阴影）
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  与 `zephyra.hlsl` 的 `PSHollowShadow` / `PSHighlight` / `PSInnerShadow`
+//  逐项对应：两份手抄、同一份契约。层序契约：外投影 → 内容 → 高光 → 内阴影。
+//  顶点字段约定与折射同族（`local`/`half_size` 是元素的、`uv` 归一化），
+//  参数塞法见 `zephyra_fx::offscreen` 三个构造函数的表。
+
+/// 高斯柔边的覆盖率（HLSL `SoftBand` 的镜像）。
+fn soft_band(d: f32, sigma: f32) -> f32 {
+    let s = max(sigma, 0.0001);
+    return exp(-(d * d) / (2.0 * s * s));
+}
+
+/// 挖洞外投影合成：影子（已模糊）→ 染色 → **挖掉元素内侧**。
+///
+/// `local` 走**元素坐标系**（元素左上为原点，外侧为负/超出）；`sd > 0`
+/// 是元素外（影子保留）、`sd <= 0` 是内侧（清零）。
+@fragment
+fn fs_hollow_shadow(i: VsOut) -> @location(0) vec4f {
+    let t = textureSampleLevel(g_tex, g_smp, i.uv, 0.0);
+    let tint_amount = i.corner.y;
+    let p = i.local - i.half_size;
+    let sd = sd_round_rect(p, i.half_size, i.corner.x);
+    let keep = saturate(sd / 1.0);
+    if (tint_amount <= 0.0) {
+        return t * keep;
+    }
+    let a = t.a * i.color.a * keep;
+    return vec4f(i.color.rgb * a, a);
+}
+
+/// 镜面高光 overlay：内缘亮线。`corner.y` = kind（0 Plain / 1 Default / 2
+/// Ambient），`color` = `(描边宽, 模糊σ, 强度, 方向角)`；颜色是常量白。
+@fragment
+fn fs_highlight(i: VsOut) -> @location(0) vec4f {
+    let stroke_w = i.color.x;
+    let sigma = i.color.y;
+    let alpha = i.color.z;
+    let angle = radians(i.color.w);
+    let kind = i.corner.y;
+
+    let p = i.local - i.half_size;
+    let d = sd_round_rect(p, i.half_size, i.corner.x);
+    // ⚠ 原版 `HighlightNode` 把描边**裁到轮廓内**（`canvas.clipOutline`）：
+    // 可见的是靠边的一条**内**带，形状外面一个像素都不画。
+    // 这里曾经允许 `d <= 0.75`，于是 Ambient 的白色半圈画到形状**外面**，
+    // 在深色背景上变成一条锯齿亮线。
+    if (d > 0.5) { discard; }
+    // `drawOutline(Stroke, W)` 的 W **居中**于轮廓 ⇒ 只剩 W/2 的内带；
+    // `blurRadius` 再把它软化。下限 0.5px 防止整数化后带子消失。
+    let band = max(stroke_w * 0.5, 0.5);
+    let cover = soft_band(d + band * 0.5, max(sigma, 0.5));
+    if (cover <= 0.0039) { discard; }
+
+    // 边缘法线用 `grad_sd_rounded_rect`（与 `fs_lens` / 原版高光同一份）。
+    let grad_radius = min(i.corner.x * 1.5, min(i.half_size.x, i.half_size.y));
+    let grad = grad_sd_rounded_rect(p, i.half_size, grad_radius);
+    let normal = vec2f(cos(angle), sin(angle));
+    let dd = dot(grad, normal);
+    let intensity = pow(abs(dd), 1.0);
+
+    var tint = vec3f(1.0, 1.0, 1.0);
+    var base = 0.5;
+    if (kind > 1.5) {
+        // Ambient（原版 `AmbientHighlightShaderString`）：
+        //   `t = step(0, dot(grad, normal))` ⇒ **受光那半圈白、背光那半圈黑**。
+        //   判据是「法线朝哪」，不是「形状内还是外」。
+        tint = select(vec3f(0.0, 0.0, 0.0), vec3f(1.0, 1.0, 1.0), dd >= 0.0);
+        base = 0.38;
+    }
+    let a = base * alpha * intensity * cover;
+    return vec4f(tint * a, a);
+}
+
+/// 内阴影 overlay：形状内侧的暗边。`corner.y` = σ，
+/// `color` = `(偏移x, 偏移y, 总强度, 0)`；颜色是常量黑 @0.15。
+@fragment
+fn fs_inner_shadow(i: VsOut) -> @location(0) vec4f {
+    let sigma = i.corner.y;
+    let off = i.color.xy;
+    let alpha = i.color.z;
+
+    let p = i.local - i.half_size;
+    let d = sd_round_rect(p, i.half_size, i.corner.x);
+    let inside = saturate(-d / 1.0);
+    if (inside <= 0.0039) { discard; }
+
+    // 偏移形状的 SDF：阴影从"偏移形状之外"衰减进来。
+    let di = sd_round_rect(p - off, i.half_size, i.corner.x);
+    let cover = soft_band(di, sigma) * inside;
+    if (cover <= 0.0039) { discard; }
+
+    let a = 0.15 * alpha * cover;
+    return vec4f(0.0, 0.0, 0.0, a);
 }

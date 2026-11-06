@@ -142,6 +142,34 @@ pub enum Filter {
         /// 超出这个区间就不再像玻璃，所以给了上界。
         ior: f32,
     },
+    /// 透镜（原版 `lens()`）：把元素**背后**的画面按边缘法线推开再显示。
+    ///
+    /// # 与 [`Filter::Refraction`] 的关系
+    ///
+    /// `Refraction` 是本仓为玻璃块总结的「斯涅尔公式」实现；本变体是
+    /// AndroidLiquidGlass（`kyant/backdrop`, Apache-2.0）里 `liquid toggle`
+    /// 实际使用的 `lens()` 的**逐字转译**——`RoundedRectRefractionWithDispersionShaderString`：
+    /// `circleMap(1 - -sd / refraction_height) · refraction_amount` 位移剖面、
+    /// `gradSdRoundedRect`（`min(radius * 1.5, min(halfSize))` 的倒角带）、
+    /// 7 通道分色（R/O/Y/G/C/B/P，按 `(cx·cy)/(hx·hy)` 强度缩放）。
+    ///
+    /// # 为什么加变体而不是改 `Refraction`
+    ///
+    /// 材质页与 `glass` 材质建立在 `Refraction` 之上（它的
+    /// `refraction_displacement_is_bounded_by_the_thickness` 门禁按斯涅尔式推导），
+    /// 换公式会波及所有玻璃块。本变体只给液态开关把手用，语义完全照搬原版：
+    ///
+    /// - `refractionHeight <= 0` 或 `refractionAmount <= 0` → 不产生 pass（原版
+    ///   直接 `return`），由 [`Filter::is_identity`] 落实；
+    /// - `padding > 0` 时 `padding -= refractionHeight`（clamp ≥ 0）——本仓 padding
+    ///   恒为 0（`BackdropBlur` 不设 padding），所以 offset 恒 0，不单独占字段；
+    /// - `chromaticAberration = true` 恒为 true（液态开关写死），7 通道全部参与。
+    Lens {
+        /// 倒角带宽度**（元素内单位）**：`-sd < refraction_height` 才参与，带外原样返回。
+        refraction_height: f32,
+        /// 位移量（像素）：带内边缘方向最大 `refraction_amount`。
+        refraction_amount: f32,
+    },
     /// 背景模糊（磨砂玻璃）：把元素**背后**已经画在屏幕上的画面模糊后再透出。
     ///
     /// # 与 [`Filter::Blur`] / [`Filter::Refraction`] 的关系
@@ -239,6 +267,9 @@ impl Filter {
             // 外扩会把"背景被模糊的区域"扩到元素矩形之外，而那圈里根本没有
             // 元素的背景可糊 —— 纯浪费，还会在拿不到目标副本时把元素自己的内容
             // 多画一圈出去。
+            // 透镜同样**不外扩** —— 与折射同理：位移 ≤ refraction_amount，采样的是
+            // 全屏目标副本（或它的模糊产物），外扩只撑大 RT、解决不了任何问题。
+            Filter::Lens { .. } => Outset::default(),
             Filter::BackdropBlur { .. } => Outset::default(),
         }
     }
@@ -290,6 +321,13 @@ impl Filter {
                 let _ = (bezel, dispersion, ior);
                 !param_active(*strength)
             }
+            // 透镜的唯一有效参数是 `refraction_height` / `refraction_amount`：
+            // 任一为 0（原版 `lens()` 直接 return）整个滤镜是恒等。
+            // 与 `PSLens` 里 `refractionHeight <= 0 || refractionAmount <= 0` 早退一致。
+            Filter::Lens {
+                refraction_height,
+                refraction_amount,
+            } => !(param_active(*refraction_height) && param_active(*refraction_amount)),
             // 背景模糊在 σ ≤ 0 时恒等（与 [`Filter::Blur`] 同判据）。
             Filter::BackdropBlur { sigma } => blur_radius(*sigma) <= 0.0,
         }

@@ -615,6 +615,11 @@ pub struct RenderReport {
     /// 判据：用了折射的页面 `refraction_passes > 0`；且它与
     /// `offscreen_passes` 之差恰好是模糊趟数。
     pub refraction_passes: usize,
+    /// 本次**真的画出**了透镜趟的次数（`Filter::Lens`，原版 `lens()` 的逐字转译）。
+    ///
+    /// 与 [`Self::refraction_passes`] 对称：透镜也读 `g_dst`、也共用离屏 pass
+    /// 的计数。分开记的理由同样是「没生效」与「效果很弱」在画面上几乎一样。
+    pub lens_passes: usize,
     /// 本次**真的画出**了背景模糊（磨砂玻璃）趟的次数（`Filter::BackdropBlur`）。
     ///
     /// 与 [`Self::refraction_passes`] 对称：两者都是"读 `g_dst` 的合成期效果"，
@@ -658,6 +663,7 @@ impl RenderReport {
         self.unimplemented_blends += other.unimplemented_blends;
         self.offscreen_passes += other.offscreen_passes;
         self.refraction_passes += other.refraction_passes;
+        self.lens_passes += other.lens_passes;
         self.backdrop_blur_passes += other.backdrop_blur_passes;
         self.reallocated |= other.reallocated;
         // `vertex_bytes` 取**最大值**而不是求和：所有段共用同一个顶点缓冲，而它
@@ -1323,6 +1329,7 @@ pub fn expand_range_translated_into(
                 stroke,
                 filter,
                 blend,
+                ..
             } => {
                 // 效果/混合模式由 GPU 后端执行，本层只展开几何。但要**记一笔**：
                 // 效果静默消失时没有任何视觉线索，这个计数是唯一诊断手段。

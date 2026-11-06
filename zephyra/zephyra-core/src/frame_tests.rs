@@ -292,6 +292,82 @@ fn damage_is_union_of_multiple_dirty_nodes() {
     );
 }
 
+/// 脏节点的**绘制缩放**非恒等时，脏区必须退让成整帧。
+///
+/// 只用布局盒当脏区，scissor 会裁掉放大后多出来的那圈像素；而且旧位置（较小
+/// 的矩形）没有旧矩形快照可清 —— 两个方向都会留残影。`shot` 强制
+/// `Damage::Full` 所以看不到它，真机（长按让把手续涨到 1.5）才看得到。
+#[test]
+fn damage_falls_back_to_full_when_a_dirty_node_is_scaled() {
+    let mut cache = FrameCache::new();
+    let bounds = (400.0, 300.0);
+    step(
+        &mut cache,
+        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        bounds,
+    );
+
+    let scaled = Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))
+        .with(&props::SCALE_X, PropertyValue::float(1.5))
+        .with(&props::SCALE_Y, PropertyValue::float(1.5))]);
+    assert!(
+        damage_of(&mut cache, &scaled, bounds).is_full(),
+        "缩放的脏节点会移出布局盒：必须整帧重绘，否则放大/缩回都留残影"
+    );
+}
+
+/// 脏节点的**绘制位移**非恒等时，脏区必须退让成整帧。
+///
+/// 把手的 20px 行程就是 `translate-x`：新位置要画、旧位置要清，而旧矩形没有
+/// 快照。不整帧重来，旧位置就留着上一帧的把手。
+#[test]
+fn damage_falls_back_to_full_when_a_dirty_node_is_translated() {
+    let mut cache = FrameCache::new();
+    let bounds = (400.0, 300.0);
+    step(
+        &mut cache,
+        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        bounds,
+    );
+
+    let moved =
+        Element::new(NodeTag::Container)
+            .with_children([chip(Color::rgb(0.9, 0.2, 0.2))
+                .with(&props::TRANSLATE_X, PropertyValue::float(20.0))]);
+    assert!(
+        damage_of(&mut cache, &moved, bounds).is_full(),
+        "位移的脏节点：旧位置没人清，必须整帧重绘"
+    );
+}
+
+/// 装饰（投影 / 高光）画到布局盒**之外**，脏区必须跟着外扩。
+///
+/// 装饰不移动、参数也不变，所以不必整帧；但外扩的那圈若不进脏区，scissor
+/// 会把投影与高光裁掉 —— 症状是「一交互，玻璃边缘的亮线/影子缺一角」。
+#[test]
+fn damage_expands_for_decorations() {
+    let mut cache = FrameCache::new();
+    let bounds = (400.0, 300.0);
+    step(
+        &mut cache,
+        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        bounds,
+    );
+
+    let decorated =
+        Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2)).with(
+            &props::DECORATIONS,
+            PropertyValue::decorations(crate::decoration::Decorations::glass()),
+        )]);
+    let Damage::Rect(r) = damage_of(&mut cache, &decorated, bounds) else {
+        panic!("装饰不改布局，脏区不该退让成整帧");
+    };
+    assert!(
+        r.width > 120.0 && r.height > 60.0,
+        "脏区没算装饰外扩：投影/高光会被 scissor 裁掉；实际 {r:?}"
+    );
+}
+
 /// 折叠一个节点：必须重绘（否则它的命令会留在留用的 `DisplayList` 里），
 /// 且脏区必须退让成 `Full`。
 ///

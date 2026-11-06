@@ -96,6 +96,15 @@ pub enum Command {
         filter: crate::filter::FilterChain,
         /// 混合模式（与已画内容合成）。
         blend: crate::filter::BlendMode,
+        /// 玻璃装饰（高光 / 外投影 / 内阴影）；`none` = 不装饰。
+        ///
+        /// # 为什么挂在命令上而不进 `filter`
+        ///
+        /// 滤镜描述"这条命令自己怎么处理"；装饰描述的是**三件独立的层**，
+        /// 各画在内容的固定一侧（外投影在下、高光与内阴影在上）——那个
+        /// 层序是契约，滤镜链里没有"这一层在内容之上"的表达。
+        /// 见 [`crate::decoration::Decorations`]。
+        decorations: crate::decoration::Decorations,
     },
     /// 填充一段路径（图标、矢量图形等非常规形状）。
     Path {
@@ -501,6 +510,20 @@ pub fn command_filter(cmd: &Command) -> Option<&crate::filter::FilterChain> {
     }
 }
 
+/// 一条命令携带的**玻璃装饰**；`None` = 该命令类型不携带（只有 Quad 有）。
+///
+/// # 为什么只有 Quad
+///
+/// 装饰的着色靠**圆角矩形 SDF**（高光描边、内阴影、投影挖洞全都按
+/// `sd_round_rect` 算），而 SDF 需要"元素矩形 + 圆角半径"——只有
+/// [`Command::Quad`] 同时带着这两样。玻璃控件本来就是圆角矩形。
+pub fn command_decorations(cmd: &Command) -> Option<&crate::decoration::Decorations> {
+    match cmd {
+        Command::Quad { decorations, .. } => Some(decorations),
+        _ => None,
+    }
+}
+
 /// 一条命令要模糊 / 投影的**原始内容矩形**（未外扩）。
 ///
 /// # 为什么单独抽出来
@@ -705,6 +728,72 @@ impl PaintState {
     }
 }
 
+/// 一个节点在绘制趟里的**本节点**变换：祖先位移 + 本节点绘制缩放。
+///
+/// # 为什么缩放不累乘
+///
+/// 位移沿父链**相加**（嵌套容器带着子树一起动），而缩放是**本节点自己的
+/// 外观**（见 [`crate::props::SCALE_X`]）—— 子节点要缩放就自己再写一遍。
+/// 把它做成累乘会需要"子树变换栈"，而文字字形按元素原点缓存、目前没有
+/// 缩放通道，那半套语义比明说"只缩放本节点"更难查。
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NodeDraw {
+    /// 已含祖先位移的绘制偏移。
+    offset: Point,
+    /// 本节点自身的绘制缩放。
+    scale: Point,
+    /// **未平移**矩形（布局盒）的中心。
+    center: Point,
+}
+
+impl NodeDraw {
+    fn new(node: &Node, offset: Point, ctx: Context<'_>) -> Self {
+        let r = node.rect();
+        Self {
+            offset,
+            scale: Point::new(node.scale_x(ctx), node.scale_y(ctx)),
+            center: Point::new(r.x + r.width * 0.5, r.y + r.height * 0.5),
+        }
+    }
+
+    /// 是否恒等（不移动也不缩放）。
+    fn is_identity(&self) -> bool {
+        self.offset.x == 0.0 && self.offset.y == 0.0 && self.scale.x == 1.0 && self.scale.y == 1.0
+    }
+
+    /// 把一个**布局坐标**映射到画面上：先绕本节点中心缩放，再加偏移。
+    fn point(&self, p: Point) -> Point {
+        if self.is_identity() {
+            return p;
+        }
+        Point::new(
+            (p.x - self.center.x) * self.scale.x + self.center.x + self.offset.x,
+            (p.y - self.center.y) * self.scale.y + self.center.y + self.offset.y,
+        )
+    }
+
+    /// 映射一个矩形。宽高按两轴分别缩放。
+    fn rect(&self, r: Rect) -> Rect {
+        if self.is_identity() {
+            return r;
+        }
+        let p = self.point(Point::new(r.x, r.y));
+        Rect::new(p.x, p.y, r.width * self.scale.x, r.height * self.scale.y)
+    }
+
+    /// 缩放一个标量（圆角半径 / 描边宽度 / 图像边长）。
+    ///
+    /// 非等比缩放取**两轴较小值**：圆角与描边只有一个标量，用较大值会让
+    /// 细长形状的边看起来比形状本身还粗。
+    fn scalar(&self, v: f32) -> f32 {
+        if self.is_identity() {
+            v
+        } else {
+            v * self.scale.x.min(self.scale.y)
+        }
+    }
+}
+
 fn render_rec(
     node: &Node,
     ctx: Context<'_>,
@@ -718,7 +807,10 @@ fn render_rec(
     // 先进"本节点"再画：累积的不透明度与位移既属于本节点，也往下传。
     let state = state.descend(node, ctx);
     let offset = state.translate;
-    let rect = moved(node.rect(), offset);
+    // 本节点自己的绘制变换：祖先位移 + 本节点的绘制缩放。缩放**不沿父链
+    // 相乘**（语义见 `props::SCALE_X`），所以这里每次从本节点取值。
+    let draw = NodeDraw::new(node, offset, ctx);
+    let rect = draw.rect(node.rect());
     let opacity = state.opacity;
     let layer = node.layer(ctx);
     // 效果与混合模式取自节点自身，不沿父链继承（见 props.rs 的理由）。
@@ -734,10 +826,28 @@ fn render_rec(
     // 只会让人以为它坏了。
     let fill = node.background(ctx).with_alpha(opacity);
     let stroke_color = node.border_color(ctx).with_alpha(opacity);
-    let stroke_width = node.border_width(ctx);
-    let radius = node.corner_radius(ctx);
+    let stroke_width = draw.scalar(node.border_width(ctx));
+    let radius = draw.scalar(node.corner_radius(ctx));
     let has_stroke = stroke_color.a > 0.0 && stroke_width > 0.0;
-    if fill.a > 0.0 || has_stroke {
+    let decorations = node.decorations(ctx);
+    // 背景全透明（或根本没有背景）**不等于**这条命令不存在：滤镜与玻璃装饰
+    // 描述的是"元素背后那一层"，与元素自己的 fill 无关。漏掉这一条的症状是
+    // 「按住时开关把手整块消失」—— 白罩 alpha 随按压归零后，同时承载
+    // `BackdropBlur` / `Lens` / `InnerShadow` 的那条 Quad 也不再发出，于是越按
+    // 越空，而不是变成玻璃。
+    //
+    // 但**不能无条件补**：图标 / 图像 / 文字 / 自绘源已经在它们自己的命令上带
+    // 了同一个 `filter`，再补一条空的 Quad 会让同一层开两次离屏（`effect_contract`
+    // 里 `blurred_vector_icon_yields_offscreen_requirement` 直接按数量断言）。
+    // 装饰没有别的载体（高光/内阴影必须有一条 Quad 才有离屏块的尾部时机），
+    // 所以它单独算一条要补的理由。
+    let has_own_content = node.image_texture(ctx).is_some()
+        || node.icon_name(ctx).is_some_and(|n| !n.is_empty())
+        || node.text().is_some()
+        || !node.render_source(ctx).is_none();
+    let filter_needs_quad = !filter.is_identity() && !has_own_content;
+    let decorations_need_quad = !decorations.is_identity();
+    if fill.a > 0.0 || has_stroke || filter_needs_quad || decorations_need_quad {
         out.push(
             SortKey {
                 layer,
@@ -751,13 +861,16 @@ fn render_rec(
                 stroke: has_stroke.then_some((stroke_color, stroke_width)),
                 filter: filter.clone(),
                 blend,
+                decorations,
             },
         );
     }
 
     // 图像内容
     if let Some(texture) = node.image_texture(ctx) {
-        let size = node.image_size(ctx);
+        // `image_size` 是一个标量（正方边长），非等比缩放时取两轴较小的那个 ——
+        // 与圆角 / 描边同一条降级规则：宁可小一点，不要拉伸到变形。
+        let size = draw.scalar(node.image_size(ctx));
         let dst = if size > 0.0 {
             // 指定边长：在节点矩形内居中。
             let dx = rect.x + (rect.width - size) * 0.5;
@@ -777,7 +890,7 @@ fn render_rec(
                 src: node.image_src(ctx),
                 dst,
                 radius: CornerRadius {
-                    radius: node.corner_radius(ctx),
+                    radius: draw.scalar(node.corner_radius(ctx)),
                 },
                 tint: node.image_tint(ctx).with_alpha(opacity),
                 filter: filter.clone(),
@@ -804,16 +917,9 @@ fn render_rec(
             if !name.is_empty() {
                 // 这里传的是**未平移**的 `node.rect()`，不是上面那个 `rect` ——
                 // 理由见 [`icon_command`] 里"几何缓存查找"那一段的警告。
-                if let Some(cmd) = icon_command(
-                    &name,
-                    node.rect(),
-                    node,
-                    ctx,
-                    &filter,
-                    blend,
-                    opacity,
-                    offset,
-                ) {
+                if let Some(cmd) =
+                    icon_command(&name, node.rect(), node, ctx, &filter, blend, opacity, draw)
+                {
                     out.push(
                         SortKey {
                             layer,
@@ -886,19 +992,6 @@ fn render_rec(
     }
 }
 
-/// 矩形加一个绘制时偏移。
-///
-/// 没有位移时**原样返回**（不动 `x`/`y` 的浮点位）—— 那让"静止时零开销"是
-/// 结构上的事实，而不是靠调用方判 `is_zero()`。
-#[inline]
-fn moved(r: Rect, offset: Point) -> Rect {
-    if offset.x == 0.0 && offset.y == 0.0 {
-        r
-    } else {
-        Rect::new(r.x + offset.x, r.y + offset.y, r.width, r.height)
-    }
-}
-
 /// 文本绘制命令（`None` = 不产出）。
 ///
 /// 抽成自由函数而不是 [`Node`] 的方法：它需要 `&Node`（只读），而其余样式 getter
@@ -927,6 +1020,15 @@ fn moved(r: Rect, offset: Point) -> Rect {
 /// 代价是 [`Command::Text`] 多一个 `offset` 字段，且**三处**必须同步用它：
 /// `text_command`（写入）、`command_content_rect`（滤镜范围）、`zephyra-fx::quad`
 /// （顶点展开）。少改一处 ⇒ 那条路径上的几何整体错位，且不报任何错。
+///
+/// # 为什么文字不吃 `scale-x` / `scale-y`
+///
+/// 这里只收到 `offset`，**没有**收到 [`NodeDraw`]。理由是字形缓存按元素原点存
+/// （见上一节），而 `Command::Text` 也没有缩放字段 —— 让文字跟着缩放要改
+/// `Command::Text` + 三后端顶点展开 + 离屏范围，属于独立一轮。
+/// 语义宣告在 [`crate::props::SCALE_X`] 的文档里："只作用于本节点自己的外观"，
+/// 文字节点自己写 `scale-x` 才是"本节点的外观"，而这里说的是**容器的**缩放
+/// 不该顺带放大子文字节点。
 fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> Option<Command> {
     let text = node.text()?;
     let engine = ctx.engine?;
@@ -1095,7 +1197,7 @@ fn icon_command(
     filter: &crate::filter::FilterChain,
     blend: crate::filter::BlendMode,
     opacity: f32,
-    offset: Point,
+    draw: NodeDraw,
 ) -> Option<Command> {
     let set = ctx.icon_set()?;
     let icon = set.get(name);
@@ -1131,7 +1233,7 @@ fn icon_command(
         // 519 个顶点每帧拷一遍，拷完当帧丢掉。改成 `Arc<[Vertex]>` 之后
         // 缓存命中那条路变成零分配 —— 而那正是缓存存在的意义。
         return Some(Command::Path {
-            vertices: shift_vertices(&vertices, offset),
+            vertices: transform_vertices(&vertices, draw),
             fill: node.icon_color(ctx).with_alpha(opacity),
             filter: filter.clone(),
             blend,
@@ -1175,32 +1277,36 @@ fn icon_command(
     let vertices = set.cache_mesh(icon, rect, mesh);
 
     Some(Command::Path {
-        vertices: shift_vertices(&vertices, offset),
+        vertices: transform_vertices(&vertices, draw),
         fill: node.icon_color(ctx).with_alpha(opacity),
         filter: filter.clone(),
         blend,
     })
 }
 
-/// 把整条路径的顶点平移。
+/// 把整条路径的顶点套上绘制变换（绕元素中心缩放 + 平移）。
 ///
 /// # 静止时**不分配**
 ///
-/// 零位移直接返回原引用（`Arc` 克隆只是 refcount +1）。这不是优化洁癖：
+/// 恒等变换直接返回原引用（`Arc` 克隆只是 refcount +1）。这不是优化洁癖：
 /// 入场动画之外的所有绘制都走这条路，而 Gallery 每帧有 19 个图标 ——
 /// 每帧 19 次 `Vec` + 19 次 `Arc` 分配换 0 像素位移，是笔亏本买卖。
 ///
-/// ⚠ `uv` **不动**：图集的归一化坐标与屏幕位置无关，平移屏幕位置不该动它。
+/// ⚠ `uv` **不动**：图集的归一化坐标与屏幕位置无关，平移 / 缩放屏幕几何
+/// 不该动它。
 #[inline]
-fn shift_vertices(vertices: &std::sync::Arc<[Vertex]>, offset: Point) -> std::sync::Arc<[Vertex]> {
-    if offset.x == 0.0 && offset.y == 0.0 {
+fn transform_vertices(
+    vertices: &std::sync::Arc<[Vertex]>,
+    draw: NodeDraw,
+) -> std::sync::Arc<[Vertex]> {
+    if draw.is_identity() {
         return vertices.clone();
     }
     std::sync::Arc::from(
         vertices
             .iter()
             .map(|v| Vertex {
-                position: Point::new(v.position.x + offset.x, v.position.y + offset.y),
+                position: draw.point(v.position),
                 uv: v.uv,
             })
             .collect::<Vec<Vertex>>(),

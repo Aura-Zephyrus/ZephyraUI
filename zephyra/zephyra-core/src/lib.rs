@@ -84,6 +84,7 @@
 
 pub mod context;
 pub mod core;
+pub mod decoration;
 pub mod diff;
 pub mod element;
 pub mod filter;

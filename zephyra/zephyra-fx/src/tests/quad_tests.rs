@@ -29,6 +29,7 @@ fn quad(rect: Rect, fill: Color) -> Command {
         stroke: None,
         filter: zephyra_core::filter::FilterChain::none(),
         blend: zephyra_core::filter::BlendMode::default(),
+        decorations: zephyra_core::decoration::Decorations::none(),
     }
 }
 
@@ -274,6 +275,7 @@ fn a_stroke_adds_a_second_ring_quad() {
             stroke: Some((Color::rgb(0.0, 0.0, 0.0), 1.0)),
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     let b = expand(&l, (100, 100), |_| true);
@@ -923,6 +925,7 @@ fn quad_with_blend(rect: Rect, blend: zephyra_core::filter::BlendMode) -> Comman
         stroke: None,
         filter: zephyra_core::filter::FilterChain::none(),
         blend,
+        decorations: zephyra_core::decoration::Decorations::none(),
     }
 }
 
@@ -1406,6 +1409,7 @@ fn unimplemented_blends_counts_only_modes_without_coeffs() {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: m,
+                decorations: zephyra_core::decoration::Decorations::none(),
             }]),
             (100, 100),
             |_| true,

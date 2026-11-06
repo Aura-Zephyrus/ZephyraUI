@@ -146,6 +146,7 @@ fn random_command(rng: &mut Rng) -> Command {
             stroke: None,
             filter: random_chain(rng),
             blend: random_blend(rng),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
         4 => Command::Path {
             vertices: std::sync::Arc::from(
@@ -209,6 +210,7 @@ fn quad(filter: FilterChain, blend: BlendMode, rect: Rect) -> Command {
         stroke: None,
         filter,
         blend,
+        decorations: zephyra_core::decoration::Decorations::none(),
     }
 }
 
@@ -293,7 +295,10 @@ fn stress_plan_segments_tile_the_list_exactly() {
                     // 段里缓存的那份计划必须与现算的一致（缓存过期 = 画面与规划脱节）。
                     let fresh = plan_pass(&list.iter().nth(*index).unwrap().command)
                         .expect("进段了的命令必须能算计划");
-                    assert_eq!(*pass, fresh, "seed {seed}: 段内 pass 必须与 plan_pass 一致");
+                    assert_eq!(
+                        **pass, fresh,
+                        "seed {seed}: 段内 pass 必须与 plan_pass 一致"
+                    );
                     assert_eq!(
                         *redraw, fresh.redraw_original,
                         "seed {seed}: redraw 标志必须与 pass 一致"
@@ -424,7 +429,12 @@ fn stress_pass_for_chain_step_table_matches_the_filters() {
             rng.f32_in(0.001, 800.0),
             rng.f32_in(0.001, 800.0),
         );
-        let p = pass_for_chain(&chain, content);
+        let p = pass_for_chain(
+            &chain,
+            content,
+            &zephyra_core::decoration::Decorations::none(),
+            0.0,
+        );
 
         // 期望值：按 filters[0] 起依次推。
         let mut exp_blurs = 0usize;
@@ -455,6 +465,8 @@ fn stress_pass_for_chain_step_table_matches_the_filters() {
                     exp_redraw = true;
                 }
                 Filter::Refraction { .. } => exp_redraw = true,
+                // 透镜与折射同：合成输出的是背景，原命令要之后再画一遍。
+                Filter::Lens { .. } => exp_redraw = true,
                 // 背景模糊与折射同：合成输出的是背景，原命令要之后再画一遍。
                 Filter::BackdropBlur { .. } => exp_redraw = true,
             }
@@ -573,7 +585,7 @@ fn stress_degenerate_inputs_never_panic() {
                 );
             }
             // 内核路径（绕过守卫）：同样不许 panic。
-            let direct = pass_for_chain(c, *r);
+            let direct = pass_for_chain(c, *r, &zephyra_core::decoration::Decorations::none(), 0.0);
             assert!(
                 direct.rt_size.0 >= 1 && direct.rt_size.1 >= 1,
                 "rect {ri} chain {ci}: 内核 RT 塌成 0"
@@ -629,6 +641,38 @@ fn stress_blend_counter_matches_a_manual_per_command_count() {
     }
 }
 
+/// 带装饰的玻璃：**外投影与滤镜是两层**，不是二选一。
+///
+/// `hollow_shadow` 是装饰的外投影（内侧要挖掉），滤镜是玻璃本体。两者同时
+/// 成立时计划里必须**都**在。曾经 D3D12 / D3D11 的合成趟写成
+/// `if hollow_shadow { 投影 } else { 滤镜 }`，于是所有带装饰的玻璃
+/// （开关把手、材质页玻璃卡片）把折射 / 透镜 / 磨砂整趟丢掉 —— 只剩高光与
+/// 内阴影。而「没有折射的玻璃」看起来完全正常，只能靠材质页「开/关装饰」的
+/// 对照看出来。Vulkan 侧一直是两层（先 `hollow_composite`，再按 `dst_effect`
+/// 画），这条把三后端钉到同一个语义上。
+#[test]
+fn a_decorated_glass_plans_both_the_outer_shadow_and_the_filter() {
+    let chain = FilterChain::single(Filter::Lens {
+        refraction_height: 5.0,
+        refraction_amount: 10.0,
+    });
+    let decorations = zephyra_core::decoration::Decorations {
+        highlight: None,
+        shadow: Some(zephyra_core::decoration::OuterShadow::glass()),
+        inner_shadow: None,
+    };
+    let content = Rect::new(10.0, 10.0, 40.0, 24.0);
+
+    let p = pass_for_chain(&chain, content, &decorations, 12.0);
+
+    assert!(p.hollow_shadow, "外投影要单独占一趟合成（内侧要挖掉）");
+    assert!(
+        p.lens.is_some(),
+        "装饰不能把透镜挤掉：外投影在玻璃背后，两者叠加"
+    );
+    assert!(p.redraw_original, "透镜合成之后元素自己的内容要再画一遍");
+}
+
 // ── 不变量 6：巨型帧不炸 ──
 
 /// 2000 条命令（其中过半带滤镜）一整帧：规划必须秒出且结构不变量仍成立。
@@ -657,6 +701,7 @@ fn stress_a_two_thousand_command_frame_plans_instantly() {
                 stroke: None,
                 filter,
                 blend: BlendMode::SrcOver,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }

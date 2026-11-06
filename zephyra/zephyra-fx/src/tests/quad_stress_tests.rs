@@ -112,6 +112,7 @@ fn random_list(rng: &mut Rng) -> DisplayList {
                 stroke: None,
                 filter: random_chain(rng),
                 blend: random_blend(rng),
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -328,6 +329,7 @@ fn stress_a_four_thousand_command_batch_is_internally_consistent() {
                 stroke: None,
                 filter,
                 blend: BlendMode::SrcOver,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -385,6 +387,7 @@ fn stress_mixed_commands_keep_displaylist_order() {
                 stroke: None,
                 filter: FilterChain::none(),
                 blend: BlendMode::SrcOver,
+                decorations: zephyra_core::decoration::Decorations::none(),
             }
         } else {
             Command::Image {

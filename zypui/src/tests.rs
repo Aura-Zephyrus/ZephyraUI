@@ -478,3 +478,53 @@ fn decode_rejects_garbage_loudly() {
     assert!(crate::decode::decode(b"NOPE").is_err());
     assert!(crate::decode::decode(b"ZYP1\xff\xff\xff\xff").is_err()); // 长度越界
 }
+
+/// `background` 是受限的动态通道（宿主逐帧颜色绑定）：只收 `Val::Raw(Color)`，
+/// 字符串字面量当场报错 —— 「外观不进模板」的边界在这里执行。
+#[test]
+fn background_only_accepts_a_raw_color_binding() {
+    fn ui_with_background(v: Expr) -> Ui {
+        Ui::new(RawUi {
+            components: vec![],
+            pages: vec![Page {
+                name: "p",
+                root: vec![Node::El(ElementNode {
+                    tag: NodeTag::Container,
+                    key: None,
+                    classes: vec![],
+                    attrs: vec![("background", v)],
+                    children: vec![],
+                })],
+            }],
+        })
+        .unwrap()
+    }
+
+    // 字面量 → 报错（给错类型）。
+    let bad = ui_with_background(Expr::LitS("red"));
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    match bad.build("p", &h, &mut it) {
+        Err(e) => assert!(
+            e.msg.contains("background"),
+            "错误应指名道姓说的就是 background：{}",
+            e.msg
+        ),
+        Ok(_) => panic!("字面量颜色必须报错，而不是被静默忽略"),
+    }
+
+    // 宿主 Raw 颜色 → 成，BACKGROUND 原样落地。
+    let good = ui_with_background(Expr::Binding("track_bg"));
+    let color = zephyra_core::core::Color::rgba(0.2, 0.5, 0.9, 0.8);
+    let h = host(vec![(
+        "track_bg",
+        Val::Raw(zephyra_core::property::PropertyValue::color(color)),
+    )]);
+    let mut it = Interner::new();
+    let els = good.build("p", &h, &mut it).unwrap();
+    let got = els[0]
+        .props()
+        .lookup(&props::BACKGROUND)
+        .and_then(|(v, _)| v.get::<zephyra_core::core::Color>());
+    assert_eq!(got, Some(color), "绑定颜色必须原样落地");
+}

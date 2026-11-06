@@ -48,6 +48,11 @@ pub fn parse(
     if std::ptr::eq(key, &zephyra_core::props::MATERIAL_PARAMS) {
         return parse_material_params(input, p, line);
     }
+    // `decoration` 是**关键字**（`none` / `glass` / `control`），不走通用分支的
+    // 关键字表 —— 那批关键字是枚举词汇（`column` / `center` …），与这里不是一套。
+    if std::ptr::eq(key, &zephyra_core::props::DECORATIONS) {
+        return parse_decorations(input, p, line);
+    }
     let value = input.next().map_err(|_: cssparser::BasicParseError| ())?;
     match value {
         // ---- 数字 ----
@@ -258,6 +263,55 @@ fn parse_material_params(
     Ok(PropertyValue::material_params(
         zephyra_core::filter::MaterialParams::from_numbers(&nums),
     ))
+}
+
+/// 解析 `decoration:` 的值：一个**关键字**，选一整套玻璃装饰。
+///
+/// # 支持的写法
+///
+/// ```text
+/// decoration: none;    /* 不装饰（默认） */
+/// decoration: glass;   /* 大块玻璃：Directional 高光 + 24px 投影 + 24px 内阴影 */
+/// decoration: control; /* 小控件：Ambient 高光（宽度 /1.5）+ 4px 投影 + 4px 内阴影 */
+/// ```
+///
+/// # 为什么只有三档关键字
+///
+/// 三档之一一对应原版 `AndroidLiquidGlass` 的两个用法（`drawBackdrop` 的默认四件套
+/// 与 `LiquidToggle` / `LiquidSlider` 的小控件四件套）外加"不装饰"。**参数不进来**：
+/// 它们是物理量（半径 / 偏移 / 强度），既没有 `@令牌` 对应物，也不随主题变化 ——
+/// 与 `filter:` 的 `refraction(...)` 同一条理由，参数由宿主在 Rust 侧按需调
+/// （见 `gallery` 的玻璃参数面板）。
+///
+/// 层序（外投影在内容**之下**、高光与内阴影在内容**之上**）是契约，由
+/// `zephyra_core::decoration` 定义，样式表无权改 —— 所以本属性没有"分层"语法。
+fn parse_decorations(
+    input: &mut Parser,
+    p: &mut ZstyleParser<'_>,
+    line: u32,
+) -> Result<PropertyValue, ()> {
+    use zephyra_core::decoration::Decorations;
+
+    let token = input.next().map_err(|_: cssparser::BasicParseError| ())?;
+    let word = match token {
+        Token::Ident(w) => w.as_ref().to_ascii_lowercase(),
+        _ => String::new(),
+    };
+    let d = match word.as_str() {
+        "none" => Decorations::none(),
+        "glass" => Decorations::glass(),
+        "control" => Decorations::control(),
+        _ => {
+            p.errors.push(unexpected(
+                p,
+                line,
+                &format!("unknown decoration '{word}'."),
+                &["none", "glass", "control"],
+            ));
+            return Err(());
+        }
+    };
+    Ok(PropertyValue::decorations(d))
 }
 
 /// 折射倒角带的默认宽度（像素）。

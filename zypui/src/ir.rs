@@ -167,6 +167,14 @@ pub struct UseNode {
 /// | `blend` | [`zephyra_core::props::BLEND_MODE`] | 混合模式（同上，结构值） |
 /// | `render-source` | [`zephyra_core::props::RENDER_SOURCE`] | 宿主注册的只读 `kind` 名称 |
 /// | `url` | `Host::prop_key` 解析的键 | 字符串（hyperlink 的去向：数据）。
+/// | `translate-x` / `translate-y` | [`zephyra_core::props::TRANSLATE_X`] /
+///   [`zephyra_core::props::TRANSLATE_Y`] | 数值 —— 绘制时偏移，不改布局盒与命中测试。
+///   动画期间由宿主每帧写入（如开关把手平移），是少数**允许动态写**外观的通道 |
+/// | `scale-x` / `scale-y` | [`zephyra_core::props::SCALE_X`] /
+///   [`zephyra_core::props::SCALE_Y`] | 数值 —— 绘制时缩放（以元素中心为原点），
+///   只作用于本节点外观，不改布局盒与命中测试 |
+/// | `background` | [`zephyra_core::props::BACKGROUND`] | 结构值（`Color`）——
+///   逐帧颜色绑定，见 `decoration` 的理由；静态颜色仍然住在 `.zstyle` |
 pub const BARE_ATTRS: &[&str] = &[
     "text",
     "icon",
@@ -182,5 +190,11 @@ pub const BARE_ATTRS: &[&str] = &[
     "url",
     "filter",
     "blend",
+    "decoration",
     "render-source",
+    "translate-x",
+    "translate-y",
+    "scale-x",
+    "scale-y",
+    "background",
 ];

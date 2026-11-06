@@ -348,6 +348,7 @@ fn display_list_sorts_by_layer_then_z_then_order() {
         stroke: None,
         filter: crate::filter::FilterChain::none(),
         blend: crate::filter::BlendMode::default(),
+        decorations: crate::decoration::Decorations::none(),
     };
     // 故意乱序插入。
     list.push(
@@ -405,6 +406,7 @@ fn display_list_sort_is_stable_for_equal_keys() {
         stroke: None,
         filter: crate::filter::FilterChain::none(),
         blend: crate::filter::BlendMode::default(),
+        decorations: crate::decoration::Decorations::none(),
     };
     // 同样三个 key，插入顺序相同。
     for (list, widths) in [(&mut a, [1.0, 2.0, 3.0]), (&mut b, [1.0, 2.0, 3.0])] {
@@ -433,6 +435,7 @@ fn layers_are_reported_deduplicated_and_ordered() {
         stroke: None,
         filter: crate::filter::FilterChain::none(),
         blend: crate::filter::BlendMode::default(),
+        decorations: crate::decoration::Decorations::none(),
     };
     for layer in [
         Layer::Popup,
@@ -468,6 +471,7 @@ fn clear_preserves_capacity_for_steady_state_reuse() {
         stroke: None,
         filter: crate::filter::FilterChain::none(),
         blend: crate::filter::BlendMode::default(),
+        decorations: crate::decoration::Decorations::none(),
     };
     for i in 0..8 {
         list.push(

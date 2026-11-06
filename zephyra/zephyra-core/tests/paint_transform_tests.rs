@@ -8,8 +8,11 @@
 //! 1. **不透明度落到每一种绘制**：背景、描边、文字、图像、图标；
 //! 2. **opacity_multiplies_along_parent_chain**（不是"取最近一个"）；
 //! 3. **偏移落到四类几何**：Quad / Image / Path / Text；
-//! 4. **偏移不影响布局盒与命中测试** —— 否则控件在动画期间点不中；
+//!    **缩放**（`scale-x` / `scale-y`）只作用于本节点自己的 Background / Stroke /
+//!    Image / Icon —— **文字不缩放**（`Command::Text` 没有缩放字段，见 `paint.rs`）；
+//! 4. **偏移与缩放都不影响布局盒与命中测试** —— 否则控件在动画期间点不中；
 //! 5. **静止时零开销**：位移为零 ⇒ 顶点数组原样返回（同一块内存）。
+//! 6. **缩放不沿父链传播**（本节点外观，与位移的"沿父链累加"是两种语义）。
 //!
 //! # 为什么 1、2 之前是**红**的
 //!
@@ -69,9 +72,12 @@ fn null_engine() -> RefCell<NullEngine> {
 /// **整个文件一生一次**的分配（不是每帧），与 `Box::leak` 在 `element.rs`
 /// 里被禁用的场景不是一回事。
 fn private_icons(slot: usize) -> &'static zephyra_core::icon::IconSet {
-    const SLOTS: usize = 2;
-    static SETS: [std::sync::OnceLock<&'static zephyra_core::icon::IconSet>; SLOTS] =
-        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    const SLOTS: usize = 3;
+    static SETS: [std::sync::OnceLock<&'static zephyra_core::icon::IconSet>; SLOTS] = [
+        std::sync::OnceLock::new(),
+        std::sync::OnceLock::new(),
+        std::sync::OnceLock::new(),
+    ];
     assert!(slot < SLOTS, "private_icons 的槽位用完了（{slot}）");
     SETS[slot].get_or_init(|| Box::leak(Box::new(zephyra_core::icon::IconSet::with_builtin())))
 }
@@ -606,4 +612,318 @@ fn glyph_quads_are_not_recomputed_on_translation() {
         12.0,
         "复用的前提下，只有 origin（offset）该变"
     );
+}
+
+// ---------------------------------------------------------------- 6. 绘制缩放
+
+/// 取第一条 Quad 的矩形。
+#[track_caller]
+fn first_quad_rect(list: &[Command]) -> zephyra_core::core::Rect {
+    list.iter()
+        .find_map(|c| match c {
+            Command::Quad { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .expect("列表里应当有 Quad")
+}
+
+/// 缩放以**元素中心**为原点：元素在 (0, 0, 400, 300) 时
+/// scale-x = 2 ⇒ 绘制矩形从 x = 200 − 400 = −200 开始、宽 800，Y 轴不动。
+#[test]
+fn scale_grows_drawn_rect_around_the_center() {
+    let el = box_el("b").with(&props::SCALE_X, PropertyValue::float(2.0));
+    let (layout, list) = build(&el);
+    // 根元素默认铺满帧（400×300）——中心是 (200, 150)。
+    let r = first_quad_rect(&list);
+    let center_x = layout.rect().x + layout.rect().width * 0.5;
+    assert_eq!(
+        (r.x, r.y, r.width, r.height),
+        (
+            center_x - layout.rect().width,
+            0.0,
+            layout.rect().width * 2.0,
+            layout.rect().height
+        ),
+        "X 应双倍并以元素中心为原点，Y 不动"
+    );
+}
+
+/// 布局盒不变（scale 版的 `offset_does_not_write_back_to_layout_box`）。
+#[test]
+fn scale_does_not_write_back_to_layout_box() {
+    let plain = box_el("b");
+    let scaled = box_el("b").with(&props::SCALE_X, PropertyValue::float(2.0));
+    let (na, _) = build(&plain);
+    let (nb, _) = build(&scaled);
+    assert_eq!(
+        na.rect(),
+        nb.rect(),
+        "布局盒必须逐字段相同：缩放是绘制时的，不是布局的"
+    );
+}
+
+/// 命中测试按**布局盒**判 —— 缩放后的元素仍然可点。
+///
+/// scale = 0.5 ⇒ 绘制盒收窄到 25..75；点 (10, 10) 在绘制盒**外**、
+/// 布局盒**内**。若命中测试误读了绘制盒，这条会红。
+#[test]
+fn scale_does_not_affect_hit_testing() {
+    let scaled = box_el("b").with(&props::SCALE_X, PropertyValue::float(0.5));
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    let mut node = zephyra_core::node::Node::from_element(&scaled);
+    zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);
+
+    let req = HitTestRequest {
+        point: Point::new(10.0, 10.0),
+        ignore_above: None,
+    };
+    let mut result = HitResult::default();
+    assert!(
+        zephyra_core::hit::hit_test(&node, req, ctx, &mut result),
+        "带绘制缩放的树也应当命中 —— 命中测试按布局盒判，与绘制无关"
+    );
+}
+
+/// 缩放**不沿父链传播** —— 与位移（沿父链相加）是两种语义。
+/// 根容器 scale-x = 4 ⇒ 子节点的绘制矩形原地不动。
+#[test]
+fn scale_does_not_propagate_to_children() {
+    let child = || {
+        box_el("child")
+            .with(&props::WIDTH, PropertyValue::float(20.0))
+            .with(&props::HEIGHT, PropertyValue::float(20.0))
+    };
+    // 参照组：同一棵树（根 + 同一个子节点）、只是根没有缩放。
+    // 单独 build 子节点不行 —— 直接子节点作根时会被帧拉满，矩形就不是
+    // "它在父节点里该画的样子"。
+    let reference_root = || {
+        Element::new(NodeTag::Container)
+            .with_key("root")
+            .with(&props::WIDTH, PropertyValue::float(200.0))
+            .with(&props::HEIGHT, PropertyValue::float(200.0))
+            .with_children([child()])
+    };
+    let (_, reference_list) = build(&reference_root());
+    let expected = first_quad_rect(&reference_list);
+
+    let root = Element::new(NodeTag::Container)
+        .with_key("root")
+        .with(&props::WIDTH, PropertyValue::float(200.0))
+        .with(&props::HEIGHT, PropertyValue::float(200.0))
+        .with(&props::SCALE_X, PropertyValue::float(4.0))
+        .with_children([child()]);
+
+    let (_, list) = build(&root);
+    let drawn: Vec<zephyra_core::core::Rect> = list
+        .iter()
+        .filter_map(|c| match c {
+            Command::Quad { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(drawn.len(), 1, "根容器没有背景 ⇒ 唯一一条 Quad 是子节点的");
+    assert_eq!(
+        drawn[0], expected,
+        "父节点的缩放不该带着子节点一起变（子节点按自己布局时的矩形画）"
+    );
+}
+
+/// 非法缩放（0 / 负数 / 非有限）一律按恒等处理。
+///
+/// 负值意味着镜像，而四类图元都没有镜像语义（圆角会变成反向外框）；
+/// 非有限值会让顶点 NaN、"整块不画"——两者都必须静默回退。
+#[test]
+fn invalid_scale_falls_back_to_identity() {
+    for bad in [0.0f32, -1.0, f32::INFINITY, f32::NAN] {
+        let el = box_el("b").with(&props::SCALE_X, PropertyValue::float(bad));
+        let (layout, list) = build(&el);
+        let r = first_quad_rect(&list);
+        let lr = layout.rect();
+        assert_eq!(
+            (r.x, r.y, r.width, r.height),
+            (lr.x, lr.y, lr.width, lr.height),
+            "scale {bad} 应回退恒等（布局矩形）"
+        );
+    }
+}
+
+/// 非等比缩放：圆角 / 描边宽度 / 图像边长取**两轴较小值**。
+///
+/// 圆角与描边只有一个标量，用较大值会让细长形状的边看起来比形状本身还粗。
+#[test]
+fn non_uniform_scale_takes_the_min_axis_for_scalars() {
+    let el = box_el("b")
+        .with(&props::CORNER_RADIUS, PropertyValue::float(10.0))
+        .with(&props::SCALE_X, PropertyValue::float(3.0));
+    // scale-x = 3, scale-y = 1 ⇒ min = 1
+    let (_, list) = build(&el);
+    let (radius, stroke_w) = list
+        .iter()
+        .find_map(|c| match c {
+            Command::Quad { radius, stroke, .. } => Some((radius.radius, stroke.map(|(_, w)| w))),
+            _ => None,
+        })
+        .expect("应当有 Quad");
+    assert_eq!(radius, 10.0, "非等比时圆角取 min 轴 ⇒ 不放大");
+    assert_eq!(stroke_w, Some(2.0), "非等比时描边宽度取 min 轴 ⇒ 不放大");
+
+    // 等比 2× 时两者都放大。
+    let el2 = box_el("b")
+        .with(&props::CORNER_RADIUS, PropertyValue::float(10.0))
+        .with(&props::SCALE_X, PropertyValue::float(2.0))
+        .with(&props::SCALE_Y, PropertyValue::float(2.0));
+    let (_, list2) = build(&el2);
+    let (radius2, stroke_w2) = list2
+        .iter()
+        .find_map(|c| match c {
+            Command::Quad { radius, stroke, .. } => Some((radius.radius, stroke.map(|(_, w)| w))),
+            _ => None,
+        })
+        .expect("应当有 Quad");
+    assert_eq!(radius2, 20.0);
+    assert_eq!(stroke_w2, Some(4.0));
+}
+
+/// 缩放作用于图标几何：绕元素中心放大，`uv` 不动。
+#[test]
+fn scale_scales_icon_vertices_around_the_center() {
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme).with_icons(private_icons(2));
+
+    let snapshot = |scale: f32| {
+        let mut n = zephyra_core::node::Node::from_element(
+            &Element::new(NodeTag::Container)
+                .with_key("icon")
+                .with(&props::WIDTH, PropertyValue::float(16.0))
+                .with(&props::HEIGHT, PropertyValue::float(16.0))
+                .with(&props::ICON_NAME, PropertyValue::static_str("home"))
+                .with(&props::SCALE_X, PropertyValue::float(scale)),
+        );
+        // 帧与元素同宽同高：布局盒就是 (0, 0, 16, 16)，中心 (8, 8)。
+        zephyra_core::layout::layout(&mut n, Rect::new(0.0, 0.0, 16.0, 16.0), ctx);
+        let mut list = DisplayList::new();
+        zephyra_core::paint::render(&n, ctx, &mut list);
+        // 先绑局部变量再返回（tail expression 的隐式临时 lifetime 会吃到 `list`）。
+        let found = list
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Path { vertices, .. } => Some(vertices.clone()),
+                _ => None,
+            })
+            .expect("应当产出 Path 命令");
+        found
+    };
+
+    let a = snapshot(1.0);
+    let b = snapshot(2.0);
+    assert_eq!(a.len(), b.len(), "缩放不该改变顶点数");
+    let cx = 8.0; // 16×16 的图标，元素中心在 (8, 8)
+    for (va, vb) in a.iter().zip(b.iter()) {
+        assert_eq!(
+            vb.position.x,
+            (va.position.x - cx) * 2.0 + cx,
+            "X 应绕中心双倍"
+        );
+        assert_eq!(vb.position.y, va.position.y, "scale-y = 1 ⇒ Y 不该动");
+        assert_eq!(
+            (vb.uv.x, vb.uv.y),
+            (va.uv.x, va.uv.y),
+            "uv 是图集坐标，屏幕缩放不该动它"
+        );
+    }
+}
+
+/// 缩放变了必须重画（否则把手按压缩放画面不动）。
+///
+/// 与 `offset_change_repaints` 配对。
+#[test]
+fn scale_change_repaints() {
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut cache = FrameCache::new();
+
+    let a = box_el("b");
+    cache.frame(&a, ctx, (W, H));
+    let scaled = box_el("b").with(&props::SCALE_X, PropertyValue::float(1.5));
+    let out = cache.frame(&scaled, ctx, (W, H));
+    assert!(
+        matches!(out, zephyra_core::frame::FrameOutcome::Updated { .. }),
+        "缩放变了必须重画"
+    );
+}
+
+/// 文字**不**跟着容器缩放（`Command::Text` 没有缩放字段，语义如此，
+/// 见 `paint.rs` 的 `text_command` 文档）。
+///
+/// 与 scale = 1 的对照**逐字形**相等 —— 只断言 `offset` 会漏掉
+/// "字形被缩放"这种错误。
+#[test]
+fn container_scale_does_not_scale_text_glyphs() {
+    let grab = |scale: f32| {
+        let theme = Theme::builtin(ThemeVariant::Dark);
+        let engine = null_engine();
+        let ctx = Context::with_engine(&theme, &engine);
+
+        let el = Element::new(NodeTag::Text)
+            .with_key("t")
+            .with(&props::TEXT, PropertyValue::static_str("ab"))
+            .with(&props::SCALE_X, PropertyValue::float(scale));
+        let mut node = zephyra_core::node::Node::from_element(&el);
+        zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);
+        let mut list = DisplayList::new();
+        zephyra_core::paint::render(&node, ctx, &mut list);
+        // 先绑局部变量再返回（tail expression 的隐式临时 lifetime 会吃到 `list`）。
+        let found = list
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Text { glyphs, offset, .. } => Some((glyphs.as_ref().to_vec(), *offset)),
+                _ => None,
+            })
+            .expect("应当产出 Text 命令");
+        found
+    };
+
+    let (a_glyphs, a_off) = grab(1.0);
+    let (b_glyphs, b_off) = grab(2.0);
+    assert_eq!(a_glyphs.len(), b_glyphs.len(), "字形数不该变");
+    for (ga, gb) in a_glyphs.iter().zip(&b_glyphs) {
+        assert_eq!(ga.dst, gb.dst, "字形屏幕位置不被容器缩放");
+    }
+    assert_eq!(a_off, b_off, "字形 offset 不被容器缩放");
+}
+
+// ---------------------------------------------------------------- 7. 背景全透明时滤镜命令仍要发出
+
+/// 背景 alpha=0 **不等于**这条命令不存在：滤镜描述的是元素背后那一层，与 fill
+/// 无关。漏掉这条的症状是「按住时开关把手整块消失」—— 白罩 alpha 随按压归零后，
+/// 承载背板模糊 / 透镜 / 内阴影的那条 Quad 一起不发了。
+#[test]
+fn transparent_fill_with_filter_still_emits_a_quad() {
+    use zephyra_core::filter::{Filter, FilterChain};
+
+    let el = Element::new(NodeTag::Container)
+        .with_key("knob")
+        .with(&props::WIDTH, PropertyValue::float(40.0))
+        .with(&props::HEIGHT, PropertyValue::float(24.0))
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::color(zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 0.0)),
+        )
+        .with(
+            &props::FILTER,
+            PropertyValue::filter(FilterChain::new(vec![Filter::BackdropBlur { sigma: 8.0 }])),
+        );
+
+    let (_, list) = build(&el);
+    let emitted = list
+        .iter()
+        .any(|c| matches!(c, Command::Quad { filter, .. } if !filter.is_identity()));
+    assert!(
+        emitted,
+        "背景 alpha=0 时，带非恒等滤镜的命令仍要出现在 DisplayList 里"
+    );
+    // 填充仍然是全透明：不能为了让命令存在就把 fill 改成不透明。
+    assert_eq!(first_quad_fill(&list).a, 0.0);
 }

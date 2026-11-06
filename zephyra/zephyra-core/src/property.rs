@@ -186,6 +186,14 @@ pub enum PropertyValue {
     /// 材质参数覆盖（`filter::MaterialParams`）。与 [`PropertyValue::Material`] 分开：
     /// 材质种类与它的参数是两件互相独立的事（见 `MaterialParams` 的文档）。
     MaterialParams(crate::filter::MaterialParams),
+    /// 玻璃装饰（`decoration::Decorations`）：高光 / 外投影 / 内阴影。
+    ///
+    /// 与 [`PropertyValue::Filter`] 同理由：它进每帧产出的命令（要决定"这一层
+    /// 画在内容之上还是之下"），固定词汇表，零分配。
+    ///
+    /// ⚠ 它**不是**滤镜链的一部分：滤镜描述"这条命令自己怎么处理"，装饰描述
+    /// "玻璃的四件套各画在哪一侧"。层序是契约，见 [`crate::decoration`]。
+    Decorations(crate::decoration::Decorations),
     /// 纹理内的归一化矩形（`core::UvRect`）。
     UvRect(crate::core::UvRect),
     /// **资源键引用**：存键而非字面值，主题切换时只需重解析这些键。
@@ -291,6 +299,11 @@ impl PropertyValue {
         PropertyValue::MaterialParams(v)
     }
 
+    /// 构造玻璃装饰属性值（`const` 可用）。
+    pub const fn decorations(v: crate::decoration::Decorations) -> Self {
+        PropertyValue::Decorations(v)
+    }
+
     /// 构造纹理 uv 矩形属性值（`const` 可用）。
     pub const fn uv_rect(v: crate::core::UvRect) -> Self {
         PropertyValue::UvRect(v)
@@ -342,6 +355,7 @@ impl PropertyValue {
             PropertyValue::BlendMode(v) => v,
             PropertyValue::Material(v) => v,
             PropertyValue::MaterialParams(v) => v,
+            PropertyValue::Decorations(v) => v,
             PropertyValue::UvRect(v) => v,
             PropertyValue::Custom { inner, .. } => &**inner,
             PropertyValue::Resource(_) => return None,
@@ -370,6 +384,7 @@ impl PartialEq for PropertyValue {
             (PropertyValue::BlendMode(a), PropertyValue::BlendMode(b)) => a == b,
             (PropertyValue::Material(a), PropertyValue::Material(b)) => a == b,
             (PropertyValue::MaterialParams(a), PropertyValue::MaterialParams(b)) => a == b,
+            (PropertyValue::Decorations(a), PropertyValue::Decorations(b)) => a == b,
             (PropertyValue::UvRect(a), PropertyValue::UvRect(b)) => a == b,
             (PropertyValue::Resource(a), PropertyValue::Resource(b)) => a == b,
             (PropertyValue::AlignContent(a), PropertyValue::AlignContent(b)) => a == b,
@@ -413,6 +428,15 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::BlendMode(v) => write!(f, "{v:?}"),
             PropertyValue::Material(v) => write!(f, "{v:?}"),
             PropertyValue::MaterialParams(v) => write!(f, "{v:?}"),
+            // 装饰不打印全部字段（它们有 8 个），只报哪几件在场 ——
+            // 属性 diff 失败时能一眼看出"是高光还是内阴影"。
+            PropertyValue::Decorations(v) => write!(
+                f,
+                "Decorations(highlight={} shadow={} inner={})",
+                v.highlight.is_some(),
+                v.shadow.is_some(),
+                v.inner_shadow.is_some()
+            ),
             PropertyValue::UvRect(v) => write!(f, "{v:?}"),
             PropertyValue::Resource(k) => write!(f, "Resource({k})"),
             PropertyValue::Custom { .. } => write!(f, "Custom"),

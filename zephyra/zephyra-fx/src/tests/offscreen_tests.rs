@@ -23,7 +23,12 @@ fn blur_chain(sx: f32, sy: f32) -> FilterChain {
 /// 必须失败。否则症状只是"某元素的模糊宽窄方向反了"，在 demo 上很难看出。
 #[test]
 fn blur_becomes_two_steps_horizontal_first() {
-    let p = pass_for_chain(&blur_chain(2.0, 3.0), Rect::new(10.0, 20.0, 30.0, 40.0));
+    let p = pass_for_chain(
+        &blur_chain(2.0, 3.0),
+        Rect::new(10.0, 20.0, 30.0, 40.0),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert_eq!(
         p.blurs,
         vec![
@@ -42,7 +47,12 @@ fn blur_becomes_two_steps_horizontal_first() {
 
 #[test]
 fn zero_sigma_steps_are_dropped() {
-    let p = pass_for_chain(&blur_chain(0.0, 0.0), Rect::new(0.0, 0.0, 10.0, 10.0));
+    let p = pass_for_chain(
+        &blur_chain(0.0, 0.0),
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert!(
         p.blurs.is_empty(),
         "σ=0 的趟是恒等，不该付两次全 RT 的 draw"
@@ -68,7 +78,12 @@ fn drop_shadow_tints_redraws_and_shifts_inside_the_offscreen() {
         offset: Point::new(6.0, 8.0),
         sigma: 2.0,
     });
-    let p = pass_for_chain(&chain, c);
+    let p = pass_for_chain(
+        &chain,
+        c,
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert!(p.redraw_original, "影子是额外一层，原图仍要画在它上面");
     assert_eq!(p.tint, Some(Color::rgba(0.0, 0.0, 0.0, 0.5)));
     assert_eq!(p.blurs.len(), 2);
@@ -107,7 +122,12 @@ fn a_three_effect_chain_is_six_steps_in_chain_order() {
             sigma: 1.0,
         },
     ]);
-    let p = pass_for_chain(&chain, Rect::new(0.0, 0.0, 8.0, 8.0));
+    let p = pass_for_chain(
+        &chain,
+        Rect::new(0.0, 0.0, 8.0, 8.0),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert_eq!(p.blurs.len(), 6, "三道效果各两趟");
     assert_eq!(
         p.blurs.iter().map(|b| b.sigma).collect::<Vec<_>>(),
@@ -127,16 +147,31 @@ fn a_three_effect_chain_is_six_steps_in_chain_order() {
 #[test]
 fn rt_size_rounds_up_and_never_collapses_to_zero() {
     // σ=1 ⇒ outset = 3。内容 0.2×0.2 ⇒ bounds 6.2×6.2 ⇒ 7×7（不是 6×6）。
-    let frac = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 0.2, 0.2));
+    let frac = pass_for_chain(
+        &blur_chain(1.0, 1.0),
+        Rect::new(0.0, 0.0, 0.2, 0.2),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert_eq!(
         frac.rt_size,
         (7, 7),
         "bounds 有小数时必须进位，否则切掉一条边"
     );
     // 整数边界不该被多进一位（否则白白多分配一整行/一整列显存）。
-    let exact = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 10.0, 20.0));
+    let exact = pass_for_chain(
+        &blur_chain(1.0, 1.0),
+        Rect::new(0.0, 0.0, 10.0, 20.0),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert_eq!(exact.rt_size, (16, 26), "bounds 已是整数时不该多进");
-    let tiny = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 0.001, 0.001));
+    let tiny = pass_for_chain(
+        &blur_chain(1.0, 1.0),
+        Rect::new(0.0, 0.0, 0.001, 0.001),
+        &zephyra_core::decoration::Decorations::none(),
+        0.0,
+    );
     assert!(
         tiny.rt_size.0 >= 1 && tiny.rt_size.1 >= 1,
         "0×0 的视口什么都不画且不报错"
@@ -241,6 +276,7 @@ fn quad(filter: FilterChain, blend: BlendMode, rect: Rect) -> Command {
         stroke: None,
         filter,
         blend,
+        decorations: zephyra_core::decoration::Decorations::none(),
     }
 }
 

@@ -108,12 +108,15 @@ pub struct InputState {
     pub hovered: Option<ElementKey>,
     /// 按下时被捕获的节点（指针移出该节点后仍归它所有，直到抬起）。
     pub pressed: Option<ElementKey>,
-    /// 当前拥有键盘焦点的节点。
+    /// 当前**可见焦点**（焦点环该画在谁身上）。
     ///
     /// 由宿主在 `window_event` 里经 `FocusState` 维护（点击 / Tab / 失焦），
     /// 这里只**报告**——应用在 `view()` 里据此决定"这个控件要不要画光标 / 焦点环"。
-    /// 样式层要按焦点换色时，读的是树里 [`zephyra_core::props::FOCUSED`] 属性（写在
-    /// `set_prop`），不是这个字段。
+    ///
+    /// ⚠ 这是 [`zephyra_core::input::focus::FocusState::is_visible`] 过滤后的值：
+    /// 鼠标点击设了焦点也**不**出现在这里（`focus-visible` 语义，点了开关不该
+    /// 多一圈蓝边）；只有 Tab 引入的焦点才可见。焦点的**行为**（Space / Enter /
+    /// 无障碍）走宿主内部的 `FocusState::focused`，与本字段无关。
     pub focused: Option<ElementKey>,
     /// 当前活跃指针数。
     pub pointers: usize,
@@ -219,6 +222,21 @@ pub trait View {
     ///
     /// `ctx` 提供当前主题 —— 核心不持有主题，主题是应用状态。
     fn view(&self, ctx: &Context<'_>) -> Element;
+
+    /// 宿主是否还要继续泵帧（动画正在进行）。
+    ///
+    /// # 为什么必须作为一个正式钩子
+    ///
+    /// 本仓是保留式 UI：宿主**不**常驻重绘，帧只在 `self.dirty` 时产出。
+    /// 「动画播放中」这个事实只有靠这个钩子才能表达：事件推进一格动画，
+    /// 循环又睡死 —— 中间整段弹簧曲线在画面上根本看不到（症状即
+    /// 「动画有问题」：动画进度全靠鼠标事件凑）。
+    ///
+    /// 默认 `false`：静止的保留式 UI 一帧都不画。实现者（应用）只需要回答
+    /// 「某个动画是否还没收敛」—— 见 `Gallery::wants_frames`。
+    fn wants_frames(&self) -> bool {
+        false
+    }
 }
 
 /// 一帧的输出：diff 统计 + 渲染统计。

@@ -131,9 +131,12 @@ fn unknown_element_and_attr_are_errors() {
     let diags = parse_err("<page name=\"p\"><stack/></page>");
     assert!(has_error(&diags, "未知元素"), "诊断：{}", render(&diags));
 
-    let diags = parse_err("<page name=\"p\"><container background=\"red\"/></page>");
+    // 外观值不进 .zypui 的白名单（样式表全归 .zstyle）—— 用一个**始终**
+    // 不在白名单里的外观键做哨兵（`background` 2026-11 受限开放为宿主逐帧
+    // 颜色绑定，判据移到 zypui 的 instantiate 层，见那里的单测）。
+    let diags = parse_err("<page name=\"p\"><container corner-radius=\"99px\"/></page>");
     assert!(
-        has_error(&diags, "不认识属性 `background`"),
+        has_error(&diags, "不认识属性 `corner-radius`"),
         "外观值混进 .zypui 必须被拦。诊断：{}",
         render(&diags)
     );

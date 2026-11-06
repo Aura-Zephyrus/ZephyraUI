@@ -314,6 +314,47 @@ fn build_node(
                         Val::Raw(pv) => el_el.with(&props::BLEND_MODE, pv),
                         _ => el_el,
                     },
+                    // 玻璃装饰（结构值，与 `filter` 同一条路 —— 表达式语言没有
+                    // 它的字面量；绑定给错类型时按「不装饰」降级）。装饰是
+                    // **运行期可变**的（按压动画改高光 / 内阴影的强度），
+                    // 所以与 filter 一样走宿主绑定而不是 `.zstyle`。
+                    "decoration" => match v {
+                        Val::Raw(pv) => el_el.with(&props::DECORATIONS, pv),
+                        _ => el_el,
+                    },
+                    // 逐帧颜色绑定（结构值，与 `decoration` 同一条路）：它不是
+                    // 「外观不进模板」的后门 —— 表达式语言没有颜色字面量，
+                    // 字符串/数字一律报错（见 `render-source` 的形状）。
+                    // 静态颜色仍然住在 `.zstyle`。
+                    "background" => match v {
+                        Val::Raw(pv) => el_el.with(&props::BACKGROUND, pv),
+                        _ => {
+                            return crate::err(format!(
+                                "`background` 必须求值为结构值（宿主逐帧绑定的颜色），实际为 {}",
+                                v.type_name()
+                            ));
+                        }
+                    },
+                    // 绘制时位移 / 缩放（动态通道：动画每帧由绑定写值，
+                    // 与布局属性不同、只重绘不重排）。
+                    // 绑定给错类型时与 width/height 同形：按"不设"降级
+                    // （core 的默认值即不位移 / 不缩放）。
+                    "translate-x" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::TRANSLATE_X, PropertyValue::float(f)),
+                        None => el_el,
+                    },
+                    "translate-y" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::TRANSLATE_Y, PropertyValue::float(f)),
+                        None => el_el,
+                    },
+                    "scale-x" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::SCALE_X, PropertyValue::float(f)),
+                        None => el_el,
+                    },
+                    "scale-y" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::SCALE_Y, PropertyValue::float(f)),
+                        None => el_el,
+                    },
                     "render-source" => match v.as_str() {
                         Some("") => el_el,
                         Some(kind) => {

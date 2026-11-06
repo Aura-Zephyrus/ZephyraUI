@@ -297,6 +297,16 @@ impl Node {
         self.number_or(&crate::props::TRANSLATE_Y, 0.0, ctx)
     }
 
+    /// 绘制时 X 缩放（以元素中心为原点）。见 [`crate::props::SCALE_X`]。
+    pub fn scale_x(&self, ctx: Context<'_>) -> f32 {
+        sanitized_scale(self.number_or(&crate::props::SCALE_X, 1.0, ctx))
+    }
+
+    /// 绘制时 Y 缩放。见 [`Self::scale_x`]。
+    pub fn scale_y(&self, ctx: Context<'_>) -> f32 {
+        sanitized_scale(self.number_or(&crate::props::SCALE_Y, 1.0, ctx))
+    }
+
     /// 合成层。
     pub fn layer(&self, ctx: Context<'_>) -> crate::paint::Layer {
         match self.value(&crate::props::LAYER, ctx).as_deref() {
@@ -340,6 +350,17 @@ impl Node {
             }
         }
         chain
+    }
+
+    /// 玻璃装饰（默认 [`crate::decoration::Decorations::none`]）。
+    ///
+    /// 与 [`Self::filter`] 同纪律：不继承、按值返回（三件全是 `Copy`）。
+    /// `.zstyle` 写 `decoration: glass` / `control` / `none` 三档关键字。
+    pub fn decorations(&self, ctx: Context<'_>) -> crate::decoration::Decorations {
+        match self.value(&crate::props::DECORATIONS, ctx).as_deref() {
+            Some(PropertyValue::Decorations(d)) => *d,
+            _ => crate::decoration::Decorations::none(),
+        }
     }
 
     /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]）。
@@ -458,4 +479,16 @@ impl Node {
 /// `NaN` 表示"未设置"，转成 `None`。
 fn finite(v: f32) -> Option<f32> {
     (v.is_finite() && v >= 0.0).then_some(v)
+}
+
+/// 绘制缩放的合法化：非有限值与 `<= 0` 一律按"不缩放"处理。
+///
+/// 理由见 [`crate::props::SCALE_X`]：负值是镜像，而四类图元都没有镜像语义；
+/// 非有限值会让顶点变 NaN（"整块不画"，症状离病因很远）。
+fn sanitized_scale(v: f32) -> f32 {
+    if v.is_finite() && v > 0.0 {
+        v
+    } else {
+        1.0
+    }
 }

@@ -159,6 +159,46 @@ fn material_params_parses_a_number_list() {
     );
 }
 
+/// `decoration` 只认三个关键字，拼错必须报错（不能静默退回默认值）。
+///
+/// 静默退回的样子是「玻璃少了高光和内阴影」—— 画面看起来只是「没那么像玻璃」，
+/// 没有任何报错，而这正是最难归因的一类失效。
+#[test]
+fn decoration_parses_the_three_keywords_and_rejects_others() {
+    use zephyra_core::decoration::Decorations;
+
+    let r = ok("Control { decoration: glass; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0]
+            .value
+            .get::<Decorations>(),
+        Some(Decorations::glass())
+    );
+
+    let r = ok("Control { decoration: control; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0]
+            .value
+            .get::<Decorations>(),
+        Some(Decorations::control())
+    );
+
+    let r = ok("Control { decoration: none; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0]
+            .value
+            .get::<Decorations>(),
+        Some(Decorations::none())
+    );
+
+    // 拼错 ⇒ 带提示的报错。
+    let err = bad("Control { decoration: frosted; }");
+    assert!(
+        err.contains("unknown decoration"),
+        "报错要指名是哪个值错了，实际：{err}"
+    );
+}
+
 #[test]
 fn position_parses_static_and_absolute_and_rejects_others() {
     // `position` 只认 static / absolute 两个关键字（本仓的 absolute 等价于
