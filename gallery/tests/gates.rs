@@ -15,7 +15,7 @@ use zephyra_fx::View;
 use zephyra_style::ir::StyleSheet;
 
 use zephyra_gallery::app::pages::PAGES;
-use zephyra_gallery::app::{Gallery, BASE_COLUMNS, REF_FAMILIES, ROUTES};
+use zephyra_gallery::app::{Gallery, BASE_COLUMNS, REF_FAMILIES, ROUTES, SWITCH_DEMO_KEY};
 use zephyra_ui::tokens::ALL as TOKENS;
 
 // ---------------------------------------------------------------- 公共帮手
@@ -130,14 +130,18 @@ fn interaction_scripts() -> GateScripts {
         // 少一个族的脚本，那一族的分类名（`.page-checkbox` 等）就会被误判成
         // 死规则，然后有人会去删规则。第一次就踩了这个坑。
         //
-        // 2026-11-01 起参考页只剩两族（Button 族与复选框族）。
+        // 2026-11-01 起参考页是三族（Button 族、复选框族与开关族）。
         ("参考页切到按钮族", |g| {
             g.route = "reference";
             g.ref_family = 0;
         }),
         ("参考页切到复选框族", |g| {
             g.route = "reference";
-            g.ref_family = REF_FAMILIES.len() - 1;
+            g.ref_family = 1;
+        }),
+        ("参考页切到开关族", |g| {
+            g.route = "reference";
+            g.ref_family = 2;
         }),
         ("折射参数加一档", |g| {
             g.glass.nudge(zephyra_gallery::app::glass::Param::Ior, 1);
@@ -256,7 +260,18 @@ fn the_whole_tree_writes_no_appearance_in_source() {
                         let is_fill_geometry = is_fill
                             && (std::ptr::eq(key, &zephyra_core::props::WIDTH)
                                 || std::ptr::eq(key, &zephyra_core::props::HEIGHT));
-                        if !is_fill_geometry {
+                        // ² 第二个例外：把手与轨道的**逐帧插值色**（原版 LiquidToggle
+                        //   `drawRect(lerp(...))`）。它们是绑定值（`track_bg` / `knob_bg` /
+                        //   `knob_mini_color`），不是源码写入的外观 —— 与
+                        //   `filter` / `decoration` 绑定同一条路（`zypui` 的 `background`
+                        //   动态属性）。只放行 `track` / `knob*` key 上的 BACKGROUND，
+                        //   其余外观键照旧拦。
+                        let is_animated_color = n
+                            .key()
+                            .and_then(|k| k.as_name())
+                            .is_some_and(|k| k == "track" || k.starts_with("knob"))
+                            && std::ptr::eq(key, &zephyra_core::props::BACKGROUND);
+                        if !is_fill_geometry && !is_animated_color {
                             offenders.push(format!(
                                 "{} / {}",
                                 n.key().map(|k| k.to_string()).unwrap_or_else(|| "?".into()),
@@ -1760,8 +1775,8 @@ fn reference_page_has_all_families() {
     // 内容没跟上」。
     assert_eq!(
         REF_FAMILIES.len(),
-        2,
-        "参考页当前是**两族**（Button 族与复选框族）—— 加族时同步改这里的数字，\
+        3,
+        "参考页当前是**三族**（Button 族、复选框族与开关族）—— 加族时同步改这里的数字，\
          并确认新族一屏装得下"
     );
     for (i, fam) in REF_FAMILIES.iter().enumerate() {
@@ -1777,6 +1792,7 @@ fn reference_page_has_all_families() {
         let probe = match *fam {
             "buttons" => "act:standard",
             "checkbox" => "group:checks",
+            "switches" => SWITCH_DEMO_KEY,
             _ => panic!("未知族 {fam}"),
         };
         assert!(
@@ -1951,7 +1967,14 @@ use zephyra_gallery::app::glass::{
     THICKNESS_TEXT,
 };
 
-/// 收集树里所有带**局部** `FILTER` 的节点上的折射参数。
+/// 收集**三块玻璃块**上的折射参数。
+///
+/// # 为什么只收 `glass:*` 而不是整树
+///
+/// 开关的玻璃把手（`LiquidToggle` 1:1 复刻）也带一条 `Refraction` 滤镜
+/// （`knob_filter` 绑定，strength 随按压进度变化）—— 整树收会把把手的
+/// 滤镜数进来，`pick(0, …)` 就指到把手而不是玻璃块，这条门禁原本钉的是
+/// 「参数面板真的在改玻璃块」，把手是另一条通道。
 ///
 /// # 为什么读 `iter_local` 而不是 `get`
 ///
@@ -1962,6 +1985,14 @@ use zephyra_gallery::app::glass::{
 fn refraction_filters(root: &Node) -> Vec<zephyra_core::filter::Filter> {
     let mut out = Vec::new();
     walk(root, &mut |n: &Node| {
+        // 只看玻璃块 —— 把手（`knob`）的 Refraction 不在这个契约里。
+        let is_glass_pane = n
+            .key()
+            .and_then(|k| k.as_name())
+            .is_some_and(|k| k.starts_with("glass:"));
+        if !is_glass_pane {
+            return;
+        }
         for (k, v) in n.props().iter_local() {
             if !std::ptr::eq(k, &zephyra_core::props::FILTER) {
                 continue;
@@ -3238,6 +3269,19 @@ fn perturb(g: &mut Gallery, phase: usize, perturb_family: bool) {
     });
     g.pill_on = p == 1;
     g.wants_dark = p == 1;
+    // 开关族的两个状态：开关翻转 + 单选组换一项。
+    //
+    // ⚠ 新增**选中型**字段时必须加进这里 —— 否则「点了必须变」的门禁会在
+    // 一个已经把状态扰到目标值的世界里恒真。
+    if p == 1 {
+        if !g.switch_demo.is_checked() {
+            g.switch_demo.toggle();
+        }
+    } else {
+        g.switch_demo.toggle();
+    }
+    let radio_target = zephyra_gallery::app::RADIO_KEYS[p];
+    g.radio_group.select(radio_target);
     if perturb_family {
         // 族切换器（`ref:*`）常驻 reference 页，所以扰动族不会让它的 key
         // 消失；同时它让「点当前族」有可见变化。其它页的 key 依赖原族
@@ -3587,6 +3631,268 @@ fn the_accessibility_tree_matches_the_painted_controls() {
     );
 }
 
+// ------------------------------------------------------- 门禁：开关族的无障碍
+
+/// 开关族（参考页第三族）必须按**正确的角色与图案**暴露。
+///
+/// # 为什么这条不能省
+///
+/// 开关与单选钮最容易错的一件事是「角色报错」：
+///
+/// - UIA **没有** Switch 这个 ControlType ⇒ 开关只能报 CheckBox + TogglePattern。
+///   报错成 RadioButton 或 Button 时，屏读器念的是完全另一句话；
+/// - 单选钮的「选中」是 **SelectionItem**，不是 Toggle。两者都报的话，
+///   屏读器会既念「已勾选」又念「已选中」。
+///
+/// 而这两件事在画面上**完全看不出来** —— 控件照常显示、鼠标照常能点，
+/// 只有开屏读器才知道坏了。所以只能在这里钉。
+#[test]
+fn the_switch_family_is_exposed_with_the_right_roles() {
+    use zephyra_gallery::app::{RADIO_KEYS, RADIO_LABEL_KEYS, SWITCH_DEMO_KEY, SWITCH_LABEL_KEY};
+    use zephyra_uia::{Role, ToggleState, WindowInfo};
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = 2;
+    let root = Node::from_element(&g.view(&ctx));
+
+    let win = WindowInfo {
+        name: "Zephyra Gallery".into(),
+        client: Rect::new(0.0, 0.0, 1400.0, 800.0),
+    };
+    let snap = zephyra_uia::rules::build(&root, &win);
+
+    assert!(
+        snap.elements.len() > 5,
+        "无障碍树只有 {} 个元素 —— 开关族根本没产出控件？",
+        snap.elements.len()
+    );
+
+    // 1) 开关：`switch` 分类名 ⇒ Role::Switch，状态落在**控件自己**身上。
+    let sw = snap
+        .find_by_key(SWITCH_DEMO_KEY)
+        .expect("开关必须在无障碍树上");
+    assert_eq!(sw.role, Role::Switch, "`switch` 必须映射成开关角色");
+    assert_eq!(
+        sw.name,
+        g.tr(SWITCH_LABEL_KEY),
+        "开关的可访问名必须来自 label_key 通道（模板内部 tr() 出来的）"
+    );
+    assert_eq!(
+        sw.toggle,
+        Some(if g.switch_demo.is_checked() {
+            ToggleState::On
+        } else {
+            ToggleState::Off
+        }),
+        "开关状态必须与模型一致 —— 状态只落在子节点 `switch-track` 上时这里会一直是 Off"
+    );
+
+    // 2) 装饰子节点不许自己变成无障碍元素。
+    for key in ["track", "knob", "label"] {
+        let found = snap.elements.iter().any(|e| e.key == key);
+        assert!(
+            !found,
+            "装饰/文本子节点 `{key}` 不该单独暴露 —— 无障碍树里它会长出一个假控件"
+        );
+    }
+
+    // 3) 单选钮：`radio-box` ⇒ Role::RadioButton，且**只有一项**是 On。
+    let mut on_count = 0;
+    for (i, key) in RADIO_KEYS.iter().enumerate() {
+        let el = snap
+            .find_by_key(key)
+            .unwrap_or_else(|| panic!("{key} 必须在无障碍树上"));
+        assert_eq!(el.role, Role::RadioButton, "{key} 是单选钮");
+        assert_eq!(el.name, g.tr(RADIO_LABEL_KEYS[i]), "{key} 的可访问名");
+        let expected = if g.radio_group.is_selected(key) {
+            on_count += 1;
+            ToggleState::On
+        } else {
+            ToggleState::Off
+        };
+        assert_eq!(el.toggle, Some(expected), "{key} 的选中状态必须与组一致");
+    }
+    assert_eq!(
+        on_count, 1,
+        "单选组必须**恰好**一项选中（实际 {on_count} 项）"
+    );
+}
+
+// ------------------------------------------------------- 门禁：把手与装饰的动态绑定
+
+/// 把手位移 / 缩放是**绑定**出来的 —— 绑定断了，开关仍然能点、状态仍然翻转
+/// （模型是对的），只是把手永远钉在左端：画面静默地错。所以这条直接查
+/// 模板实例化之后、挂在 `knob` 上的 `translate-x` / `scale-x` / `scale-y` / `background`。
+#[test]
+fn the_switch_knob_travels_with_the_fraction() {
+    use zephyra_gallery::app::SWITCH_DEMO_KEY;
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = 2;
+
+    let knob_props = |g: &Gallery| {
+        let element = g.view(&ctx);
+        let root = Node::from_element(&element);
+        let switch = find_by_key(&root, SWITCH_DEMO_KEY).expect("开关要在树上");
+        let knob = find_by_key(switch, "knob").expect("把手要在开关子树里");
+        let read = |p: &'static zephyra_core::property::PropertyKey| {
+            knob.props()
+                .iter_local()
+                .find(|(k, _)| std::ptr::eq(*k, p))
+                .and_then(|(_, v)| v.get::<f32>())
+        };
+        let bg_alpha = knob
+            .props()
+            .iter_local()
+            .find(|(k, _)| std::ptr::eq(*k, &zephyra_core::props::BACKGROUND))
+            .and_then(|(_, v)| v.get::<zephyra_core::core::Color>())
+            .map(|c| c.a);
+        (
+            read(&zephyra_core::props::TRANSLATE_X),
+            read(&zephyra_core::props::SCALE_X),
+            read(&zephyra_core::props::SCALE_Y),
+            bg_alpha,
+        )
+    };
+
+    // 1) 初始（关）：位移 0、缩放 1、白罩 alpha = 1（未按住）。
+    let (tx, sx, sy, bg) = knob_props(&g);
+    assert_eq!(tx, Some(0.0), "关着的把手位移应为 0");
+    assert_eq!(sx, Some(1.0), "关着的把手缩放应为 1");
+    assert_eq!(sy, Some(1.0));
+    assert_eq!(bg, Some(1.0), "未按住时白罩应不透明");
+
+    // 2) 点一下并让动画跑完：位移 = fraction × 行程（20px）。
+    g.click(SWITCH_DEMO_KEY);
+    for _ in 0..600 {
+        g.switch_demo.advance(16.0);
+    }
+    let (tx, sx, _, _) = knob_props(&g);
+    assert_eq!(
+        tx,
+        Some(zephyra_ui::KNOB_TRAVEL),
+        "开着的把手应位移一个行程"
+    );
+    assert_eq!(sx, Some(1.0), "没按住时缩放应为 1");
+
+    // 3) 按住：把手放大到 1.5×（两个轴同一个值），白罩完全消失（alpha = 0）。
+    g.switch_demo.set_pressed(true);
+    for _ in 0..600 {
+        g.switch_demo.advance(16.0);
+    }
+    let (_, sx, sy, bg) = knob_props(&g);
+    assert_eq!(
+        sx,
+        Some(zephyra_ui::KNOB_PRESSED_SCALE),
+        "按住时把手应放大（临界阻尼 1.5，停稳后恰为 1.5）"
+    );
+    assert_eq!(sy, Some(zephyra_ui::KNOB_PRESSED_SCALE));
+    assert_eq!(bg, Some(0.0), "按住时白罩应完全消失（alpha = 0）");
+}
+
+/// 玻璃页「装饰」开关翻的是三块玻璃的 `DECORATIONS` 属性（glass ↔ none）——
+/// 绑定断了，开关能点、模型是对的，玻璃块画面毫无差别：静默地错。
+#[test]
+fn the_glass_decor_toggle_flips_the_panes_decorations() {
+    use zephyra_gallery::app::GLASS_DECOR_KEY;
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut g = Gallery::default();
+    g.route = "materials";
+
+    let decorations_of = |g: &Gallery, pane: &str| {
+        let element = g.view(&ctx);
+        let root = Node::from_element(&element);
+        let glass = find_by_key(&root, pane).unwrap_or_else(|| panic!("要有 {pane} 这块玻璃"));
+        // 先绑局部变量再返回（tail expression 的隐式临时 lifetime 会吃到 `element`）。
+        let found = glass
+            .props()
+            .iter_local()
+            .find(|(k, _)| std::ptr::eq(*k, &zephyra_core::props::DECORATIONS))
+            .and_then(|(_, v)| v.get::<zephyra_core::decoration::Decorations>())
+            .expect("玻璃块必须带 decoration 属性（即使是 none）");
+        found
+    };
+
+    // 1) 默认开：三块玻璃都是 glass 装饰（非恒等）。
+    for pane in ["glass:a", "glass:b", "glass:c"] {
+        assert!(
+            !decorations_of(&g, pane).is_identity(),
+            "{pane} 默认应有玻璃装饰"
+        );
+    }
+
+    // 2) 点一下：三块一起退回恒等（none）。
+    g.click(GLASS_DECOR_KEY);
+    for pane in ["glass:a", "glass:b", "glass:c"] {
+        assert!(
+            decorations_of(&g, pane).is_identity(),
+            "{pane} 的装饰应退回 none"
+        );
+    }
+
+    // 3) 再点一下：装饰回来。
+    g.click(GLASS_DECOR_KEY);
+    for pane in ["glass:a", "glass:b", "glass:c"] {
+        assert!(
+            !decorations_of(&g, pane).is_identity(),
+            "{pane} 的装饰应恢复"
+        );
+    }
+}
+
+// ------------------------------------------------------- 门禁：帧泵
+
+/// `Gallery::wants_frames()` 的三个源都要能把它点亮，且静止后必须精确熄灭。
+///
+/// # 为什么这条门禁的分量在宿主侧
+///
+/// D3D12 / Vulkan 的保留式节奏是「无事件不画帧」：`tick()` 里只有 `dirty`
+/// 才产帧，事件循环平时 `Wait`。视图回答不出「还要帧」时，动画只在鼠标
+/// 事件那一拍推进一格，随后循环睡死 —— 画面上的把手是**跳**过去的，
+/// 整段弹簧曲线看不见（用户原话「动画有问题」）。反过来，若熄灭不及时，
+/// 窗口会永远 Poll 空转，静止时烧 GPU。两侧都是静默故障。
+#[test]
+fn wants_frames_covers_every_animation_source() {
+    let mut g = Gallery::default();
+
+    // 1) 入场动画在读秒：必须泵帧。
+    g.enter_ms = 0.0;
+    assert!(g.wants_frames(), "入场动画期间必须继续泵帧");
+
+    // 2) 入场跑满、开关静止：一帧都不画。
+    g.enter_ms = zephyra_style::anim::ENTER_MS;
+    assert!(
+        !g.wants_frames(),
+        "完全没有动画时不该泵帧（静止零帧是保留式 UI 的卖点）"
+    );
+
+    // 3) 开关翻转后弹簧未收敛：必须泵帧。
+    g.switch_demo.toggle();
+    assert!(g.wants_frames(), "开关弹簧未收敛时必须继续泵帧");
+
+    // 4) 收敛后熄灭。
+    for _ in 0..600 {
+        g.switch_demo.advance(16.0);
+    }
+    assert!(!g.wants_frames(), "开关收敛后必须精确熄灭");
+
+    // 5) 玻璃页那个装饰开关走的是同一条模型，也要被算进来。
+    g.glass_decor.toggle();
+    assert!(g.wants_frames(), "第二个开关的弹簧同样要泵帧");
+    for _ in 0..600 {
+        g.glass_decor.advance(16.0);
+    }
+    assert!(!g.wants_frames(), "两个开关都收敛后才熄灭");
+}
+
 // ------------------------------------------------------- 门禁：i18n 深度融合
 
 /// 模板里承载**面向用户的文字**的属性名。
@@ -3835,6 +4141,13 @@ fn every_label_key_exists_in_every_language() {
         remember(item.label_key(), &mut keys);
     }
     remember(g.demo_check.label_key(), &mut keys);
+    // 开关族（参考页第三族）：开关的标签 key + 三个单选选项的标签 key。
+    remember(g.switch_demo.label_key(), &mut keys);
+    for option in g.radio_group.options() {
+        remember(option.label_key(), &mut keys);
+    }
+    // 玻璃页「装饰」开关（默认开）。
+    remember(g.glass_decor.label_key(), &mut keys);
 
     // 恒真防御：一个 key 都没收集到 ⇒ 门禁在假装通过。
     assert!(

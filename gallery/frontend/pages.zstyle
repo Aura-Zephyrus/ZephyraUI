@@ -93,6 +93,12 @@ Container.page-checkbox {
     spacing: 24px;
     cross-align: stretch;
 }
+/* 第三族（开关族）与另两族同形。 */
+Container.page-switches {
+    direction: vertical;
+    spacing: 24px;
+    cross-align: stretch;
+}
 /* `.page-layout` 比别的页紧一档（16px 而不是 24px）：这一页现在挂**四**节
  * （flex 演示 + 无滚动 + 断点 + 触控目标），24px 会把最后一节的按钮顶出
  * 800px 高的客户区 —— 而那正好撞上这一页自己教的那条边界：掉出去就是
@@ -347,6 +353,14 @@ Text.glass-param-value {
     text-size: 14px;
     text-color: @content;
     width: 44px;
+}
+
+/* 装饰开关行：一行一个开关，与上面的四组步进器隔开 ——
+ * 「装饰」是「玻璃周围画什么」，不是第五个折射参数。 */
+Container.glass-decor-row {
+    direction: horizontal;
+    spacing: 10px;
+    cross-align: center;
 }
 
 /* 指南层 styling 章：令牌着色的示例文字。

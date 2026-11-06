@@ -88,6 +88,7 @@ pub(crate) fn seg_key(fam: &str) -> &'static str {
     match fam {
         "buttons" => "ref:buttons",
         "checkbox" => "ref:checkbox",
+        "switches" => "ref:switches",
         _ => "ref:unknown",
     }
 }
@@ -97,6 +98,7 @@ pub(crate) fn family_label(id: &str) -> &'static str {
     match id {
         "buttons" => "Buttons",
         "checkbox" => "Checkbox",
+        "switches" => "Switches",
         _ => "Unknown",
     }
 }
@@ -139,6 +141,73 @@ pub(crate) fn glass_step_key(p: crate::app::glass::Param, inc: bool) -> &'static
         (Ior, false) => "glass-ior:dec",
         (Ior, true) => "glass-ior:inc",
     }
+}
+
+// ---- 开关旋钮（LiquidToggle 一比一复刻的逐帧绑定） ----
+
+/// 轨道颜色 = `lerp(switch_track, switch_accent, fraction)`（原版
+/// `drawBehind { drawRect(lerp(trackColor, accentColor, fraction)) }`）。
+///
+/// 两个端点走**令牌**（`Theme::switch_track` / `switch_accent`）——
+/// 深浅主题各一份，且色板住在 `Theme` 里，不在本文件。
+pub(crate) fn switch_track_color_value(
+    g: &super::Gallery,
+    model: &zephyra_ui::ToggleSwitch,
+) -> zypui::Val {
+    use zephyra_core::core::Color;
+    let theme = zephyra_core::theme::Theme::builtin(if g.wants_dark {
+        zephyra_core::theme::ThemeVariant::Dark
+    } else {
+        zephyra_core::theme::ThemeVariant::Light
+    });
+    let t = model.fraction();
+    // 双端都是不透明的灰/绿 —— lerp 只改 rgb，alpha 取混合结果。
+    let color = Color::lerp(theme.switch_track, theme.switch_accent, t);
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::color(color))
+}
+
+/// 把手白罩 = `White @ (1 − press)`（原版 `onDrawSurface { drawRect(White.copy(alpha = 1f - progress)) }`）。
+///
+/// 按住时白罩消失，让出玻璃把手的折射面。
+pub(crate) fn switch_knob_bg_value(model: &zephyra_ui::ToggleSwitch) -> zypui::Val {
+    use zephyra_core::core::Color;
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::color(Color::rgba(
+        1.0,
+        1.0,
+        1.0,
+        1.0 - model.press_progress(),
+    )))
+}
+
+/// 把手滤镜 = `[BackdropBlur(8dp · (1−press)), Lens(5dp · press, 10dp · press)]`
+/// —— 原版 `effects` 的 `blur(8.dp * (1 - progress))` 与
+/// `lens(5.dp * progress, 10.dp * progress, chromaticAberration = true)`。
+///
+/// `chromaticAberration = true` 由 [`Filter::Lens`] 固定实现（7 通道分色），
+/// 不另给开关 —— 原版液态开关把这一个参数写死为 true。
+pub(crate) fn switch_knob_filter_value(model: &zephyra_ui::ToggleSwitch) -> zypui::Val {
+    use zephyra_core::filter::{Filter, FilterChain};
+    let p = model.press_progress();
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::filter(
+        FilterChain::new(vec![
+            Filter::BackdropBlur {
+                sigma: 8.0 * (1.0 - p),
+            },
+            Filter::Lens {
+                refraction_height: 5.0 * p,
+                refraction_amount: 10.0 * p,
+            },
+        ]),
+    ))
+}
+
+/// 把手装饰 = `Decorations::control_with_progress(press)` —— 原版 `drawBackdrop`
+/// 的 highlight / shadow / innerShadow 三件（`width/1.5` 高光、
+/// `Shadow(4dp, Black@0.05)` 恒定、`InnerShadow(4dp · press, alpha = press)`）。
+pub(crate) fn switch_knob_decoration_value(model: &zephyra_ui::ToggleSwitch) -> zypui::Val {
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::decorations(
+        zephyra_core::decoration::Decorations::control_with_progress(model.press_progress()),
+    ))
 }
 
 /// 三块玻璃的逐帧滤镜值（结构值经 `Val::Raw` 透传进模板的 `filter` 属性；

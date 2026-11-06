@@ -45,6 +45,9 @@ zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }
 
 # 演示宿主：真开窗口 + GPU 渲染。只有 bin 用它，库层不依赖任何后端。
 zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
+# 窗口集合（多窗口）。与渲染后端无关 —— d3d12 / d3d11 / linux-vk 共用同一个
+# `WindowSet`，各后端只提供 `Backend` 实现。
+zephyra-window = { path = "../zephyra/zephyra-base/zephyra-window" }
 zephyra-winit = { path = "../zephyra/zephyra-base/zephyra-winit", optional = true }
 zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
 winit = "0.30"

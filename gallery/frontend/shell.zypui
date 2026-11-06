@@ -1,28 +1,8 @@
-<!-- gallery 应用外壳与页面的结构声明（.zypui 组件模板），统一放在 frontend/。
-
-     这一份是 frontend/app/shell.rs 与 frontend/app/pages/*.rs 的结构逻辑翻译：
-     「建哪些节点、发哪些分类名、key 是什么」全部搬到这里；状态经 @绑定
-     从 Gallery 来，文案走 tr('…')。外观值一个都没有 —— 全部在 .zstyle。
-
-     类序即 dump 序：每个 class 属性的词序与 Rust 版 style_names() 逐一
-     对齐（parity 对照的另一半）。两处必须同改。
-
-     惯例（与 ui/controls.zypui 一致）：
-     - 交互态只住组件模板里；实例 key 是 hover/press 基准 —— 页面控件
-       的 key 就是 Gallery::click 的 key，两侧天然同一份。
-     - 数据驱动列表的逐项状态用 hover(key) / press(key) 显式给。
-     - 数据表（菜单条目、日历格、语言段……）由宿主绑定提供（Rec 数组）。 -->
-
-<!-- ───────────────────────── 页面编排助手 ───────────────────────── -->
-
-<!-- 一页的根容器：key + page-* 间距分类名。每个页面组件的根都是它。 -->
 <component name="PageRoot" params="id cls">
   <container key="{id}" class="{cls}">
     <children/>
   </container>
 </component>
-
-<!-- 一个分区：标题 + 内容。 -->
 <component name="Section" params="id title">
   <container key="{id}" class="section">
     <TextLabel key="section-title" text="{title}" level="text-body-strong"/>
@@ -31,9 +11,6 @@
     </container>
   </container>
 </component>
-
-<!-- 控件的一行样例：左标签、右控件。label 同时是三处 key（与 Rust 版
-     demo() 同形：demo-row / demo-label / demo-slot 同名）。 -->
 <component name="DemoRow" params="label">
   <container key="{label}" class="demo-row">
     <text key="{label}" text="{label}" class="demo-label"/>
@@ -42,10 +19,7 @@
     </container>
   </container>
 </component>
-
-<!-- ───────────────────────── 指南层（六章） ───────────────────────── -->
-
-<component name="PageGuide">
+<component name="PageGuide" params="">
   <PageRoot key="guide" cls="page-guide">
     <TextLabel key="guide-blurb" text="{tr('ui.click-the-button-the-count-goes-up-that-is-the-whole-pipeline')}" level="text-body"/>
     <DemoRow label="{tr('ui.counter')}">
@@ -54,8 +28,7 @@
     <text key="guide-count" text="{@cnt_text}" class="text-title"/>
   </PageRoot>
 </component>
-
-<component name="PageState">
+<component name="PageState" params="">
   <PageRoot key="state" cls="page-state">
     <TextLabel key="state-blurb" text="{tr('ui.wired-controls-change-state-on-click-display-only-controls-dont-thats-a-core-boundary-not-a-bug')}" level="text-body"/>
     <Section key="state-wired" title="{tr('ui.wired-to-state')}">
@@ -65,8 +38,7 @@
     </Section>
   </PageRoot>
 </component>
-
-<component name="PageStyling">
+<component name="PageStyling" params="">
   <PageRoot key="styling" cls="page-styling">
     <TextLabel key="styling-blurb" text="{tr('ui.appearance-lives-in-zstyle-source-sends-keys-and-class-names-only-no-colors-no-sizes')}" level="text-body"/>
     <Section key="styling-tokens" title="{tr('ui.colors-come-from-theme-tokens')}">
@@ -92,8 +64,7 @@
     </Section>
   </PageRoot>
 </component>
-
-<component name="PageLayout">
+<component name="PageLayout" params="">
   <PageRoot key="layout" cls="page-layout">
     <TextLabel key="layout-blurb" text="{tr('ui.flex-rows-that-grow-and-wrap-and-the-one-boundary-that-is-still-real-no-scroll')}" level="text-body"/>
     <Section key="layout-flex" title="{tr('ui.flexbox-rows-that-grow-and-wrap')}">
@@ -131,19 +102,18 @@
     </Section>
   </PageRoot>
 </component>
-
-<component name="PageTheme">
+<component name="PageTheme" params="">
   <PageRoot key="theme" cls="page-theme">
     <TextLabel key="theme-blurb" text="{tr('ui.theme-is-an-intent-not-a-reference-language-negotiates-from-system-prefs-then-manual-choice-wins')}" level="text-body"/>
     <Section key="theme-i18n" title="{tr('ui.language-en-zh-hans-ja')}">
       <DemoRow label="English">
-        <PillButton key="lang:en" label="English" checked="{@lang == 0}"/>
+        <PillButton key="lang:en" label="English" checked="{(@lang == 0.0)}"/>
       </DemoRow>
       <DemoRow label="中文">
-        <PillButton key="lang:zh-Hans" label="中文" checked="{@lang == 1}"/>
+        <PillButton key="lang:zh-Hans" label="中文" checked="{(@lang == 1.0)}"/>
       </DemoRow>
       <DemoRow label="日本語">
-        <PillButton key="lang:ja" label="日本語" checked="{@lang == 2}"/>
+        <PillButton key="lang:ja" label="日本語" checked="{(@lang == 2.0)}"/>
       </DemoRow>
     </Section>
     <Section key="theme-current" title="{tr('ui.current-locale')}">
@@ -153,8 +123,7 @@
     </Section>
   </PageRoot>
 </component>
-
-<component name="PageTesting">
+<component name="PageTesting" params="">
   <PageRoot key="testing" cls="page-testing">
     <TextLabel key="testing-blurb" text="{tr('ui.three-layers-of-self-verification-from-fastest-to-slowest-each-guards-a-different-class-of-silent-failure')}" level="text-body"/>
     <Section key="testing-current" title="{tr('ui.current-state')}">
@@ -195,29 +164,28 @@
     <Section key="testing-try" title="{tr('ui.try-it-switch-language-same-state-as-lang')}">
       <DemoRow label="{tr('ui.language')}">
         <for var="e" index="i" list="@langs">
-          <PillButton key="{e.id}" label="{e.label}" checked="{@lang == i}"/>
+          <PillButton key="{e.id}" label="{e.label}" checked="{(@lang == i)}"/>
         </for>
       </DemoRow>
     </Section>
   </PageRoot>
 </component>
-
-<!-- ───────────────────────── 参考层（两族） ───────────────────────── -->
-
-<component name="PageReference">
+<component name="PageReference" params="">
   <PageRoot key="reference" cls="page-reference">
     <TextLabel key="reference-blurb" text="{tr('ui.control-reference-pick-a-family-to-see-its-controls')}" level="text-body"/>
     <Segmented key="ref-family" items="{@ref_segs}" sel="{@ref_sel}"/>
-    <if cond="@ref_family == 0">
+    <if cond="(@ref_family == 0.0)">
       <PageButtons/>
     </if>
-    <if cond="@ref_family == 1">
+    <if cond="(@ref_family == 1.0)">
       <PageCheckbox/>
+    </if>
+    <if cond="(@ref_family == 2.0)">
+      <PageSwitches/>
     </if>
   </PageRoot>
 </component>
-
-<component name="PageButtons">
+<component name="PageButtons" params="">
   <PageRoot key="buttons" cls="page-buttons">
     <Section key="sec-btns" title="{tr('ui.button')}">
       <DemoRow label="{tr('ui.variants')}">
@@ -239,8 +207,7 @@
     </Section>
   </PageRoot>
 </component>
-
-<component name="PageCheckbox">
+<component name="PageCheckbox" params="">
   <PageRoot key="checkbox" cls="page-checkbox">
     <Section key="sec-check" title="{tr('ui.checkbox')}">
       <DemoRow label="{tr('ui.multiple')}">
@@ -249,28 +216,31 @@
     </Section>
   </PageRoot>
 </component>
-
-<!-- ───────────────────────── 材质专区（与液态玻璃合并为一页） ───────────────────────── -->
-
-<!-- 材质与玻璃**同页**：材质专区讲「三种表面长什么样」，液态玻璃讲
-     「折射参数怎么调」。两件事共用**同一块照片板** —— 材质样板与玻璃块
-     都浮在同一张山上，于是「实心 / 磨砂 / 玻璃」的差别和「薄 / 普通 / 厚」
-     的差别是**同一张照片**上的两种读法，不用在两张图之间来回对照。
-     照片挂在**板自己**身上（.zstyle 的 image-texture），因为它是所有子项
-     背后必须先画进去的东西 —— 折射与磨砂读的就是那一份。 -->
-<component name="PageMaterials">
+<component name="PageSwitches" params="">
+  <PageRoot key="switches" cls="page-switches">
+    <Section key="sec-switch" title="{tr('ui.switch')}">
+      <DemoRow label="{tr('ui.toggle')}">
+        <ToggleSwitch key="switch:demo" label_key="ui.switch.airplane-mode" checked="{@switch_demo_on}" knob_x="{@switch_knob_x}" knob_scale_x="{@switch_knob_scale_x}" knob_scale_y="{@switch_knob_scale_y}" track_bg="{@switch_track_color}" knob_bg="{@switch_knob_bg}" knob_filter="{@switch_knob_filter}" knob_decoration="{@switch_knob_decoration}" animated="animated"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.radio')}">
+        <for var="e" list="@radio_items">
+          <RadioButton key="{e.id}" label_key="{e.label_key}" checked="{e.checked}"/>
+        </for>
+      </DemoRow>
+    </Section>
+  </PageRoot>
+</component>
+<component name="PageMaterials" params="">
   <PageRoot key="materials" cls="page-materials">
     <TextLabel key="materials-blurb" text="{tr('ui.materials-on-a-real-photo')}" level="text-body"/>
     <Section key="sec-materials" title="{tr('ui.materials-and-liquid-glass')}">
       <GlassParams/>
+      <GlassDecor/>
       <MaterialBoard/>
     </Section>
   </PageRoot>
 </component>
-
-<!-- 参数面板：四组 `[−] 名称 值 [+]`。数据（标签 / 步进键 / 当前值文本）
-     由宿主绑定 @glass_params 逐帧给。 -->
-<component name="GlassParams">
+<component name="GlassParams" params="">
   <PageRoot key="glass-params" cls="glass-params">
     <for var="p" list="@glass_params">
       <PageRoot key="cell" cls="glass-param">
@@ -282,21 +252,18 @@
     </for>
   </PageRoot>
 </component>
-
-<!-- 照片板：上排三块材质样板，下排三块玻璃块。
-     板自己的 image-texture 是那张照片（见 pages.zstyle 的 .material-board），
-     所以这里**没有**背景元素 —— 板就是背景。 -->
-<component name="MaterialBoard">
+<component name="GlassDecor" params="">
+  <PageRoot key="glass-decor" cls="glass-decor-row">
+    <ToggleSwitch key="glass:decor" label_key="ui.decorations" checked="{@glass_decor_on}" knob_x="{@glass_decor_knob_x}" knob_scale_x="{@glass_decor_knob_scale_x}" knob_scale_y="{@glass_decor_knob_scale_y}" track_bg="{@glass_decor_track_color}" knob_bg="{@glass_decor_knob_bg}" knob_filter="{@glass_decor_knob_filter}" knob_decoration="{@glass_decor_knob_decoration}" animated="animated"/>
+  </PageRoot>
+</component>
+<component name="MaterialBoard" params="">
   <PageRoot key="material-board" cls="material-board">
     <MaterialSwatches/>
     <GlassPanes/>
   </PageRoot>
 </component>
-
-<!-- 材质样板行：实心 / 磨砂 / 液态玻璃。
-     材质种类是**外观**（.zstyle 的分类名 material-solid / material-frosted /
-     material-glass），模板只负责摆位置 —— 外观不进模板是本仓的规矩。 -->
-<component name="MaterialSwatches">
+<component name="MaterialSwatches" params="">
   <PageRoot key="material-swatches" cls="material-swatches">
     <container key="swatch:solid" class="material-swatch material-solid">
       <container key="chip:solid" class="photo-chip">
@@ -315,37 +282,28 @@
     </container>
   </PageRoot>
 </component>
-
-<!-- 玻璃块行：薄 / 普通 / 厚。三块共用面板调的那一组参数，只有**厚度**不同
-     （偏移见 app/glass.rs 的 PANE_THICKNESS_OFFSETS）—— 三个标题才名副其实。
-     滤镜是结构值（Val::Raw 透传），由宿主逐帧算。 -->
-<component name="GlassPanes">
+<component name="GlassPanes" params="">
   <PageRoot key="glass-panes" cls="glass-panes">
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:a" filter="{@glass_filter_0}" class="glass-pane"/>
+      <container key="glass:a" filter="{@glass_filter_0}" decoration="{@glass_decorations}" class="glass-pane"/>
       <container key="gt:a" class="photo-chip">
         <TextLabel key="gt:a" text="{tr('ui.thin')}" level="glass-title"/>
       </container>
     </PageRoot>
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:b" filter="{@glass_filter_1}" class="glass-pane"/>
+      <container key="glass:b" filter="{@glass_filter_1}" decoration="{@glass_decorations}" class="glass-pane"/>
       <container key="gt:b" class="photo-chip">
         <TextLabel key="gt:b" text="{tr('ui.normal')}" level="glass-title"/>
       </container>
     </PageRoot>
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:c" filter="{@glass_filter_2}" class="glass-pane"/>
+      <container key="glass:c" filter="{@glass_filter_2}" decoration="{@glass_decorations}" class="glass-pane"/>
       <container key="gt:c" class="photo-chip">
         <TextLabel key="gt:c" text="{tr('ui.thick')}" level="glass-title"/>
       </container>
     </PageRoot>
   </PageRoot>
 </component>
-
-<!-- ───────────────────────── 整窗 ───────────────────────── -->
-<!-- shell::window 的翻译：标题栏 + 主体（导航 + 内容卡）。page 的 key 上
-     挂 enter-* 入场档；route 分发用 8 个 if（与 PAGES 表对齐）。 -->
-
 <page name="Window">
   <container key="window" class="window">
     <container key="titlebar" class="titlebar">
@@ -356,7 +314,7 @@
       </container>
       <container key="caption" class="caption-bar">
         <for var="c" list="@caps">
-          <control key="{c.key}" interactive="true" class="caption-btn {c.close ? 'close' : ''} {press(c.key) ? 'pressed' : (hover(c.key) ? 'hovered' : '')}">
+          <control key="{c.key}" interactive="true" class="caption-btn {c.close ? 'close' : ''} {(press(c.key) ? 'pressed' : (hover(c.key) ? 'hovered' : ''))}">
             <container key="icon" icon="{c.icon}" class="caption-icon"/>
           </control>
         </for>
@@ -365,7 +323,7 @@
     <container key="body" class="body">
       <container key="nav" class="nav-pane {@compact ? 'compact' : ''}">
         <for var="r" list="@routes">
-          <NavItem key="{r.id}" label="{r.label}" icon="{r.icon}" selected="{r.id == @route}" compact="{@compact}"/>
+          <NavItem key="{r.id}" label="{r.label}" icon="{r.icon}" selected="{(r.id == @route)}" compact="{@compact}"/>
         </for>
       </container>
       <container key="content" class="content-card">
@@ -381,28 +339,28 @@
           </container>
         </container>
         <container key="page" class="page {@enter_class}">
-          <if cond="@route == 'guide'">
+          <if cond="(@route == 'guide')">
             <PageGuide/>
           </if>
-          <if cond="@route == 'state'">
+          <if cond="(@route == 'state')">
             <PageState/>
           </if>
-          <if cond="@route == 'styling'">
+          <if cond="(@route == 'styling')">
             <PageStyling/>
           </if>
-          <if cond="@route == 'layout'">
+          <if cond="(@route == 'layout')">
             <PageLayout/>
           </if>
-          <if cond="@route == 'theme'">
+          <if cond="(@route == 'theme')">
             <PageTheme/>
           </if>
-          <if cond="@route == 'testing'">
+          <if cond="(@route == 'testing')">
             <PageTesting/>
           </if>
-          <if cond="@route == 'reference'">
+          <if cond="(@route == 'reference')">
             <PageReference/>
           </if>
-          <if cond="@route == 'materials'">
+          <if cond="(@route == 'materials')">
             <PageMaterials/>
           </if>
         </container>

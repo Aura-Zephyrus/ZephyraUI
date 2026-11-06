@@ -151,6 +151,14 @@ fn main() {
     all(not(windows), feature = "linux-vk")
 ))]
 fn run_window_path(want_light: bool) {
+    // 多窗口演示走另一条自举路（`WindowSet`）。默认仍是单窗口，保证既有行为不变。
+    #[cfg(any(
+        all(windows, feature = "d3d12"),
+        all(not(windows), feature = "linux-vk")
+    ))]
+    if std::env::args().any(|a| a == "--multi-window") {
+        return run_multi_window_path(want_light);
+    }
     let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
     let theme = intent_cell(!want_light);
     let mut view = Gallery::with_theme_intent(theme.clone(), !want_light);
@@ -221,6 +229,142 @@ fn run_window_path(want_light: bool) {
     }
 }
 
+/// 多窗口演示：主窗口 + 一个 owned 的工具窗口。
+///
+/// # 演示了什么
+///
+/// - **动态建窗**：两个窗口都在 `on_start` 里通过 `WindowSet::create_window` 建；
+/// - **独立 View**：每个窗口一个 `Gallery` 实例（各自的内容树 / 输入 / 焦点）；
+/// - **共享状态**：两个实例共用同一个 `Arc<AtomicU8>` 主题意图，且纹理表在
+///   `Shared` 里 —— 主窗口注册的背景照片，工具窗口直接可用；
+/// - **owned 级联**：工具窗口 `owner` 指向主窗口，关主窗口时它跟着关；
+/// - **最后窗口退出**：`ShutdownMode::OnLastWindowClosed`。
+///
+/// 用 `--multi-window` 开启（默认仍是单窗口路，保证既有行为不变）。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
+fn run_multi_window_path(want_light: bool) {
+    use std::sync::atomic::AtomicBool;
+    #[cfg(all(not(windows), feature = "linux-vk"))]
+    use zephyra_vulkan::VulkanBackend;
+    use zephyra_window::{ShutdownMode, WindowSet, WindowSpec};
+    #[cfg(all(windows, feature = "d3d12"))]
+    use zephyra_winit_d3d12::D3d12Backend;
+
+    // 与单窗口路同一个理由：配置按 cwd 解析，直接用 env 钉住无边框。
+    std::env::set_var("ZEPHYRA_FRAMELESS", "1");
+
+    let theme = intent_cell(!want_light);
+    let light_intent = Arc::new(AtomicBool::new(want_light));
+    let (w, h) = (
+        zephyra_gallery::app::shell::CANVAS_W as u32,
+        zephyra_gallery::app::shell::CANVAS_H as u32,
+    );
+
+    #[cfg(all(windows, feature = "d3d12"))]
+    let backend = D3d12Backend::new();
+    #[cfg(all(not(windows), feature = "linux-vk"))]
+    let backend = VulkanBackend::new();
+    let mut set = WindowSet::new(backend, ShutdownMode::OnLastWindowClosed);
+
+    // 主题对账：只在意图真的变了时才广播（否则每 tick 都换主题 = 每 tick 重画）。
+    // 初始值用 `None`（而不是 `want_light`）：第一次 tick 必须广播一次，否则
+    // 「`--theme light` 开多窗口」会停在宿主默认的暗色上。
+    let tick_intent = light_intent.clone();
+    let mut applied_light: Option<bool> = None;
+    set.set_tick_handler(move |set, _event_loop| {
+        let light = tick_intent.load(Ordering::Relaxed);
+        if applied_light != Some(light) {
+            applied_light = Some(light);
+            set.set_theme_all(if light {
+                ThemeVariant::Light
+            } else {
+                ThemeVariant::Dark
+            });
+        }
+    });
+
+    let main_theme = theme.clone();
+    let side_theme = theme.clone();
+    set.set_start_handler(move |set, event_loop| {
+        // ---- 主窗口 ----
+        let main_view = Gallery::with_theme_intent(main_theme, !want_light);
+        let main = set
+            .create_window(event_loop, WindowSpec::main().size(w, h), move |_| {
+                main_view
+            })
+            .expect("创建主窗口");
+        let main_key = main.key();
+        {
+            let host = set.host_mut(main_key).expect("主窗口刚建").as_any_mut();
+            let app = host
+                .downcast_mut::<Host>()
+                .expect("主窗口的宿主类型是 HostWindow<Gallery>");
+            register_mountain(app);
+            app.set_styler(install(build_sheet()));
+            let _ = app.apply_window_chrome(zephyra_platform::WindowChrome {
+                dark: true,
+                corner: zephyra_platform::CornerPreference::Round,
+                caption_color: None,
+                border_color: None,
+            });
+            // UIA 是 Windows 专属；Linux 后端没有对应物，也不该放空壳。
+            #[cfg(windows)]
+            if let Err(e) = app.enable_uia() {
+                eprintln!("[gallery] 主窗口装不上无障碍（UIA）: {e}");
+            }
+        }
+        // 首帧已经在 `start()` 里画过了，但那时还没装样式表 / 纹理 —— 要一帧。
+        set.host_mut(main_key).expect("主窗口").request_redraw();
+
+        // ---- 工具窗口（Inspector）----
+        let side_view = Gallery::with_theme_intent(side_theme, !want_light);
+        let inspector = set
+            .create_window(
+                event_loop,
+                WindowSpec::named("inspector")
+                    .owner(main_key)
+                    .tool_window()
+                    .size(560, 720),
+                move |_| side_view,
+            )
+            .expect("创建 Inspector 窗口");
+        let inspector_key = inspector.key();
+        {
+            let host = set
+                .host_mut(inspector_key)
+                .expect("Inspector 刚建")
+                .as_any_mut();
+            let app = host
+                .downcast_mut::<Host>()
+                .expect("Inspector 的宿主类型是 HostWindow<Gallery>");
+            app.set_styler(install(build_sheet()));
+            let _ = app.apply_window_chrome(zephyra_platform::WindowChrome {
+                dark: true,
+                corner: zephyra_platform::CornerPreference::Round,
+                caption_color: None,
+                border_color: None,
+            });
+        }
+        set.host_mut(inspector_key)
+            .expect("Inspector")
+            .request_redraw();
+
+        eprintln!(
+            "[gallery] 多窗口：主窗口 {} + Inspector {}（关主窗口时 Inspector 跟随关闭）",
+            main_key.as_u64(),
+            inspector_key.as_u64()
+        );
+    });
+
+    let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
+    if let Err(e) = event_loop.run_app(&mut set) {
+        eprintln!("事件循环退出：{e}");
+    }
+}
+
 /// 打印一帧的渲染报告——前 5 帧。
 ///
 /// # 为什么需要它
@@ -249,11 +393,12 @@ fn report_frame(tag: &str, frame: &zephyra_fx::Frame) {
     }
     let r = &frame.render;
     eprintln!(
-        "[gallery] {tag}#{n} redrawn={} quads={} offscreen={} refraction={}          unimplemented_filters={} unimplemented_blends={} skipped={}",
+        "[gallery] {tag}#{n} redrawn={} quads={} offscreen={} refraction={} lens={}          unimplemented_filters={} unimplemented_blends={} skipped={}",
         frame.redrawn,
         r.quads,
         r.offscreen_passes,
         r.refraction_passes,
+        r.lens_passes,
         r.unimplemented_filters,
         r.unimplemented_blends,
         r.skipped,
@@ -655,6 +800,15 @@ fn dump_cpu(light: bool) {
         }
     }
     let (w, h) = (1400u32, 800u32);
+    // `--switch-press`：把开关钉在「按住」状态（press=1.0，checked 不变），
+    // 供**像素自验**用。按住态的液态玻璃（白罩消失、refraction、highight/inner-shadow）
+    // 的像素在纯 CPU 出图里最值得盯一眼 —— 窗口路才能看到的缺陷在这条路上同样现形，
+    // 而静态出图是 token 级的。
+    if args.iter().any(|a| a == "--switch-press") {
+        view.switch_demo.set_pressed(true);
+        // 一步到端点（dt > 0.5 的分支就是为这种场景写的）。
+        view.switch_demo.advance(1000.0);
+    }
     let mut host = zephyra_fx::cpu_only::CpuHost::new(view, (w, h));
     if light {
         host.set_theme(ThemeVariant::Light);

@@ -104,7 +104,7 @@ pub const REF_FAMILIES: &[&str] = &[
     // ⚠ 新族一律**追加在末尾**，不要插在中间：`ref_family` 是下标，
     // 门禁与 `--family` 都用下标引用（插中间会静默改掉已有序号的含义，
     // 而画面上只是「点了这一族出现那族」）。
-    "buttons", "checkbox",
+    "buttons", "checkbox", "switches",
 ];
 
 /// 基准画布尺寸（物理像素）= 宿主建窗口时的初值。
@@ -245,6 +245,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.thin", "Thin"),
     ("en", "ui.normal", "Normal"),
     ("en", "ui.thick", "Thick"),
+    ("en", "ui.decorations", "Decorations"),
     // ---- 布局页：flex ----
     (
         "en",
@@ -293,6 +294,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "Style tokens, dead rules, hit-test, breakpoints, no appearance in source"),
     ("en", "ui.try-it-switch-language-same-state-as-lang", "Try it: switch language (same state as --lang)"),
     ("en", "ui.control-reference-pick-a-family-to-see-its-controls", "Control reference — pick a family to see its controls."),
+    // ---- 开关族（第三族）：分区标题 + 开关 / 单选钮标签 ----
+    ("en", "ui.switch", "Switch"),
+    ("en", "ui.toggle", "Toggle"),
+    ("en", "ui.radio", "Radio"),
+    ("en", "ui.switch.airplane-mode", "Airplane mode"),
+    ("en", "ui.radio.off", "Off"),
+    ("en", "ui.radio.on", "On"),
+    ("en", "ui.radio.auto", "Auto"),
     // ---- zh-Hans ----
     ("zh-Hans", "route.guide", "快速开始"),
     ("zh-Hans", "route.state", "状态"),
@@ -358,6 +367,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.thin", "薄"),
     ("zh-Hans", "ui.normal", "普通"),
     ("zh-Hans", "ui.thick", "厚"),
+    ("zh-Hans", "ui.decorations", "装饰"),
     // ---- 布局页：flex ----
     (
         "zh-Hans",
@@ -406,6 +416,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "样式令牌、死规则、命中测试、断点、源码里没有外观"),
     ("zh-Hans", "ui.try-it-switch-language-same-state-as-lang", "试试：切换语言（与 --lang 同一状态）"),
     ("zh-Hans", "ui.control-reference-pick-a-family-to-see-its-controls", "控件参考 —— 选一个族看它的控件。"),
+    // ---- 开关族（第三族） ----
+    ("zh-Hans", "ui.switch", "开关"),
+    ("zh-Hans", "ui.toggle", "切换"),
+    ("zh-Hans", "ui.radio", "单选"),
+    ("zh-Hans", "ui.switch.airplane-mode", "飞行模式"),
+    ("zh-Hans", "ui.radio.off", "关"),
+    ("zh-Hans", "ui.radio.on", "开"),
+    ("zh-Hans", "ui.radio.auto", "自动"),
     // ---- ja ----
     ("ja", "route.guide", "クイックスタート"),
     ("ja", "route.state", "状態"),
@@ -475,6 +493,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.thin", "薄い"),
     ("ja", "ui.normal", "普通"),
     ("ja", "ui.thick", "厚い"),
+    ("ja", "ui.decorations", "装飾"),
     // ---- レイアウト頁：flex ----
     (
         "ja",
@@ -523,6 +542,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.style-tokens-dead-rules-hit-test-breakpoints-no-appearance-in-source", "スタイルトークン、死んだルール、ヒットテスト、ブレークポイント、ソースに外観なし"),
     ("ja", "ui.try-it-switch-language-same-state-as-lang", "試してください：言語を切り替える（--lang と同じ状態）"),
     ("ja", "ui.control-reference-pick-a-family-to-see-its-controls", "コントロール参照 —— ファミリーを選んで控件を確認します。"),
+    // ---- 开关族（第三族） ----
+    ("ja", "ui.switch", "スイッチ"),
+    ("ja", "ui.toggle", "トグル"),
+    ("ja", "ui.radio", "ラジオ"),
+    ("ja", "ui.switch.airplane-mode", "機内モード"),
+    ("ja", "ui.radio.off", "オフ"),
+    ("ja", "ui.radio.on", "オン"),
+    ("ja", "ui.radio.auto", "自動"),
 ];
 
 /// 本表里出现过的**全部**键（按首次出现去重）。
@@ -710,6 +737,23 @@ pub const CHECK_LABEL_KEYS: [&str; 4] = [
 /// 详见 `ZephyraUI/ui/controls.zypui` 里 `CheckBoxGroup` 的注释。
 pub const CHECK_GROUP_KEY: &str = "group:checks";
 
+/// 参考页开关族（第三族）的演示数据。
+///
+/// # 为什么是常量而不是散在 `Default` 里
+///
+/// 门禁要按 key **逐个点击**并回读状态（`every_interactive_key_is_wired_or_whitelisted`），
+/// 而"哪些 key 存在"这件事必须只有一个真相 —— 散在构造与分派两处，
+/// 加一项时就会漏改一边，症状是"点了没反应"。
+pub const SWITCH_DEMO_KEY: &str = "switch:demo";
+pub const GLASS_DECOR_KEY: &str = "glass:decor";
+/// 装饰开关的标签语义 key。
+pub const GLASS_DECOR_LABEL_KEY: &str = "ui.decorations";
+/// 开关的标签语义 key（译文由控件模板内部 `tr()` 取）。
+pub const SWITCH_LABEL_KEY: &str = "ui.switch.airplane-mode";
+/// 单选组的三个选项（顺序即显示顺序）。
+pub const RADIO_KEYS: [&str; 3] = ["radio:off", "radio:on", "radio:auto"];
+/// 三个单选选项的标签语义 key，与 [`RADIO_KEYS`] 一一对应。
+pub const RADIO_LABEL_KEYS: [&str; 3] = ["ui.radio.off", "ui.radio.on", "ui.radio.auto"];
 /// ComboBox 演示选项（`'static`：控件签名收静态切片，与 demo 的常量同手法）。
 ///
 /// 取的是本仓**应用内**已有的材质名（纯色 / 磨砂 / 液态玻璃）：DWM 系统材质
@@ -744,6 +788,13 @@ pub struct Gallery {
     /// 流转规则（半选点一下 = 全选、全不选 = 未选中、全选 = 已选中）
     /// 与聚合规则都住在 `zephyra_ui::checkbox` 里，本页只负责「点哪个 key」。
     pub check_group: zephyra_ui::CheckboxGroup,
+    /// 参考页开关族（第三族）的**开关**（两态）。
+    ///
+    /// 用控件层的 `ToggleSwitch` 而不是裸 `bool`：开关的两态流转与「禁用不翻转」
+    /// 都在 `zephyra_ui::toggle` 里，本页只负责「点了哪个 key」。
+    pub switch_demo: zephyra_ui::ToggleSwitch,
+    /// 参考页开关族（第三族）的**单选组**（至多一项选中）。
+    pub radio_group: zephyra_ui::RadioGroup,
     /// 液态玻璃页的四个折射参数（**运行期可调**）。
     ///
     /// # 为什么它住在应用状态而不是样式表
@@ -753,6 +804,11 @@ pub struct Gallery {
     /// 列表里是**有意的**：它的四个参数是物理量（厚度 / 折射率 / 色散 / 倒角
     /// 宽度），既没有 `@令牌` 对应物，也不随主题变化。
     pub glass: crate::app::glass::Glass,
+    /// 玻璃装饰开关（玻璃页）。
+    ///
+    /// 控制三块玻璃的 `decoration`（`glass` ↔ `none`），**默认开**。
+    /// 开/关都走同一个控件模型 —— 与拨杆的把手动画同一条路径。
+    pub glass_decor: zephyra_ui::ToggleSwitch,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1080,6 +1136,21 @@ impl Default for Gallery {
                 g
             },
             glass: crate::app::glass::Glass::default(),
+            // 装饰默认**开**（与 `Decorations::glass()` 同款；`none` 是
+            // 恒等，画面零差别只是不进离屏 pass）。
+            glass_decor: zephyra_ui::ToggleSwitch::new(GLASS_DECOR_KEY, GLASS_DECOR_LABEL_KEY)
+                .with_checked(true),
+            // 开关默认**关**着；单选组默认选中第一项（「关」）—— 一进页面就看得见
+            // 两种状态，不必先点一下才知道控件长什么样。
+            switch_demo: zephyra_ui::ToggleSwitch::new(SWITCH_DEMO_KEY, SWITCH_LABEL_KEY),
+            radio_group: {
+                let mut g = zephyra_ui::RadioGroup::new();
+                for (key, label_key) in RADIO_KEYS.iter().zip(RADIO_LABEL_KEYS) {
+                    g.push(key, label_key);
+                }
+                g.select(RADIO_KEYS[0]);
+                g
+            },
             // dump 路默认走基准画布：静态图必须与 1400×800 窗口路同基准，
             // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
             viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
@@ -1244,6 +1315,28 @@ impl Gallery {
             // 这一章的职责是教「哪些控件真的接了状态」。若「Wired to state」
             // 区里的控件自己点了没反应，这一页就在说谎——比别页的空壳更糟。
             "state-check" => self.demo_check.toggle(),
+            // ---- 参考页开关族（第三族） ----
+            //
+            // 开关：两态翻转；单选钮：选中自己，同组其余由 `RadioGroup` 取消。
+            // 两条分派都只调控件层的方法 —— 「怎么变」住在 `zephyra_ui::toggle`。
+            SWITCH_DEMO_KEY => {
+                if let Some(target) = self.switch_demo.take_drag_completed_target_checked() {
+                    self.switch_demo.set_checked(target);
+                } else {
+                    self.switch_demo.toggle();
+                }
+            }
+            // 玻璃页「装饰」开关：控制三块玻璃的 `decoration`（glass ↔ none）。
+            GLASS_DECOR_KEY => {
+                if let Some(target) = self.glass_decor.take_drag_completed_target_checked() {
+                    self.glass_decor.set_checked(target);
+                } else {
+                    self.glass_decor.toggle();
+                }
+            }
+            _ if key.starts_with("radio:") => {
+                self.radio_group.select(key);
+            }
             // ---- 控件参考页的族切换 ----
             //
             // key 形如 `ref:buttons`。走 `REF_FAMILIES` 查表而不是逐族 `match`：
@@ -1294,7 +1387,30 @@ impl View for Gallery {
         // 时钟输入。取一次，全函数共用 —— 同一帧里读两次 `state.dt_ms`
         // 不会得到不同值，但两处各写一遍会让"这个数字是哪来的"变成两处真相。
         let dt = state.dt_ms;
+        // 先把本帧的 hover/pressed/focus 同步给模型——Down 判断要读 pressed；
+        // `last_pressed` 则在点击判据用完后更新（见后）。
+        self.hovered = state.hovered.clone();
+        self.pressed = state.pressed.clone();
+        self.focused = state.focused.clone();
+
+        // 顺序要紧：先**同步 pressed 目标**并让模型处理指针事件（Up 会把拖拽
+        // 提交的目标暂存起来），再跑激活漏斗 —— 反过来的话 `click()` 会在模型
+        // 还没看到 Up 时先 toggle，拖拽永远走不到「按阈值提交」那条路。
+        let switch_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(SWITCH_DEMO_KEY);
+        self.switch_demo.set_pressed(switch_now_pressed);
+        self.switch_demo
+            .process_pointer_events(&state.pointer_events, state.scale);
+
+        // 玻璃页装饰开关，同一顺序。
+        let decor_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(GLASS_DECOR_KEY);
+        self.glass_decor.set_pressed(decor_now_pressed);
+        self.glass_decor
+            .process_pointer_events(&state.pointer_events, state.scale);
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
+        // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         let click_key = match (&self.last_pressed, &state.pressed) {
             (Some(prev), None) => Some(prev.as_name().unwrap_or_default().to_string()),
             _ => None,
@@ -1303,9 +1419,9 @@ impl View for Gallery {
             self.click(&key);
         }
         self.last_pressed = state.pressed.clone();
-        self.hovered = state.hovered.clone();
-        self.pressed = state.pressed.clone();
-        self.focused = state.focused.clone();
+
+        self.switch_demo.advance(dt);
+        self.glass_decor.advance(dt);
 
         // 入场动画时钟。
         //
@@ -1347,6 +1463,31 @@ impl View for Gallery {
             self.prefs = zephyra_core::i18n::Preferences::from_owned(&state.languages);
             self.lang = Self::pick_initial_language(&self.prefs);
         }
+    }
+
+    /// 还有动画在跑吗 —— 宿主据此决定要不要继续泵帧。
+    ///
+    /// # 为什么这件事必须在应用侧回答
+    ///
+    /// 宿主的保留式节奏是「有事件才画」：静止时 `tick()` 连一帧都不跑、
+    /// 事件循环 `Wait`。可动画是**时间**驱动的，不是事件驱动的 —— 只有
+    /// 有人回答「还没收敛」，宿主才会在动画期间保持 Poll，把中间帧泵出来。
+    /// 缺了它，把手/入场/玻璃的弹簧只在鼠标动一下时推进一格，随后循环
+    /// 睡死（症状：动画看起来是"跳"过去的、几乎看不见曲线）。
+    ///
+    /// 三处是本页的**全部**动画源：
+    ///
+    /// - `enter_ms`：入场动画时钟，跑满 `ENTER_MS` 后停在端点（见 `on_input`）；
+    /// - `switch_demo` / `glass_decor`：开关模型的弹簧
+    ///   （[`zephyra_ui::ToggleSwitch::is_animating`] —— 与 `advance` 的钉死
+    ///   规则配对，收敛后精确为 false）。
+    ///
+    /// ⚠ 不能用「`render` 统计变了没有」代替：动画收敛到端点后属性 diff 确实
+    /// 恒为零，但那要到**下一帧**才看得见 —— 那时循环已经睡了。
+    fn wants_frames(&self) -> bool {
+        self.enter_ms < zephyra_style::anim::ENTER_MS
+            || self.switch_demo.is_animating()
+            || self.glass_decor.is_animating()
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
@@ -1446,6 +1587,39 @@ impl zypui::Host for Gallery {
 
             // ---- checkbox ----
 
+            // ---- switches（参考页第三族） ----
+            //
+            // 开关与单选钮的**状态**都从控件层模型派生：模板只收"这个词 / 真假"，
+            // 不认识「两态」「单选互斥」是什么。
+            "switch_demo_on" => B(g.switch_demo.is_checked()),
+            // 把手：位移 = fraction × 行程、按压缩放 = 1 + 0.5 × press。
+            // 与 `decoration` 同一条动态属性路径。
+            "switch_knob_x" => F(g.switch_demo.knob_x()),
+            "switch_knob_scale_x" => F(g.switch_demo.knob_scale_x()),
+            "switch_knob_scale_y" => F(g.switch_demo.knob_scale_y()),
+            // 1:1 复刻 LiquidToggle：把手与轨道的每帧「物理量」绑定。
+            // 颜色也是逐帧插值的（原版 drawRect(lerp(...))），不走两个静态分类名。
+            "switch_track_color" => switch_track_color_value(g, &g.switch_demo),
+            "switch_knob_bg" => switch_knob_bg_value(&g.switch_demo),
+            "switch_knob_filter" => switch_knob_filter_value(&g.switch_demo),
+            // 把手玻璃装饰（高光 / 把手投影 / 内阴影）随**按压进度**逐帧重建：
+            // 松开时 control_with_progress(0) 的高光 / 内阴影全为 0（恒等），
+            // 按住时渐显到 control 档。装饰落在把手上（原版 drawBackdrop 挂在
+            // knob 上）。
+            "switch_knob_decoration" => switch_knob_decoration_value(&g.switch_demo),
+            "radio_items" => L(g
+                .radio_group
+                .options()
+                .iter()
+                .map(|o| {
+                    rec(vec![
+                        ("id", S(o.key())),
+                        ("label_key", S(o.label_key())),
+                        ("checked", B(g.radio_group.is_selected(o.key()))),
+                    ])
+                })
+                .collect()),
+
             // ---- glass ----
             "glass_params" => {
                 let (t, bz, d, i) = g.glass.texts();
@@ -1466,6 +1640,25 @@ impl zypui::Host for Gallery {
             "glass_filter_0" => zypui::Val::Raw(glass_filter_value(g, 0)),
             "glass_filter_1" => zypui::Val::Raw(glass_filter_value(g, 1)),
             "glass_filter_2" => zypui::Val::Raw(glass_filter_value(g, 2)),
+            // ---- glass：装饰开关 ----
+            "glass_decor_on" => B(g.glass_decor.is_checked()),
+            "glass_decor_knob_x" => F(g.glass_decor.knob_x()),
+            "glass_decor_knob_scale_x" => F(g.glass_decor.knob_scale_x()),
+            "glass_decor_knob_scale_y" => F(g.glass_decor.knob_scale_y()),
+            "glass_decor_track_color" => switch_track_color_value(g, &g.glass_decor),
+            "glass_decor_knob_bg" => switch_knob_bg_value(&g.glass_decor),
+            "glass_decor_knob_filter" => switch_knob_filter_value(&g.glass_decor),
+            "glass_decor_knob_decoration" => switch_knob_decoration_value(&g.glass_decor),
+            // 装饰本体：`glass` ↔ `none`。走 `Val::Raw`（结构值）——
+            // 与控件把手 `knob_decoration` 的 Raw 通道同一条路；`none` 是恒等，
+            // 关时三块玻璃不进离屏 pass。
+            "glass_decorations" => zypui::Val::Raw(
+                zephyra_core::property::PropertyValue::decorations(if g.glass_decor.is_checked() {
+                    zephyra_core::decoration::Decorations::glass()
+                } else {
+                    zephyra_core::decoration::Decorations::none()
+                }),
+            ),
             _ => return None,
         })
     }
