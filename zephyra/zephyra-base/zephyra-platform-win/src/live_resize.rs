@@ -61,35 +61,58 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// - **不得**重入：实现里要能挡住"渲染中又来一个 `WM_SIZE`"。
 pub type RenderHook = std::sync::Arc<dyn Fn() -> bool + Send + Sync + 'static>;
 
-/// 全局渲染回调。
+/// 一个窗口的钩子条目。
 ///
-/// # 为什么是全局而不是按窗口存表
+/// `in_hook` 是**每窗口**的重入标记。进程级单标记在多窗口下是错的：窗口 A 的
+/// 渲染期间窗口 B 的 `WM_SIZE` 会被当成 A 的重入而丢掉，B 就停在旧尺寸上。
+struct HookEntry {
+    hook: RenderHook,
+    /// 这个窗口的回调正在执行。
+    in_hook: bool,
+}
+
+/// 按 HWND 存的钩子表。
 ///
-/// 进程里通常只有一个主窗口，而"按 hwnd 存表"要在每次 `WM_SIZE` 里查一次表、
-/// 外加锁。而这里**本来就是**一条全局的"该画了"信号：`WM_SIZE` 的处理与
-/// 具体是哪个窗口无关（我们只挂一个窗口）。
+/// # 为什么从进程级单例改成表
 ///
-/// 真要支持多窗口，得改成 `HashMap<isize, ...>` —— 记账在
-/// `docs/dev-log/task-live-resize.md`。
-static HOOK: Mutex<Option<RenderHook>> = Mutex::new(None);
+/// 原实现只有 `static HOOK: Mutex<Option<RenderHook>>`，注释里写着"真要支持多窗口，
+/// 得改成 `HashMap<isize, ...>`"。多窗口不是可选项之后，那个前提就成立了：
+/// 两个窗口同时拖动时，后装的钩子会把先装的顶掉，症状是**一个窗口拖边时画面
+/// 不跟手**，而另一个完全正常 —— 看起来像那个窗口的交换链坏了。
+///
+/// 窗口数量是个位数，线性查表比哈希更省（也不必处理 `HashMap` 的 const 初始化）。
+static HOOKS: Mutex<Vec<(isize, HookEntry)>> = Mutex::new(Vec::new());
 /// `WM_SIZE` 被处理的次数。只给 trace 与门禁用。
 static WM_SIZE_SEEN: AtomicU64 = AtomicU64::new(0);
 /// 被跳过的次数（回调正在渲染中）。用来发现"回调重入"。
 static WM_SIZE_SKIPPED: AtomicU64 = AtomicU64::new(0);
-/// 回调正在执行。防止重入。
-static IN_HOOK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// 安装渲染回调（进程级，至多一次有效）。
+/// 给某个窗口安装渲染回调。
 ///
-/// # 为什么"至多一次"
+/// 二次安装会替换该窗口的旧钩子 —— 顺序只要求在第一次 `WM_SIZE` 之前。
+pub fn set_render_hook(hwnd: isize, hook: RenderHook) {
+    let mut table = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    match table.iter_mut().find(|(k, _)| *k == hwnd) {
+        Some((_, entry)) => {
+            entry.hook = hook;
+        }
+        None => table.push((
+            hwnd,
+            HookEntry {
+                hook,
+                in_hook: false,
+            },
+        )),
+    }
+}
+
+/// 摘掉某个窗口的渲染回调。
 ///
-/// 回调是**拥有**宿主渲染状态的那种东西（内部有锁），而安装发生在宿主构造之后。
-/// 二次安装会替换它 —— 那是允许的，但**顺序**很重要：必须在窗口过程被挂上之前
-/// 或之后都行，只要在第一次 `WM_SIZE` 之前。这里不做额外约束，因为越约束
-/// 越容易在某个宿主自举顺序下静默失效。
-pub fn set_render_hook(hook: RenderHook) {
-    let mut slot = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-    *slot = Some(hook);
+/// 必须与 [`restore`] 一起在窗口销毁前调用：钩子闭包通常持有指向宿主的裸指针，
+/// 窗口没了还留着它，下一次 `WM_SIZE` 就是 use-after-free。
+pub fn remove_render_hook(hwnd: isize) {
+    let mut table = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    table.retain(|(k, _)| *k != hwnd);
 }
 
 /// `WM_SIZE` 处理次数（trace / 门禁）。
@@ -119,7 +142,7 @@ unsafe extern "system" fn live_proc(
     if msg == WM_SIZE {
         WM_SIZE_SEEN.fetch_add(1, Ordering::Relaxed);
         // 拖动期间模态循环会把一串 `WM_SIZE` 依次交给这里，所以这一段是**热路径**。
-        render_once();
+        render_once(hwnd.0 as isize);
         return LRESULT(0);
     }
     // CallWindowProcW 的第一个参数是 Option<WNDPROC>：传 None 时它内部
@@ -127,31 +150,40 @@ unsafe extern "system" fn live_proc(
     CallWindowProcW(previous_proc(hwnd), hwnd, msg, wparam, lparam)
 }
 
-/// 调一次渲染回调，跳过重入。
+/// 调一次 `hwnd` 的渲染回调，跳过该窗口的重入。
 ///
 /// # 重入从哪来
 ///
 /// `WM_SIZE` 到达时如果上一次渲染还没结束（例如 GPU 提交里触发了同步等待，
-/// 又来了一个 `WM_SIZE`），就会重入。用一个原子位挡住 —— 那不是理论问题，
-/// `present()` 里若有同步点就会发生。
-fn render_once() {
-    if IN_HOOK.swap(true, Ordering::AcqRel) {
-        WM_SIZE_SKIPPED.fetch_add(1, Ordering::Relaxed);
-        return;
-    }
-    // 克隆一个 Arc 再放锁：Box<dyn Fn> 不能克隆，而这里要在**锁外**调用回调 ——
-    // 回调里要拿宿主的锁，持着 HOOK 的锁去调就是锁序倒置。
+/// 又来了一个 `WM_SIZE`），就会重入。用**每窗口**一个标记挡住 —— 那不是理论问题，
+/// `present()` 里若有同步点就会发生。用全局标记会顺带挡掉别的窗口，那是错的。
+fn render_once(hwnd: isize) {
+    // 先取回调并把 `in_hook` 置位；克隆一个 Arc 再放锁 —— 回调里要拿宿主的锁，
+    // 持着 HOOKS 的锁去调就是锁序倒置。
     let hook = {
-        let slot = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-        slot.clone()
+        let mut table = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((_, entry)) = table.iter_mut().find(|(k, _)| *k == hwnd) else {
+            return;
+        };
+        if entry.in_hook {
+            WM_SIZE_SKIPPED.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        entry.in_hook = true;
+        entry.hook.clone()
     };
-    if let Some(h) = hook {
-        let _ = h();
+    let _ = hook();
+    if let Some((_, entry)) = HOOKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter_mut()
+        .find(|(k, _)| *k == hwnd)
+    {
+        entry.in_hook = false;
     }
-    IN_HOOK.store(false, Ordering::Release);
 }
 
-/// 每个窗口的原过程，存在**线程局部**里。
+/// 每个窗口的原过程。
 ///
 /// # 为什么不是 `SetWindowLongPtrW(GWL_USERDATA)`
 ///
@@ -208,7 +240,11 @@ pub fn install(hwnd: isize) -> Result<(), LiveResizeError> {
 }
 
 /// 摘掉窗口过程（窗口销毁前调用）。
+///
+/// 同时摘掉该窗口的渲染回调：钩子闭包通常持有指向宿主的裸指针，窗口没了还留着
+/// 它，下一次 `WM_SIZE` 就是 use-after-free。
 pub fn restore(hwnd: isize) {
+    remove_render_hook(hwnd);
     let prev = {
         let mut table = PREV.lock().unwrap_or_else(|e| e.into_inner());
         table

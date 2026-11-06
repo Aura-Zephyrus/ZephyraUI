@@ -4,9 +4,10 @@
 //! # 与 wgpu 版的差异
 //!
 //! wgpu 版（`zephyra-winit-vk::surface`）把设备+队列+swapchain 合在一个 `Gpu`
-//! 结构里，因为 wgpu 的 `Device`/`Queue` 是不可分割的一对。裸 Vulkan 这边也是
-//! 一个 `Gpu` 结构 —— 但内部是 `ash::Instance` + `ash::Device` + `vk::Queue`
-//! + `VkSurfaceKHR` + `VkSwapchainKHR`。
+//! 结构里，因为 wgpu 的 `Device`/`Queue` 是不可分割的一对。裸 Vulkan 这边拆成
+//! 进程级 [`Device`]（`ash::Instance` + `ash::Device` + `vk::Queue` + 命令池）与
+//! 每窗口 [`Surface`]（`VkSurfaceKHR` + `VkSwapchainKHR` + 格式）——多窗口下
+//! 前者只能有一份，后者必须每个窗口一份。
 //!
 //! # 为什么不用 Xlib surface
 //!
@@ -74,7 +75,7 @@ pub struct DebugMessage {
     pub text: String,
 }
 
-/// 验证层的消息收集器。`ZEPHYRA_VK_DEBUG=1` 时挂在 [`Gpu`] 上。
+/// 验证层的消息收集器。`ZEPHYRA_VK_DEBUG=1` 时挂在 [`Device`] 上。
 ///
 /// # 为什么是「收集」而不是「打印」
 ///
@@ -88,8 +89,8 @@ pub struct DebugMessage {
 /// 多个设备实例会共享同一个 layer。`Send + Sync` 的收集器是唯一安全形状。
 pub struct DebugState {
     sink: Arc<Mutex<Vec<DebugMessage>>>,
-    // 下面两个字段「没人读」是**故意的**：本 crate 的 Gpu 没有 Drop（进程级
-    // 对象，统一靠进程退出回收，见 `Gpu::entry` 的同款处理）。它们存在的意义
+    // 下面两个字段「没人读」是**故意的**：本 crate 的 Device 没有 Drop（进程级
+    // 对象，统一靠进程退出回收，见 `Device::entry` 的同款处理）。它们存在的意义
     // 是持有句柄 —— 信使必须比 instance 活得短，而这里「谁都不手动销毁」，
     // 于是持有即为保活；真要显式销毁时（例如测试里建销多个设备）也从这两个
     // 字段拿句柄。
@@ -200,9 +201,18 @@ unsafe extern "system" fn debug_messenger_callback(
     vk::FALSE
 }
 
-/// 设备 + 队列 + surface + swapchain。全进程唯一一份。
-pub struct Gpu {
-    // ⚠⚠ **Entry 必须随 Gpu 活着**：ash::Entry 持有 libloading::Library（dlopen 的
+/// 进程级 GPU 设备：instance + 物理设备 + 逻辑设备 + 队列 + 命令池。
+///
+/// # 为什么设备与 surface 分开
+///
+/// 多窗口下 **surface / swapchain 是每窗口一份**，而 instance / device / queue
+/// 全进程只有一份。合在一个 `Device` 里会让第二个窗口只能「再建一个 device」——
+/// 那是另一个 GPU 上下文，纹理、管线、描述符全都不共享，跨窗口共享状态就没了。
+///
+/// `format` 放在 [`Surface`] 而不是这里：管线把格式烤进 `VkPipeline`，而管线是
+/// 每窗口一套（见 `Renderer` 的文档），格式跟着 surface 走。
+pub struct Device {
+    // ⚠⚠ **Entry 必须随 Device 活着**：ash::Entry 持有 libloading::Library（dlopen 的
     // libvulkan 句柄），drop 时 dlclose —— 之后 Instance/Device 函数表里的所有
     // 指针都指向已卸载的代码。症状不是「第一个调用就崩」而是**随机崩**：
     // Linux 的延迟卸载让前面的调用碰巧成功，直到某一次踩到被回收的内存。
@@ -220,19 +230,14 @@ pub struct Gpu {
     #[allow(dead_code, reason = "只为持有所有权")]
     pub(crate) queue_family: u32,
     pub(crate) khr_surface: ash::extensions::khr::Surface,
-    /// 只为持有所有权：surface 的销毁要经它，Instance 销毁之前不能 drop。
+    /// 只为持有所有权：建 surface 要经它，Instance 销毁之前不能 drop。
     #[allow(dead_code, reason = "只为持有所有权")]
     pub(crate) khr_wayland: ash::extensions::khr::WaylandSurface,
     pub(crate) khr_swapchain: ash::extensions::khr::Swapchain,
-    pub(crate) surface: vk::SurfaceKHR,
-    pub(crate) swapchain: vk::SwapchainKHR,
-    pub(crate) images: Vec<vk::Image>,
-    pub(crate) format: vk::Format,
-    pub(crate) extent: (u32, u32),
-    pub(crate) present_mode: vk::PresentModeKHR,
+    /// MSAA 采样数。放在设备上而不是窗口上：`ZEPHYRA_MSAA` 是进程级变量，
+    /// 让两个窗口取到不同采样数会让共享的图集/纹理无法互认。
     pub(crate) msaa_samples: vk::SampleCountFlags,
-    pub(crate) device_dead: bool,
-    /// 一次性命令池（读回等）。与 Gpu 同寿命。
+    /// 一次性命令池（读回 / 纹理上传等）。与 Device 同寿命。
     pub(crate) command_pool: vk::CommandPool,
     /// 验证层收集器（`ZEPHYRA_VK_DEBUG=1` 时挂上）。
     ///
@@ -241,13 +246,35 @@ pub struct Gpu {
     pub(crate) debug: Option<DebugState>,
 }
 
-#[cfg(all(test, target_os = "linux"))]
-#[path = "renderer_tests.rs"]
-mod renderer_tests;
+// ⚠ 手写 `Send`：字段全是「句柄 + 函数表」。Vulkan 允许同一 device / queue 被
+// 多线程使用（提交由驱动串行化），而本仓的跨线程访问全部经 `Mutex<Shared>`
+// 加锁。`ash` 的扩展结构体里存裸句柄，不会自动 `Send`，这里显式声明。
+unsafe impl Send for Device {}
 
-impl fmt::Debug for Gpu {
+/// 一个窗口的 surface + swapchain。
+///
+/// # 为什么 `format` 在这里
+///
+/// 管线把颜色格式烤进 `VkPipeline`（render pass 的附件格式），而 `Renderer` 是
+/// **每窗口一份**（MSAA 目标、离屏 RT、顶点缓冲都与窗口尺寸/内容绑定）。格式
+/// 跟着 surface 走，就不会出现「两个窗口格式不同却共用管线」。
+pub struct Surface {
+    /// 销毁 surface 要用 instance（`khr_surface` 内部持有它）。
+    khr_surface: ash::extensions::khr::Surface,
+    /// 销毁 swapchain 要用 device（`khr_swapchain` 内部持有它）。
+    khr_swapchain: ash::extensions::khr::Swapchain,
+    pub(crate) surface: vk::SurfaceKHR,
+    pub(crate) swapchain: vk::SwapchainKHR,
+    pub(crate) images: Vec<vk::Image>,
+    pub(crate) format: vk::Format,
+    pub(crate) extent: (u32, u32),
+    pub(crate) present_mode: vk::PresentModeKHR,
+    pub(crate) device_dead: bool,
+}
+
+impl fmt::Debug for Surface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Gpu")
+        f.debug_struct("Surface")
             .field("format", &self.format)
             .field("extent", &self.extent)
             .field("dead", &self.device_dead)
@@ -255,15 +282,40 @@ impl fmt::Debug for Gpu {
     }
 }
 
-impl Gpu {
-    /// 建设备、队列与 surface。
+impl Drop for Surface {
+    fn drop(&mut self) {
+        // ⚠ 必须先于 `Device` 析构：`HostWindow` 里 `surface` 声明在共享设备之前
+        // （字段按声明顺序析构）。顺序反了就是「拿已销毁的 instance 去 destroy」。
+        unsafe {
+            if self.swapchain != vk::SwapchainKHR::null() {
+                self.khr_swapchain.destroy_swapchain(self.swapchain, None);
+            }
+            if self.surface != vk::SurfaceKHR::null() {
+                self.khr_surface.destroy_surface(self.surface, None);
+            }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "renderer_tests.rs"]
+mod renderer_tests;
+
+impl Device {
+    /// 建设备、队列与命令池。
+    ///
+    /// # 为什么不需要窗口
+    ///
+    /// 多窗口共享同一个设备，因此选物理设备时**不能**用某个窗口的 surface 去
+    /// 校验 present 支持。这里只挑「有 graphics 队列」的物理设备；present 支持
+    /// 由 [`Surface::new`] 逐窗口校验（见那里「第二个窗口 present 不了」的注释）。
     ///
     /// `ZEPHYRA_VK_DEBUG=1` 时开 Khronos 验证层（`VK_LAYER_KHRONOS_validation`）
     /// 并挂 `VK_EXT_debug_utils` 信使 —— 与两个 Windows 后端同一约定
     /// （`ZEPHYRA_D3D_DEBUG` / `ZEPHYRA_D3D12_DEBUG`）。层或扩展**装不上时静默
     /// 继续**（`debug` 留 `None`）：没装 LunarG SDK 的机器不该因此起不来，
     /// 只是那条机器上验证门禁会跳过。
-    pub fn new(window: &Window) -> Result<Self, SurfaceError> {
+    pub fn new() -> Result<Self, SurfaceError> {
         // ── instance ──
         let entry = unsafe { ash::Entry::load() }
             .map_err(|e| SurfaceError::new("dlopen libvulkan", e.to_string()))?;
@@ -301,7 +353,7 @@ impl Gpu {
         //
         // 建在 instance 之后、device 之前：设备创建期的消息同样要收。
         //
-        // ⚠ 生命周期：信使必须先于 instance 销毁，而本 crate 的 Gpu **没有
+        // ⚠ 生命周期：信使必须先于 instance 销毁，而本 crate 的 Device **没有
         // Drop**（进程级对象，统一靠进程退出回收）—— 与既有约定一致，代价是
         // 验证层对象活到进程结束。`sink` 的 Arc 通过 `Box::into_raw` 交给回调，
         // `DebugState` 持有另一份保活；两者都故意泄漏，不参与任何提前释放。
@@ -346,22 +398,6 @@ impl Gpu {
             None
         };
 
-        // ── Wayland surface ──
-        let khr_surface = ash::extensions::khr::Surface::new(&entry, &instance);
-        let khr_wayland = ash::extensions::khr::WaylandSurface::new(&entry, &instance);
-        let (dpy, wl_surface) =
-            wayland_handles(window).map_err(|e| SurfaceError::new("wayland handles", e))?;
-        let surface = unsafe {
-            khr_wayland.create_wayland_surface(
-                &vk::WaylandSurfaceCreateInfoKHR::builder()
-                    .display(dpy)
-                    .surface(wl_surface)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| SurfaceError::new("vkCreateWaylandSurfaceKHR", e.to_string()))?;
-
         // ── 物理设备 + 队列 ──
         let physical = unsafe { instance.enumerate_physical_devices() }
             .map_err(|e| SurfaceError::new("enumerate_physical_devices", e.to_string()))?
@@ -393,16 +429,103 @@ impl Gpu {
         .map_err(|e| SurfaceError::new("vkCreateDevice", e.to_string()))?;
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
 
-        // ── swapchain ──
         // MSAA 由环境变量 ZEPHYRA_MSAA 控制（与两个 Windows 后端同一约定）。
         let msaa_samples = if std::env::var("ZEPHYRA_MSAA").as_deref() == Ok("0") {
             vk::SampleCountFlags::TYPE_1
         } else {
             vk::SampleCountFlags::TYPE_4
         };
-        let caps =
-            unsafe { khr_surface.get_physical_device_surface_capabilities(physical, surface) }
-                .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
+
+        // 命令池（读回 / 纹理上传等一次性命令用）。
+        let command_pool = unsafe {
+            device.create_command_pool(
+                &vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(queue_family)
+                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                    .build(),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("command pool", e.to_string()))?;
+
+        // 扩展函数表：内部只 clone 句柄，必须在 `entry` / `instance` 被移进
+        // 结构体之前构造。
+        let khr_surface = ash::extensions::khr::Surface::new(&entry, &instance);
+        let khr_wayland = ash::extensions::khr::WaylandSurface::new(&entry, &instance);
+        let khr_swapchain = ash::extensions::khr::Swapchain::new(&instance, &device);
+
+        Ok(Self {
+            entry,
+            instance,
+            device,
+            queue,
+            physical,
+            queue_family,
+            khr_surface,
+            khr_wayland,
+            khr_swapchain,
+            msaa_samples,
+            command_pool,
+            debug,
+        })
+    }
+
+    /// 验证层收集器（没开 `ZEPHYRA_VK_DEBUG=1` 或装不上层时为 `None`）。
+    ///
+    /// 与 D3D12 的 `Gpu::debug()` 同一形状：门禁靠它判断「这台机器能不能
+    /// 问驱动原因」，拿不到就跳过而不是恒真。
+    pub fn debug(&self) -> Option<&DebugState> {
+        self.debug.as_ref()
+    }
+}
+
+impl Surface {
+    /// 为 `window` 建 surface + swapchain。
+    ///
+    /// # 为什么在这里校验 present 支持
+    ///
+    /// 设备是**跨窗口共享**的（[`Device::new`] 只按 graphics 队列挑物理设备），
+    /// 所以「这台物理设备能不能向这个窗口的 surface 呈现」只能逐窗口问。
+    /// 不校验的症状是：第二个窗口 `vkCreateSwapchainKHR` 静默失败，或者更糟 ——
+    /// 创建成功但 present 一直返回 out-of-date，画面停在黑色。
+    pub fn new(device: &Device, window: &Window) -> Result<Self, SurfaceError> {
+        let (dpy, wl_surface) =
+            wayland_handles(window).map_err(|e| SurfaceError::new("wayland handles", e))?;
+        let surface = unsafe {
+            device.khr_wayland.create_wayland_surface(
+                &vk::WaylandSurfaceCreateInfoKHR::builder()
+                    .display(dpy)
+                    .surface(wl_surface)
+                    .build(),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("vkCreateWaylandSurfaceKHR", e.to_string()))?;
+
+        // ⚠ 共享设备按 graphics 队列挑，而 present 支持是 **surface 相关**的：
+        // 一个物理设备有 graphics 队列，不代表它能向这个窗口呈现。
+        let supported = unsafe {
+            device.khr_surface.get_physical_device_surface_support(
+                device.physical,
+                device.queue_family,
+                surface,
+            )
+        }
+        .map_err(|e| SurfaceError::new("surface support", e.to_string()))?;
+        if !supported {
+            unsafe { device.khr_surface.destroy_surface(surface, None) };
+            return Err(SurfaceError::new(
+                "surface support",
+                "physical device cannot present to this window",
+            ));
+        }
+
+        let caps = unsafe {
+            device
+                .khr_surface
+                .get_physical_device_surface_capabilities(device.physical, surface)
+        }
+        .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
         let (w, h) = if caps.current_extent.width == u32::MAX {
             let s = window.inner_size();
             (s.width, s.height)
@@ -410,10 +533,15 @@ impl Gpu {
             (caps.current_extent.width, caps.current_extent.height)
         };
         if w == 0 || h == 0 {
+            unsafe { device.khr_surface.destroy_surface(surface, None) };
             return Err(SurfaceError::new("surface extent", format!("{w}x{h}")));
         }
-        let formats = unsafe { khr_surface.get_physical_device_surface_formats(physical, surface) }
-            .map_err(|e| SurfaceError::new("surface formats", e.to_string()))?;
+        let formats = unsafe {
+            device
+                .khr_surface
+                .get_physical_device_surface_formats(device.physical, surface)
+        }
+        .map_err(|e| SurfaceError::new("surface formats", e.to_string()))?;
         // ⚠ 1:1 的关键取舍：优先 **UNORM（非 sRGB）**，与 Windows D3D12 同一行为。
         //
         // 实测（WSL2/llvmpipe，2026-10）：sRGB 附件按规范被硬件**自动编码** ——
@@ -459,9 +587,8 @@ impl Gpu {
         } else {
             vk::CompositeAlphaFlagsKHR::INHERIT
         };
-        let khr_swapchain = ash::extensions::khr::Swapchain::new(&instance, &device);
         let swapchain = unsafe {
-            khr_swapchain.create_swapchain(
+            device.khr_swapchain.create_swapchain(
                 &vk::SwapchainCreateInfoKHR::builder()
                     .surface(surface)
                     .min_image_count(caps.min_image_count.max(2))
@@ -484,57 +611,24 @@ impl Gpu {
             )
         }
         .map_err(|e| SurfaceError::new("vkCreateSwapchainKHR", e.to_string()))?;
-        let images = unsafe { khr_swapchain.get_swapchain_images(swapchain) }
+        let images = unsafe { device.khr_swapchain.get_swapchain_images(swapchain) }
             .map_err(|e| SurfaceError::new("get_swapchain_images", e.to_string()))?;
 
-        // 命令池（读回等一次性命令用）。
-        let command_pool = unsafe {
-            device.create_command_pool(
-                &vk::CommandPoolCreateInfo::builder()
-                    .queue_family_index(queue_family)
-                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| SurfaceError::new("command pool", e.to_string()))?;
-
-        // 存一份 mem_props 给离屏纹理/回读用。
-        let _ = unsafe { instance.get_physical_device_memory_properties(physical) };
-
         Ok(Self {
-            entry,
-            instance,
-            device,
-            queue,
-            physical,
-            queue_family,
-            khr_surface,
-            khr_wayland,
-            khr_swapchain,
+            khr_surface: ash::extensions::khr::Surface::new(&device.entry, &device.instance),
+            khr_swapchain: ash::extensions::khr::Swapchain::new(&device.instance, &device.device),
             surface,
             swapchain,
             images,
             format,
             extent: (w, h),
             present_mode: vk::PresentModeKHR::FIFO,
-            msaa_samples,
             device_dead: false,
-            command_pool,
-            debug,
         })
     }
 
-    /// 验证层收集器（没开 `ZEPHYRA_VK_DEBUG=1` 或装不上层时为 `None`）。
-    ///
-    /// 与 D3D12 的 `Gpu::debug()` 同一形状：门禁靠它判断「这台机器能不能
-    /// 问驱动原因」，拿不到就跳过而不是恒真。
-    pub fn debug(&self) -> Option<&DebugState> {
-        self.debug.as_ref()
-    }
-
     /// 重新创建 swapchain（窗口 resize 后调用）。
-    pub fn resize(&mut self, window: &Window) -> Result<(), SurfaceError> {
+    pub fn resize(&mut self, device: &Device, window: &Window) -> Result<(), SurfaceError> {
         // 销毁旧 swapchain。
         unsafe {
             self.khr_swapchain.destroy_swapchain(self.swapchain, None);
@@ -548,7 +642,7 @@ impl Gpu {
         }
         let caps = unsafe {
             self.khr_surface
-                .get_physical_device_surface_capabilities(self.physical, self.surface)
+                .get_physical_device_surface_capabilities(device.physical, self.surface)
         }
         .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
         let (w, h) = if caps.current_extent.width == u32::MAX {
@@ -587,9 +681,10 @@ impl Gpu {
     }
 
     /// 取得下一张交换链图并等待 acquire fence。
-    pub fn acquire(&self) -> Result<(u32, vk::Semaphore), SurfaceError> {
+    pub fn acquire(&self, device: &Device) -> Result<(u32, vk::Semaphore), SurfaceError> {
         let sem = unsafe {
-            self.device
+            device
+                .device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
         }
         .map_err(|e| SurfaceError::new("create semaphore", e.to_string()))?;
@@ -604,6 +699,7 @@ impl Gpu {
     /// 提交命令缓冲并 present。
     pub fn submit_and_present(
         &self,
+        device: &Device,
         cmd: vk::CommandBuffer,
         wait_sem: vk::Semaphore,
         signal_sem: vk::Semaphore,
@@ -611,10 +707,11 @@ impl Gpu {
         fence: vk::Fence,
     ) -> Result<(), SurfaceError> {
         unsafe {
-            self.device.reset_fences(&[fence]).ok();
-            self.device
+            device.device.reset_fences(&[fence]).ok();
+            device
+                .device
                 .queue_submit(
-                    self.queue,
+                    device.queue,
                     &[vk::SubmitInfo::builder()
                         .wait_semaphores(&[wait_sem])
                         .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
@@ -624,10 +721,10 @@ impl Gpu {
                     fence,
                 )
                 .ok();
-            self.device.wait_for_fences(&[fence], true, u64::MAX).ok();
+            device.device.wait_for_fences(&[fence], true, u64::MAX).ok();
             self.khr_swapchain
                 .queue_present(
-                    self.queue,
+                    device.queue,
                     &vk::PresentInfoKHR::builder()
                         .wait_semaphores(&[signal_sem])
                         .swapchains(&[self.swapchain])
@@ -643,10 +740,16 @@ impl Gpu {
     ///
     /// 与 D3D12 那份「MSAA 再 resolve 一次」同构：这里读的是**交换链图**，
     /// 而它只在 `PRESENT_SRC` 布局下可读 —— 所以先转到 `TRANSFER_SRC` 再拷。
-    pub fn read_back(&self, image: vk::Image, w: u32, h: u32) -> Result<Vec<u8>, SurfaceError> {
+    pub fn read_back(
+        &self,
+        device: &Device,
+        image: vk::Image,
+        w: u32,
+        h: u32,
+    ) -> Result<Vec<u8>, SurfaceError> {
         let byte_len = (w * h * 4) as vk::DeviceSize;
         let buffer = unsafe {
-            self.device.create_buffer(
+            device.device.create_buffer(
                 &vk::BufferCreateInfo::builder()
                     .size(byte_len)
                     .usage(vk::BufferUsageFlags::TRANSFER_DST)
@@ -656,14 +759,14 @@ impl Gpu {
             )
         }
         .map_err(|e| SurfaceError::new("readback buffer", e.to_string()))?;
-        let breq = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        let breq = unsafe { device.device.get_buffer_memory_requirements(buffer) };
         let bmem = unsafe {
-            self.device.allocate_memory(
+            device.device.allocate_memory(
                 &vk::MemoryAllocateInfo::builder()
                     .allocation_size(breq.size)
                     .memory_type_index(pick_type(
-                        &self.instance,
-                        self.physical,
+                        &device.instance,
+                        device.physical,
                         vk::MemoryPropertyFlags::HOST_VISIBLE
                             | vk::MemoryPropertyFlags::HOST_COHERENT,
                     )?)
@@ -672,12 +775,12 @@ impl Gpu {
             )
         }
         .map_err(|e| SurfaceError::new("readback memory", e.to_string()))?;
-        unsafe { self.device.bind_buffer_memory(buffer, bmem, 0) }.ok();
+        unsafe { device.device.bind_buffer_memory(buffer, bmem, 0) }.ok();
 
         let cmd = unsafe {
-            self.device.allocate_command_buffers(
+            device.device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(self.command_pool)
+                    .command_pool(device.command_pool)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(1)
                     .build(),
@@ -686,7 +789,8 @@ impl Gpu {
         .map_err(|e| SurfaceError::new("readback cmd", e.to_string()))?[0];
 
         unsafe {
-            self.device
+            device
+                .device
                 .begin_command_buffer(
                     cmd,
                     &vk::CommandBufferBeginInfo::builder()
@@ -711,7 +815,7 @@ impl Gpu {
                     layer_count: 1,
                 })
                 .build();
-            self.device.cmd_pipeline_barrier(
+            device.device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE,
                 vk::PipelineStageFlags::TRANSFER,
@@ -720,7 +824,7 @@ impl Gpu {
                 &[],
                 &[bar],
             );
-            self.device.cmd_copy_image_to_buffer(
+            device.device.cmd_copy_image_to_buffer(
                 cmd,
                 image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -760,7 +864,7 @@ impl Gpu {
                 .subresource_range(sub)
                 .build();
             let backs = [back];
-            self.device.cmd_pipeline_barrier(
+            device.device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE,
@@ -769,25 +873,28 @@ impl Gpu {
                 &[],
                 &backs,
             );
-            self.device.end_command_buffer(cmd).ok();
+            device.device.end_command_buffer(cmd).ok();
         }
         let fence = unsafe {
-            self.device
+            device
+                .device
                 .create_fence(&vk::FenceCreateInfo::default(), None)
         }
         .map_err(|e| SurfaceError::new("readback fence", e.to_string()))?;
         unsafe {
-            self.device
+            device
+                .device
                 .queue_submit(
-                    self.queue,
+                    device.queue,
                     &[vk::SubmitInfo::builder().command_buffers(&[cmd]).build()],
                     fence,
                 )
                 .ok();
-            self.device.wait_for_fences(&[fence], true, u64::MAX).ok();
+            device.device.wait_for_fences(&[fence], true, u64::MAX).ok();
         }
         let ptr = unsafe {
-            self.device
+            device
+                .device
                 .map_memory(bmem, 0, byte_len, vk::MemoryMapFlags::empty())
         }
         .map_err(|e| SurfaceError::new("map_memory", e.to_string()))?;
@@ -795,11 +902,13 @@ impl Gpu {
             unsafe { std::slice::from_raw_parts(ptr as *const u8, byte_len as usize) }.to_vec();
         // 清理（读回是一次性的，每次都建/销）。
         unsafe {
-            self.device.unmap_memory(bmem);
-            self.device.destroy_fence(fence, None);
-            self.device.free_command_buffers(self.command_pool, &[cmd]);
-            self.device.destroy_buffer(buffer, None);
-            self.device.free_memory(bmem, None);
+            device.device.unmap_memory(bmem);
+            device.device.destroy_fence(fence, None);
+            device
+                .device
+                .free_command_buffers(device.command_pool, &[cmd]);
+            device.device.destroy_buffer(buffer, None);
+            device.device.free_memory(bmem, None);
         }
         Ok(data)
     }

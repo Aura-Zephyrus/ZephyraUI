@@ -273,6 +273,30 @@ fn quad(rect: Rect, filter: FilterChain, blend: BlendMode) -> DisplayList {
             stroke: None,
             filter,
             blend,
+            decorations: zephyra_core::decoration::Decorations::none(),
+        },
+    );
+    l
+}
+
+/// 带装饰（外投影 + 高光 + 内阴影）的玻璃 Quad —— 开关把手与材质页卡片的形态。
+fn decorated_glass(rect: Rect, filter: FilterChain) -> DisplayList {
+    let mut l = DisplayList::new();
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect,
+            radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            // 与开关把手同形：**背景全透明**，视觉全由玻璃滤镜 + 装饰承担。
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
+            stroke: None,
+            filter,
+            blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::glass(),
         },
     );
     l
@@ -313,6 +337,7 @@ fn glass_page() -> DisplayList {
                 stroke: None,
                 filter,
                 blend,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     };
@@ -544,6 +569,31 @@ fn refraction_resolve_path_records_no_illegal_commands() {
     }
 }
 
+/// **带装饰的玻璃仍然要真的折射**。
+///
+/// # 这条钉的是什么
+///
+/// 合成趟曾经写成 `if hollow_shadow { 外投影 } else { 折射 / 透镜 / 磨砂 }`
+/// —— 两者被当成互斥。于是所有带装饰的玻璃（开关把手、材质页卡片）把滤镜
+/// 整趟丢掉，屏幕上只剩高光与内阴影。它**不会崩、不会告警**，而且
+/// 「没有折射的玻璃」比「折射没接上」更像正常效果，所以只能靠正面计数抓。
+#[test]
+#[ignore = "要真 GPU + 调试层。跑法见文件头"]
+fn a_decorated_glass_still_runs_the_refraction_pass() {
+    let _gate = gpu_gate();
+    let mut rig = Rig::new();
+    let list = decorated_glass(Rect::new(60.0, 60.0, 136.0, 136.0), refraction_chain());
+    for round in 0..ROUNDS {
+        let report = rig.frame(&list, true, Color::rgb(0.2, 0.2, 0.25));
+        assert!(
+            report.refraction_passes >= 1,
+            "第 {round} 帧带装饰的玻璃没走折射 —— 外投影把滤镜挤掉了"
+        );
+        assert!(report.offscreen_passes >= 1, "第 {round} 帧没开离屏 pass");
+        assert_eq!(report.unimplemented_filters, 0, "滤镜未执行");
+    }
+}
+
 /// 折射的 **copy 岔路**：单采样源 ⇒ `CopyTextureRegion` + 源框。
 ///
 /// 与 resolve 岔路共用同一个 `refresh_dst_copy`，分岔看源资源的
@@ -766,6 +816,7 @@ fn stress_many_filtered_commands_record_no_illegal_commands() {
                 stroke: None,
                 filter: chains[(i as usize) % chains.len()].clone(),
                 blend: blends[(i as usize / 3) % blends.len()],
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -838,6 +889,7 @@ fn stress_filtered_ps_variant_blends_stay_counted() {
                 } else {
                     BlendMode::SoftLight
                 },
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -956,6 +1008,7 @@ fn stress_alternating_pages_keep_resources_honest() {
                 sigma_y: 10.0,
             }),
             blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
 
@@ -979,6 +1032,7 @@ fn stress_alternating_pages_keep_resources_honest() {
                 stroke: None,
                 filter: refraction_chain(),
                 blend: BlendMode::SrcOver,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -1058,6 +1112,7 @@ fn composite_uses_the_commands_own_blend_mode() {
             stroke: None,
             filter: FilterChain::none(),
             blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -1076,6 +1131,7 @@ fn composite_uses_the_commands_own_blend_mode() {
                 sigma_y: 2.0,
             }),
             blend: BlendMode::Src,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();

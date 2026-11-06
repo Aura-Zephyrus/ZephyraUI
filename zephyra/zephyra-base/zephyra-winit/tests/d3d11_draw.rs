@@ -315,6 +315,7 @@ fn two_quads() -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -330,6 +331,7 @@ fn two_quads() -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();
@@ -420,6 +422,7 @@ fn in_frame_scissor_only_affects_damage() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
 
@@ -740,6 +743,7 @@ fn translucent_quad_composites_in_premultiplied_space() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 50% 白覆盖全屏
@@ -756,6 +760,7 @@ fn translucent_quad_composites_in_premultiplied_space() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     renderer.render(RenderCtx {
@@ -904,6 +909,7 @@ fn blend_probe(mode: zephyra_core::filter::BlendMode) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -919,6 +925,7 @@ fn blend_probe(mode: zephyra_core::filter::BlendMode) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: mode,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();
@@ -1066,6 +1073,7 @@ fn adjacent_runs_with_different_blends_all_apply_in_order() {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     };
@@ -1178,6 +1186,7 @@ fn per_run_ps_switching_uses_the_updated_destination() {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     };
@@ -1249,6 +1258,7 @@ fn dst_sampling_flips_the_y_axis() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 源：铺满全屏的白色，`Multiply` 让 PS 变成 `dst` 的恒等透传。
@@ -1265,6 +1275,7 @@ fn dst_sampling_flips_the_y_axis() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::Multiply,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();
@@ -1329,6 +1340,7 @@ fn ps_composite_runs_use_src_not_src_over_for_translucent_draws() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::Darken,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();
@@ -1447,6 +1459,7 @@ fn modulate_alpha_uses_the_alpha_analogue_not_the_color_factor() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 不透明红，Modulate
@@ -1464,6 +1477,7 @@ fn modulate_alpha_uses_the_alpha_analogue_not_the_color_factor() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::Modulate,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();
@@ -1540,6 +1554,7 @@ fn path_geometry_is_rendered() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -1942,6 +1957,7 @@ fn one(
             stroke: None,
             filter,
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l
@@ -2078,6 +2094,7 @@ fn composite_lands_only_on_the_offscreen_bounds() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 再叠一条离屏模糊的白色四边形。
@@ -2097,6 +2114,7 @@ fn composite_lands_only_on_the_offscreen_bounds() {
                 sigma_y: 2.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2148,6 +2166,7 @@ fn offscreen_result_is_ordered_above_lower_primitives() {
                 sigma_y: 1.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // order 2：全屏纯蓝（"更上层"）—— 若顺序被搞反，它会盖住离屏结果。
@@ -2164,6 +2183,7 @@ fn offscreen_result_is_ordered_above_lower_primitives() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2211,6 +2231,7 @@ fn drop_shadow_tints_offsets_and_keeps_the_original_on_top() {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2445,6 +2466,7 @@ fn composite_blends_over_the_destination() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 25% alpha 的白，σy=2（链非恒等 ⇒ 真的走离屏）。
@@ -2464,6 +2486,7 @@ fn composite_blends_over_the_destination() {
                 sigma_y: 2.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2527,6 +2550,7 @@ fn drop_shadow_is_actually_offset() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -2548,6 +2572,7 @@ fn drop_shadow_is_actually_offset() {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2612,6 +2637,7 @@ fn drop_shadow_alpha_is_blurred_too() {
             stroke: None,
             filter: FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -2631,6 +2657,7 @@ fn drop_shadow_alpha_is_blurred_too() {
                 sigma: 3.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -2688,6 +2715,7 @@ fn partial_damage_survives_an_offscreen_pass() {
                 sigma_y: 1.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 全屏纯红 —— 画在离屏 pass **之后**，所以它的 scissor 必须是自己重设的。
@@ -2704,6 +2732,7 @@ fn partial_damage_survives_an_offscreen_pass() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();

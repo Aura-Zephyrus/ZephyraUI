@@ -128,25 +128,6 @@ pub struct Renderer {
     srv_heap: DescriptorHeap,
     /// 图集的 SRV 在 `srv_heap` 里的位置（恒为 0）。
     atlas_srv_slot: u32,
-    /// 上传堆 + 默认堆的逐帧几何缓冲。
-    vertex: StreamBuffer,
-    /// 索引缓冲（**逐帧重写**，内容由 [`quad::expand_indices`] 生成）。
-    index: StreamBuffer,
-    /// 顶点缓冲已分配字节数，用于验证稳态不增长。
-    vertex_capacity: u64,
-    /// 跨帧复用的展开缓冲（顶点流 + 索引 + 分批）。
-    ///
-    /// 稳态下 `quad::expand_into` 一帧**零分配** —— 纯函数版每帧要新开六七个
-    /// `Vec` 并从 0 长到目标大小（实测 demo 每帧约 170 KB 的分配，69% 出在这里）。
-    ///
-    /// 本渲染器已经是 `&mut self`，复用不额外增加借用成本；`record` 的借用边界
-    /// 要读一下就明白：先把 `scratch` 填满，再把各字段**分别**借成局部变量，
-    /// 因为同时持有 `&self.scratch` 与 `&mut self.xxx` 会撞上借用检查器。
-    scratch: quad::Scratch,
-    /// 上一次真正上传的顶点字节。逐字节比较后决定要不要重传（见 upload_geometry）。
-    last_vertex_bytes: Vec<u8>,
-    /// 上一次真正上传的索引字节。
-    last_index_bytes: Vec<u8>,
     /// 图集边长（像素）。
     atlas_size: u32,
     /// 图集纹理（所有权）。
@@ -169,6 +150,57 @@ pub struct Renderer {
     elements: shader::InputLayout,
     /// MSAA 采样数。PSO 的 `SampleDesc` 必须与渲染目标一致，见 `create_pso`。
     samples: u32,
+    /// 设备。
+    device: ID3D12Device,
+    /// 已上传的图像纹理（所有权）。**必须活得比画它的那些命令久**。
+    textures: Vec<UploadedTexture>,
+    /// 下一个可用的 SRV 槽位。0 号恒给图集（见 [`Renderer::new`]）。
+    next_texture_slot: u32,
+    /// 单窗口 / 测试用的默认目标。
+    ///
+    /// 多窗口宿主**不碰**它 —— 每个窗口把自己的 [`WindowTargets`] 传给
+    /// [`Renderer::record_with`]。它在 [`Renderer::record`] 借用期间是 `None`
+    /// （take / restore），除此之外恒为 `Some`。
+    default_targets: Option<WindowTargets>,
+}
+
+/// 一个窗口私有的渲染目标与几何缓冲。
+///
+/// # 为什么这部分不能共享
+///
+/// [`Renderer`] 里共享的是「怎么画」：PSO、图集、SRV 堆、纹理表。而这里装的是
+/// 「画到哪儿」以及「本窗口上一帧画的是什么」：
+///
+/// - 离屏 RT 与目标副本的尺寸跟着窗口走（窗口 A 1200×800、工具窗口 B 420×600，
+///   两者的离屏 RT 不能是同一张）；
+/// - 几何缓冲的上传游标与「上次上传的字节」逐窗口独立 —— 两个窗口每帧的顶点流
+///   不同，共用一份影子缓存会让其中一个窗口误判「没变」而跳过上传，症状是
+///   「工具窗口的内容画进了主窗口」；
+/// - 外部渲染源钩子按窗口登记。
+///
+/// # 线程
+///
+/// `WindowTargets` 跟着 [`crate::host::HostWindow`] 走，**不是**进程级共享的。
+/// 共享的是 [`Renderer`]（见 `crate::host::Shared`）。
+pub struct WindowTargets {
+    /// 上传堆 + 默认堆的逐帧几何缓冲。
+    vertex: StreamBuffer,
+    /// 索引缓冲（**逐帧重写**，内容由 [`quad::expand_indices`] 生成）。
+    index: StreamBuffer,
+    /// 顶点缓冲已分配字节数，用于验证稳态不增长。
+    vertex_capacity: u64,
+    /// 跨帧复用的展开缓冲（顶点流 + 索引 + 分批）。
+    ///
+    /// 稳态下 `quad::expand_into` 一帧**零分配** —— 纯函数版每帧要新开六七个
+    /// `Vec` 并从 0 长到目标大小（实测 demo 每帧约 170 KB 的分配，69% 出在这里）。
+    ///
+    /// 复用不额外增加借用成本：`record_with` 先把它 `mem::take` 成局部变量，
+    /// 因为同时持有 `&scratch` 与 `&mut targets.xxx` 会撞上借用检查器。
+    scratch: quad::Scratch,
+    /// 上一次真正上传的顶点字节。逐字节比较后决定要不要重传（见 upload_geometry）。
+    last_vertex_bytes: Vec<u8>,
+    /// 上一次真正上传的索引字节。
+    last_index_bytes: Vec<u8>,
     /// 离屏 pass 的两张乒乓 RT（E4.4 / E4.6）。见 [`OffscreenPair`]。
     offscreen: std::cell::RefCell<Option<OffscreenPair>>,
     /// 离屏 RT 专用的 RTV 描述符堆（2 槽）。
@@ -176,16 +208,44 @@ pub struct Renderer {
     /// 不能借交换链的那个 —— 它在 `ResizeBuffers` 时会重建，而离屏 RT 与窗口无关。
     /// 借用它的症状是「窗口改大小之后第一帧带滤镜就崩」。
     offscreen_rtv_heap: DescriptorHeap,
-    /// 设备。
-    device: ID3D12Device,
-    /// 已上传的图像纹理（所有权）。**必须活得比画它的那些命令久**。
-    textures: Vec<UploadedTexture>,
-    /// 下一个可用的 SRV 槽位。0 号恒给图集（见 [`Renderer::new`]）。
-    next_texture_slot: u32,
     /// `g_dst`（目标副本）的懒建纹理，见 [`Renderer::refresh_dst_copy`]。
     dst_copy: std::cell::RefCell<Option<DstCopy>>,
     /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
+}
+
+impl WindowTargets {
+    /// 为一个窗口建一套渲染目标与几何缓冲。
+    ///
+    /// 起始 64KB 顶点 / 4KB 索引，稳态下按需增长到 2 的幂，之后不再动
+    /// （容量判据见 `Renderer::upload_geometry` 与 `Renderer::draw_pass_quad`）。
+    pub fn new(device: &ID3D12Device) -> Result<Self, SurfaceError> {
+        let vertex = StreamBuffer::new(
+            device,
+            64 * 1024,
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+        )?;
+        let index = StreamBuffer::new(device, 4 * 1024, D3D12_RESOURCE_STATE_INDEX_BUFFER)?;
+        let vertex_capacity = vertex.size;
+        let offscreen_rtv_heap = DescriptorHeap::new_rtv(device, 2)?;
+        Ok(Self {
+            vertex,
+            index,
+            vertex_capacity,
+            scratch: quad::Scratch::new(),
+            last_vertex_bytes: Vec::new(),
+            last_index_bytes: Vec::new(),
+            offscreen: std::cell::RefCell::new(None),
+            offscreen_rtv_heap,
+            dst_copy: std::cell::RefCell::new(None),
+            hooks: Vec::new(),
+        })
+    }
+
+    /// 顶点缓冲容量（字节）。稳态下跨帧不变。
+    pub fn vertex_capacity(&self) -> u64 {
+        self.vertex_capacity
+    }
 }
 
 /// 上传堆上一块常驻映射的暂存缓冲。
@@ -578,7 +638,7 @@ struct OffscreenRt {
     /// 那一道永远发不出去。症状是「单帧测试全绿、跑第二帧开始整张图变成一个死值」。
     ///
     /// 用 `Rc<Cell<..>>` 而不是 `Cell`：记录期要把它从缓存里**克隆**出来用（`&mut self`
-    /// 与 `&self.offscreen` 的借用链没法共存，见 [`offscreen_pair`]），而克隆出来的必须
+    /// 与 `&targets.offscreen` 的借用链没法共存，见 [`offscreen_pair`]），而克隆出来的必须
     /// 是**同一个**格子。
     state: RtState,
 }
@@ -676,7 +736,7 @@ fn offscreen_pair(
             b: OffscreenRt::new(device, rtv_heap, srv_heap, 1, OFFSCREEN_SRV_B, size),
         });
     }
-    // 返回**拥有所有权**的两份，把 `self.offscreen` 的借用在这里结束掉 —— 否则整个
+    // 返回**拥有所有权**的两份，把 `targets.offscreen` 的借用在这里结束掉 —— 否则整个
     // 离屏 pass 期间 `self` 都不可变借用，后面的 `&mut self` 调用（上传顶点、换绑
     // 缓冲）全编译不过。
     Some((slot.as_ref()?.a.clone()?, slot.as_ref()?.b.clone()?))
@@ -928,18 +988,9 @@ impl Renderer {
             pso.clone(),
         )]);
 
-        // ---- 顶点 / 索引缓冲 ----
-        //
-        // 起始 64KB 与 4KB。稳态下按需增长到 2 的幂，之后不再动（见 `record`）。
-        let vertex = StreamBuffer::new(
-            device,
-            64 * 1024,
-            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-        )
-        .map_err(|e| ShaderError::Create("建顶点缓冲", e))?;
-        let index = StreamBuffer::new(device, 4 * 1024, D3D12_RESOURCE_STATE_INDEX_BUFFER)
-            .map_err(|e| ShaderError::Create("建索引缓冲", e))?;
-        let vertex_capacity = vertex.size;
+        // ---- 顶点 / 索引缓冲（每窗口一份，这里建默认的那一套）----
+        let default_targets =
+            WindowTargets::new(device).map_err(|e| ShaderError::Create("建默认渲染目标", e))?;
 
         // ---- 图集纹理 ----
         //
@@ -961,41 +1012,47 @@ impl Renderer {
             psos: std::cell::RefCell::new(psos),
             srv_heap,
             atlas_srv_slot: 0,
-            vertex,
-            index,
-            vertex_capacity,
-            scratch: quad::Scratch::new(),
-            last_vertex_bytes: Vec::new(),
-            last_index_bytes: Vec::new(),
             atlas_size,
             atlas,
             atlas_staging: None,
             device: device.clone(),
             textures: Vec::new(),
             next_texture_slot: 1,
-            dst_copy: std::cell::RefCell::new(None),
-            offscreen: std::cell::RefCell::new(None),
-            offscreen_rtv_heap: DescriptorHeap::new_rtv(device, 2)
-                .map_err(|e| ShaderError::Create("建离屏 RTV 描述符堆", e))?,
             elements: shaders.elements,
             samples,
-            hooks: Vec::new(),
+            default_targets: Some(default_targets),
         })
     }
 
     /// 登记一个外部渲染源钩子（`kind` 相同者覆盖）。
     ///
     /// 见 [`RenderHook`] 与 [`zephyra_core::paint::Command::Custom`]。
+    ///
+    /// 写的是**默认目标**的钩子表（单窗口 / 测试路径）。多窗口宿主用
+    /// [`Self::register_hook_on`] 往自己窗口的 [`WindowTargets`] 里登记。
     pub fn register_hook(
         &mut self,
         kind: impl Into<std::borrow::Cow<'static, str>>,
         hook: Box<dyn RenderHook>,
     ) {
+        let targets = self
+            .default_targets
+            .as_mut()
+            .expect("默认目标只在 record 借用期间为 None");
+        Self::register_hook_on(targets, kind, hook);
+    }
+
+    /// 往指定窗口的目标里登记外部渲染源钩子。
+    pub fn register_hook_on(
+        targets: &mut WindowTargets,
+        kind: impl Into<std::borrow::Cow<'static, str>>,
+        hook: Box<dyn RenderHook>,
+    ) {
         let kind = kind.into();
-        if let Some(slot) = self.hooks.iter_mut().find(|(k, _)| *k == kind) {
+        if let Some(slot) = targets.hooks.iter_mut().find(|(k, _)| *k == kind) {
             slot.1 = hook;
         } else {
-            self.hooks.push((kind, hook));
+            targets.hooks.push((kind, hook));
         }
     }
 
@@ -1261,6 +1318,7 @@ impl Renderer {
     /// 退回 `SrcOver`。宁可少个效果，也不要画出一个颜色错误的结果。
     fn refresh_dst_copy(
         &self,
+        targets: &WindowTargets,
         device: &ID3D12Device,
         list: &ID3D12GraphicsCommandList,
         rt: Option<&ID3D12Resource>,
@@ -1286,7 +1344,7 @@ impl Renderer {
         let src_desc = unsafe { rt.GetDesc() };
         let src_samples = src_desc.SampleDesc.Count.max(1);
 
-        let mut slot = self.dst_copy.borrow_mut();
+        let mut slot = targets.dst_copy.borrow_mut();
         if slot
             .as_ref()
             .is_none_or(|d| d.size != size || size.0 == 0 || size.1 == 0)
@@ -1472,8 +1530,13 @@ impl Renderer {
     }
 
     /// 顶点缓冲容量（字节）。稳态下跨帧不变。
+    ///
+    /// 读的是**默认目标**的容量（单窗口 / 测试路径）。
     pub fn vertex_capacity(&self) -> u64 {
-        self.vertex_capacity
+        self.default_targets
+            .as_ref()
+            .map(|t| t.vertex_capacity)
+            .unwrap_or(0)
     }
 
     /// 把字形图集位图上传到 GPU 纹理（R8，`atlas_size × atlas_size`）。
@@ -1801,6 +1864,24 @@ impl Renderer {
     /// 整帧无滤镜时 `plan_segments` 返回单个覆盖全部的 `Plain(0..len)`，于是循环体与
     /// 从前**逐字节**同路径。
     pub fn record(&mut self, ctx: RenderCtx<'_>) -> Result<RenderReport, SurfaceError> {
+        let mut targets = self
+            .default_targets
+            .take()
+            .expect("默认目标只在 record 借用期间为 None");
+        let result = self.record_with(&mut targets, ctx);
+        self.default_targets = Some(targets);
+        result
+    }
+
+    /// 用**指定窗口**的渲染目标记录一帧。
+    ///
+    /// 与 [`Self::record`] 逐字节同路径，只是几何缓冲 / 离屏 RT / 目标副本 / 钩子
+    /// 都取自 `targets` 而不是渲染器的默认那一套。多窗口宿主走这条。
+    pub fn record_with(
+        &mut self,
+        targets: &mut WindowTargets,
+        ctx: RenderCtx<'_>,
+    ) -> Result<RenderReport, SurfaceError> {
         let RenderCtx {
             device,
             list,
@@ -1840,12 +1921,12 @@ impl Renderer {
         //
         // 漏掉这一步的后果是「跑几千帧之后画面慢慢变乱」，而不是立刻报错：游标一路涨到
         // 暂存区末尾，撞上 `record_upload` 的越界检查才失败，于是错在离原因很远的地方。
-        self.vertex.head.set(0);
-        self.index.head.set(0);
+        targets.vertex.head.set(0);
+        targets.index.head.set(0);
         // 上一帧退役的旧缓冲到此作废：`begin_frame` 已经 `wait_gpu`，GPU 空闲，
         // 它们引用的所有 `CopyBufferRegion` 都读完了。
-        self.vertex.clear_retired();
-        self.index.clear_retired();
+        targets.vertex.clear_retired();
+        targets.index.clear_retired();
         //
         // ⚠ `t0` **也**必须先绑一次（绑图集兜住）：D3D12 的根描述符表在命令列表打开时
         // 是**未设置**的，而未设置在调试层不一定报错 —— 症状是采样读到随机内容，于是某个
@@ -1901,7 +1982,7 @@ impl Renderer {
                     if range.is_empty() {
                         continue;
                     }
-                    let pr = self.draw_range(list, device, &env, display_list, &range)?;
+                    let pr = self.draw_range(targets, list, device, &env, display_list, &range)?;
                     if std::env::var_os("ZEPHYRA_FILTER_TRACE").is_some()
                         && pr.unimplemented_filters > 0
                     {
@@ -1921,7 +2002,7 @@ impl Renderer {
                     else {
                         unreachable!("Custom 段只由 Command::Custom 产出");
                     };
-                    match self.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
+                    match targets.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
                         Some((_, hook)) => {
                             hook.draw(
                                 HookCtx {
@@ -1956,7 +2037,8 @@ impl Renderer {
                     }
                     let item = display_list.iter().nth(index).expect("下标来自同一份列表");
                     let inner = CmdEnv { key, ..env };
-                    let r = self.render_offscreen(list, device, &inner, &item.command, &pass)?;
+                    let r =
+                        self.render_offscreen(targets, list, device, &inner, &item.command, &pass)?;
                     if std::env::var_os("ZEPHYRA_FILTER_TRACE").is_some() {
                         eprintln!(
                             "[ftrace] inner #{} unimpl={} offscreen={} refract={}",
@@ -1972,8 +2054,14 @@ impl Renderer {
                     // 的可见效果），而元素本体不见了 —— 于是看起来像「投影把元素盖住了」，
                     // 不像「少画了一步」。
                     if redraw {
-                        let r =
-                            self.draw_range(list, device, &env, display_list, &(index..index + 1))?;
+                        let r = self.draw_range(
+                            targets,
+                            list,
+                            device,
+                            &env,
+                            display_list,
+                            &(index..index + 1),
+                        )?;
                         // ⚠⚠ 重画原图这一趟**已经把上面的 `saturating_sub(1)`
                         // 又抵消掉了**，所以这里必须再减一次。
                         //
@@ -2055,6 +2143,7 @@ impl Renderer {
     /// 「展开 → 上传 → 立刻画完」，不能攒着一起画。
     fn draw_range(
         &mut self,
+        targets: &mut WindowTargets,
         list: &ID3D12GraphicsCommandList,
         device: &ID3D12Device,
         env: &CmdEnv<'_>,
@@ -2062,8 +2151,8 @@ impl Renderer {
         range: &std::ops::Range<usize>,
     ) -> Result<RenderReport, SurfaceError> {
         // ⚠ `Scratch` 是**取出来**用的：`expand_*` 的 `is_registered` 闭包要借
-        // `env.textures`，同时又要 `&mut self.scratch` —— `mem::take` 把借用链切断。
-        let mut scratch = std::mem::take(&mut self.scratch);
+        // `env.textures`，同时又要 `&mut targets.scratch` —— `mem::take` 把借用链切断。
+        let mut scratch = std::mem::take(&mut targets.scratch);
         let mut report = quad::expand_range_translated_into(
             display_list,
             env.size,
@@ -2075,10 +2164,11 @@ impl Renderer {
         report.vertex_bytes = (scratch.vertices.len() * std::mem::size_of::<Vertex>()) as u64;
         report.quads = scratch.solid.len() / 4 + scratch.images.len() / 4;
         report.path_triangles = scratch.paths.len() / 3;
-        self.upload_geometry(device, list, &scratch, &mut report)?;
+        self.upload_geometry(targets, device, list, &scratch, &mut report)?;
         self.bind_state(list, env, env.size, env.damage)?;
         if !scratch.vertices.is_empty() {
             self.replay(
+                targets,
                 list,
                 device,
                 env,
@@ -2092,13 +2182,14 @@ impl Renderer {
                 &mut report,
             )?;
         }
-        self.scratch = scratch;
+        targets.scratch = scratch;
         Ok(report)
     }
 
     /// 顶点 / 索引缓冲按需增长，然后上传。
     fn upload_geometry(
         &mut self,
+        targets: &mut WindowTargets,
         device: &ID3D12Device,
         list: &ID3D12GraphicsCommandList,
         scratch: &quad::Scratch,
@@ -2107,8 +2198,8 @@ impl Renderer {
         let needed = report.vertex_bytes.max(64);
         // 容量判据必须含已经花掉的 `head` —— 主路径与离屏 pass 共用这条缓冲，
         // 见 `StreamBuffer::reserve`。
-        if self.vertex.reserve(device, needed)? {
-            self.vertex_capacity = self.vertex.size;
+        if targets.vertex.reserve(device, needed)? {
+            targets.vertex_capacity = targets.vertex.size;
             report.reallocated = true;
         }
         // 索引要逐四边形加顶点基址，而四边形数逐帧可变，所以索引每帧都不同。
@@ -2126,12 +2217,12 @@ impl Renderer {
         // bug，极难往哈希上联想。55 KB 的 memcmp 在 CPU 上是微秒级。
         if !scratch.indices.is_empty() {
             let need = (scratch.indices.len() * 2) as u64;
-            self.index.reserve(device, need)?;
+            targets.index.reserve(device, need)?;
             let bytes = bytemuck::cast_slice::<u16, u8>(&scratch.indices);
-            if self.last_index_bytes != bytes {
-                self.index.record_upload(list, bytes)?;
-                self.last_index_bytes.clear();
-                self.last_index_bytes.extend_from_slice(bytes);
+            if targets.last_index_bytes != bytes {
+                targets.index.record_upload(list, bytes)?;
+                targets.last_index_bytes.clear();
+                targets.last_index_bytes.extend_from_slice(bytes);
                 report.index_uploads = report.index_uploads.saturating_add(1);
             } else {
                 report.index_upload_skipped = true;
@@ -2139,10 +2230,10 @@ impl Renderer {
         }
         if !scratch.vertices.is_empty() {
             let bytes = bytemuck::cast_slice::<Vertex, u8>(&scratch.vertices);
-            if self.last_vertex_bytes != bytes {
-                self.vertex.record_upload(list, bytes)?;
-                self.last_vertex_bytes.clear();
-                self.last_vertex_bytes.extend_from_slice(bytes);
+            if targets.last_vertex_bytes != bytes {
+                targets.vertex.record_upload(list, bytes)?;
+                targets.last_vertex_bytes.clear();
+                targets.last_vertex_bytes.extend_from_slice(bytes);
                 report.index_uploads = report.index_uploads.saturating_add(1);
             } else {
                 report.index_upload_skipped = true;
@@ -2177,6 +2268,7 @@ impl Renderer {
     /// PSO 按 `(PS 变体, 模式, 采样数)` 缓存（[`Renderer::pso_for`]），懒建。
     fn replay(
         &mut self,
+        targets: &mut WindowTargets,
         list: &ID3D12GraphicsCommandList,
         device: &ID3D12Device,
         env: &CmdEnv<'_>,
@@ -2203,14 +2295,14 @@ impl Renderer {
             list.IASetVertexBuffers(
                 0,
                 Some(&[D3D12_VERTEX_BUFFER_VIEW {
-                    BufferLocation: self.vertex.gpu_addr(),
-                    SizeInBytes: self.vertex_capacity as u32,
+                    BufferLocation: targets.vertex.gpu_addr(),
+                    SizeInBytes: targets.vertex_capacity as u32,
                     StrideInBytes: std::mem::size_of::<Vertex>() as u32,
                 }]),
             );
             list.IASetIndexBuffer(Some(&D3D12_INDEX_BUFFER_VIEW {
-                BufferLocation: self.index.gpu_addr(),
-                SizeInBytes: self.index.size as u32,
+                BufferLocation: targets.index.gpu_addr(),
+                SizeInBytes: targets.index.size as u32,
                 Format: DXGI_FORMAT_R16_UINT,
             }));
             list.IASetPrimitiveTopology(
@@ -2242,7 +2334,8 @@ impl Renderer {
                     // 系数可表达：PS 只算源色，混合交给固定功能方程。
                     None => (0usize, mode),
                     // PS 合成模式：要读 `dst`，先取副本；取不到就退回默认。
-                    Some(k) => match self.refresh_dst_copy(device, list, env.rt, env.size) {
+                    Some(k) => match self.refresh_dst_copy(targets, device, list, env.rt, env.size)
+                    {
                         Some(dst_slot) => {
                             // 副本绑到 `t1`（根签名第 1 个参数）。
                             unsafe {
@@ -2317,6 +2410,7 @@ impl Renderer {
     /// 见 [`rt_barrier`] —— 资源必须先从 RTV 绑定上解绑才能转状态。
     fn render_offscreen(
         &mut self,
+        targets: &mut WindowTargets,
         list: &ID3D12GraphicsCommandList,
         device: &ID3D12Device,
         cmd_env: &CmdEnv<'_>,
@@ -2331,9 +2425,9 @@ impl Renderer {
         let mut report = RenderReport::default();
         let rt_size = pass.rt_size;
         let Some((a, b)) = offscreen_pair(
-            &self.offscreen,
+            &targets.offscreen,
             device,
-            &self.offscreen_rtv_heap,
+            &targets.offscreen_rtv_heap,
             &self.srv_heap,
             rt_size,
         ) else {
@@ -2380,7 +2474,7 @@ impl Renderer {
         //
         // ⚠ 顺序仍然必须**先绑后发**（资源要先从 RTV 绑定上解绑才能转状态）。
         unsafe {
-            list.OMSetRenderTargets(1, Some(&a.rtv(&self.offscreen_rtv_heap)?), false, None);
+            list.OMSetRenderTargets(1, Some(&a.rtv(&targets.offscreen_rtv_heap)?), false, None);
         }
         rt_barrier(
             list,
@@ -2393,7 +2487,7 @@ impl Renderer {
         // ⚠ 这里必须只画**这一条**命令（`single_command_list` 已把列表限成一条，
         // 所以展开区间传 `None`）。若传整份 `DisplayList`，所有图元都会被画进这张
         // 离屏 RT —— 症状是每个带滤镜的元素都带着一整个窗口的模糊副本。
-        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut scratch = std::mem::take(&mut targets.scratch);
         let sub = offscreen::single_command_list(cmd, cmd_env.key);
         let mut inner_report = quad::expand_range_translated_into(
             &sub,
@@ -2405,10 +2499,10 @@ impl Renderer {
         );
         inner_report.vertex_bytes = (scratch.vertices.len() * std::mem::size_of::<Vertex>()) as u64;
         inner_report.quads = scratch.solid.len() / 4 + scratch.images.len() / 4;
-        self.upload_geometry(device, list, &scratch, &mut inner_report)?;
+        self.upload_geometry(targets, device, list, &scratch, &mut inner_report)?;
         report.absorb(inner_report);
 
-        let a_rtv = a.rtv(&self.offscreen_rtv_heap)?;
+        let a_rtv = a.rtv(&targets.offscreen_rtv_heap)?;
         let inner_env = CmdEnv {
             rtv: a_rtv,
             size: rt_size,
@@ -2429,6 +2523,7 @@ impl Renderer {
             list.ClearRenderTargetView(a_rtv, &[0.0, 0.0, 0.0, 0.0], None);
         }
         self.replay(
+            targets,
             list,
             device,
             &inner_env,
@@ -2445,7 +2540,7 @@ impl Renderer {
             1,
             &mut report,
         )?;
-        self.scratch = scratch;
+        targets.scratch = scratch;
         // 离屏期间不该有「未实现的滤镜」—— 内容里那条命令的滤镜正是在做这件事。
         report.unimplemented_filters = report.unimplemented_filters.saturating_sub(1);
         report.offscreen_passes += 1;
@@ -2462,7 +2557,7 @@ impl Renderer {
                 shader::PS_BLUR_V
             };
             let (from, to) = if src_is_a { (&a, &b) } else { (&b, &a) };
-            let to_rtv = to.rtv(&self.offscreen_rtv_heap)?;
+            let to_rtv = to.rtv(&targets.offscreen_rtv_heap)?;
             // ⚠⚠ **先绑目标，再发屏障**。反过来（先发「读源 → PSR」的屏障）时，
             // 读源此刻仍绑在 RTV 上 —— D3D12 禁止这种转换，整张图会变成一个死值。
             unsafe {
@@ -2484,6 +2579,7 @@ impl Renderer {
             to.state.set(D3D12_RESOURCE_STATE_RENDER_TARGET);
 
             self.draw_pass_quad(
+                targets,
                 device,
                 list,
                 &offscreen::blur_quad(step, pass.rt_size_as_f32(), pass.rt_size_as_f32()),
@@ -2513,13 +2609,14 @@ impl Renderer {
         // **元素自己的内容被合上去之前** —— 那正是此刻。晚一步（元素已经盖住了
         // 背景）拷到的就是元素自己，症状是"玻璃边缘把元素自己的轮廓糊开"；
         // 早一步（元素内容还没进 RT 时）则少拷了 RT 里的内容，同样错。
-        let needs_dst = pass.refraction.is_some() || pass.backdrop_blur.is_some();
+        let needs_dst =
+            pass.refraction.is_some() || pass.lens.is_some() || pass.backdrop_blur.is_some();
         let dst_copy = match needs_dst {
             true => {
                 // 建不出副本 ⇒ 这一趟画不了。计进"未实现"并**降级成普通合成**，
                 // 而不是让整帧失败：症状会变成"折射/磨砂没反应"，可与其它未接线的
                 // 能力区分开，而不会把整个应用打死。
-                match self.refresh_dst_copy(device, list, cmd_env.rt, cmd_env.size) {
+                match self.refresh_dst_copy(targets, device, list, cmd_env.rt, cmd_env.size) {
                     Some(slot) => self.srv_heap.gpu(slot).ok(),
                     None => {
                         report.unimplemented_filters += 1;
@@ -2567,33 +2664,6 @@ impl Renderer {
         // （折射本来就该铺满元素），所以只有这里能挡。
         let content = zephyra_core::paint::command_content_rect(cmd).unwrap_or(pass.bounds);
         let corner = zephyra_core::paint::command_corner_radius(cmd);
-        let (quad, ps, dst_srv, is_refraction) =
-            match (pass.refraction, pass.backdrop_blur, dst_copy) {
-                (Some(r), _, Some(srv)) => (
-                    offscreen::refraction_composite_quad(content, screen, corner, r),
-                    shader::PS_REFRACTION,
-                    Some(srv),
-                    true,
-                ),
-                (_, Some(bb), Some(srv)) => (
-                    offscreen::backdrop_blur_composite_quad(content, screen, corner, bb.sigma),
-                    shader::PS_BACKDROP_BLUR,
-                    Some(srv),
-                    false,
-                ),
-                _ => (
-                    offscreen::composite_quad(
-                        pass.bounds,
-                        screen,
-                        pass.rt_size_as_f32(),
-                        pass.tint,
-                    ),
-                    shader::PS_COMPOSITE,
-                    None,
-                    false,
-                ),
-            };
-        let drew_dst_effect = dst_srv.is_some();
         // 命令自己的混合模式在**合成趟**生效 —— 滤镜链的结果与已画内容按它合成。
         //
         // ⚠ 只传**系数可表达**的 15 个（`Clear..Screen`）：PS 变体那 14 个的
@@ -2608,19 +2678,96 @@ impl Renderer {
             }
             _ => BlendMode::SrcOver,
         };
-        self.draw_pass_quad(
-            device,
-            list,
-            &quad,
-            ps,
-            &final_rt.srv(&self.srv_heap)?,
-            dst_srv.as_ref(),
-            cmd_env.rtv,
-            cmd_env.size,
-            composite_blend,
-            damage_scissor(cmd_env.size, cmd_env.damage),
-            self.samples,
-        )?;
+        let scissor = damage_scissor(cmd_env.size, cmd_env.damage);
+
+        // ---- 3a. 装饰的外投影（`hollow_shadow`）先画 ----
+        //
+        // ⚠⚠ 它和折射 / 透镜 / 磨砂**不是互斥关系**，而是**两层**：外投影在
+        // 玻璃**背后**（内侧靠 `PSHollowShadow` 挖掉），玻璃再盖上去。曾经这里把
+        // 它写成了 `if hollow_shadow { ... } else { 折射/透镜/模糊 }` 的二选一，
+        // 后果是所有**带装饰**的玻璃（开关把手、材质页玻璃卡片）把滤镜整趟丢掉：
+        // 画面上只剩高光与内阴影，折射一点都没有 —— 而"没有折射的玻璃"看起来
+        // 完全正常，所以只能靠材质页「开/关装饰」的对照才看得出来。
+        if pass.hollow_shadow {
+            let hquad = offscreen::hollow_shadow_composite_quad(
+                pass.bounds,
+                pass.element_rect,
+                screen,
+                pass.corner_radius,
+                pass.tint,
+            );
+            self.draw_pass_quad(
+                targets,
+                device,
+                list,
+                &hquad,
+                shader::PS_HOLLOW_SHADOW,
+                &final_rt.srv(&self.srv_heap)?,
+                None,
+                cmd_env.rtv,
+                cmd_env.size,
+                composite_blend,
+                scissor,
+                self.samples,
+            )?;
+        }
+
+        // ---- 3b. 玻璃本体：折射 / 透镜 / 磨砂 / 普通合成 ----
+        //
+        // 三者互斥（都"替换"元素背后那块区域，一次只能选一个）；与上面的
+        // 外投影则**叠加**。没有滤镜效果时退回普通合成（把 RT 内容贴回来）。
+        let effect = match (pass.refraction, pass.lens, pass.backdrop_blur, dst_copy) {
+            (Some(r), _, _, Some(srv)) => Some((
+                offscreen::refraction_composite_quad(content, screen, corner, r),
+                shader::PS_REFRACTION,
+                srv,
+                1u8,
+            )),
+            (_, Some(l), _, Some(srv)) => Some((
+                offscreen::lens_composite_quad(content, screen, corner, l),
+                shader::PS_LENS,
+                srv,
+                2,
+            )),
+            (_, _, Some(bb), Some(srv)) => Some((
+                offscreen::backdrop_blur_composite_quad(content, screen, corner, bb.sigma),
+                shader::PS_BACKDROP_BLUR,
+                srv,
+                3,
+            )),
+            _ => None,
+        };
+        let (quad, ps, dst_srv, dst_effect) = match effect {
+            Some((quad, ps, srv, kind)) => (quad, ps, Some(srv), kind),
+            None => (
+                offscreen::composite_quad(pass.bounds, screen, pass.rt_size_as_f32(), pass.tint),
+                shader::PS_COMPOSITE,
+                None,
+                0,
+            ),
+        };
+        let drew_dst_effect = dst_srv.is_some();
+        // 外投影那一趟已经把 RT 内容贴回来了（`PSHollowShadow` 的 `t * keep`
+        // 透传分支），没有滤镜时**不能**再叠一次普通合成 —— 那会把同一份内容
+        // 半透明地画两遍（带 alpha 的元素会明显变深）。
+        if pass.hollow_shadow && !drew_dst_effect {
+            // 已经画完，跳过下面的合成趟与计数。
+        } else {
+            self.draw_pass_quad(
+                targets,
+                device,
+                list,
+                &quad,
+                ps,
+                &final_rt.srv(&self.srv_heap)?,
+                dst_srv.as_ref(),
+                cmd_env.rtv,
+                cmd_env.size,
+                composite_blend,
+                scissor,
+                self.samples,
+            )?;
+        }
         // 只在实际走了折射 / 背景模糊那一支时计。
         //
         // `dst_srv.is_some()` 等价于“拿到了目标副本且 PS 是 PSRefraction /
@@ -2628,11 +2775,59 @@ impl Renderer {
         // `refresh_dst_copy` 失败时这里是 `None` —— 退化成普通合成，
         // 那时屏幕上有玻璃但没有弯曲/模糊，**不能算已经生效**。
         if drew_dst_effect {
-            if is_refraction {
-                report.refraction_passes += 1;
-            } else {
-                report.backdrop_blur_passes += 1;
+            match dst_effect {
+                1 => report.refraction_passes += 1,
+                2 => report.lens_passes += 1,
+                _ => report.backdrop_blur_passes += 1,
             }
+        }
+
+        // ---- 装饰 overlay：画在内容**之上** ----
+        //
+        // 层序契约（`Decorations` 文档）：外投影（上面的合成趟已带）→ 内容 →
+        // **高光** → **内阴影**。两趟都是纯 SDF 计算、零纹理采样，几何直接铺
+        // 屏幕上 —— 顺序反了的话内阴影会把高光压在下面（画面只是"高光没了"）。
+        //
+        // 高光按 kind 切混合：Ambient 原版是 SrcOver（半黑半白，Plus 会把黑半
+        // 加成无操作 ⇒ "内侧压暗"失效）；Default / Plain 是 Plus（加色）。
+        // 源 SRV 仍传 `final_rt`（状态已在 SHADER_RESOURCE）—— 着色器不读它，
+        // 只是 `draw_pass_quad` 的签名要求一个源。
+        if let Some(hl) = &pass.highlight {
+            let blend = if hl.kind > 1.5 {
+                BlendMode::SrcOver
+            } else {
+                BlendMode::Plus
+            };
+            self.draw_pass_quad(
+                targets,
+                device,
+                list,
+                &offscreen::highlight_overlay_quad(pass.element_rect, screen, *hl),
+                shader::PS_HIGHLIGHT,
+                &final_rt.srv(&self.srv_heap)?,
+                None,
+                cmd_env.rtv,
+                cmd_env.size,
+                blend,
+                damage_scissor(cmd_env.size, cmd_env.damage),
+                self.samples,
+            )?;
+        }
+        if let Some(sh) = &pass.inner_shadow {
+            self.draw_pass_quad(
+                targets,
+                device,
+                list,
+                &offscreen::inner_shadow_overlay_quad(pass.element_rect, screen, *sh),
+                shader::PS_INNER_SHADOW,
+                &final_rt.srv(&self.srv_heap)?,
+                None,
+                cmd_env.rtv,
+                cmd_env.size,
+                BlendMode::SrcOver,
+                damage_scissor(cmd_env.size, cmd_env.damage),
+                self.samples,
+            )?;
         }
         Ok(report)
     }
@@ -2654,6 +2849,7 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     fn draw_pass_quad(
         &mut self,
+        targets: &mut WindowTargets,
         device: &ID3D12Device,
         list: &ID3D12GraphicsCommandList,
         quad: &[Vertex; 4],
@@ -2674,13 +2870,14 @@ impl Renderer {
         let bytes = (4 * std::mem::size_of::<Vertex>()) as u64;
         // 与 `upload_geometry` 同一条缓冲：主路径可能刚把暂存区用到某个位置，
         // 所以这里也要按「head + 本段」判容量（见 `StreamBuffer::reserve`）。
-        if self.vertex.reserve(device, bytes)? {
-            self.vertex_capacity = self.vertex.size;
+        if targets.vertex.reserve(device, bytes)? {
+            targets.vertex_capacity = targets.vertex.size;
         }
         let idx = quad::expand_indices_with_paths(1, 0).0;
         let need = (idx.len() * 2) as u64;
-        self.index.reserve(device, need)?;
-        self.vertex
+        targets.index.reserve(device, need)?;
+        targets
+            .vertex
             .record_upload(list, bytemuck::cast_slice(quad))?;
         // ⚠⚠ **离屏 pass 与主路径共用同一条 StreamBuffer**（见 StreamBuffer::reserve），
         // 所以这里一上传，主路径那份「上次上传内容」的影子就**过期**了。
@@ -2692,9 +2889,11 @@ impl Renderer {
         //
         // 这类「省掉一次上传」的优化不能只看上传点自己：谁碰了这条缓冲，谁就得让
         // 「内容没变」这个判断失效。
-        self.last_vertex_bytes.clear();
-        self.last_index_bytes.clear();
-        self.index.record_upload(list, bytemuck::cast_slice(&idx))?;
+        targets.last_vertex_bytes.clear();
+        targets.last_index_bytes.clear();
+        targets
+            .index
+            .record_upload(list, bytemuck::cast_slice(&idx))?;
 
         let pso = self.pso_for(device, self.elements.descs(), ps, blend as usize, samples)?;
         unsafe {
@@ -2720,14 +2919,14 @@ impl Renderer {
             list.IASetVertexBuffers(
                 0,
                 Some(&[D3D12_VERTEX_BUFFER_VIEW {
-                    BufferLocation: self.vertex.gpu_addr(),
-                    SizeInBytes: self.vertex_capacity as u32,
+                    BufferLocation: targets.vertex.gpu_addr(),
+                    SizeInBytes: targets.vertex_capacity as u32,
                     StrideInBytes: std::mem::size_of::<Vertex>() as u32,
                 }]),
             );
             list.IASetIndexBuffer(Some(&D3D12_INDEX_BUFFER_VIEW {
-                BufferLocation: self.index.gpu_addr(),
-                SizeInBytes: self.index.size as u32,
+                BufferLocation: targets.index.gpu_addr(),
+                SizeInBytes: targets.index.size as u32,
                 Format: DXGI_FORMAT_R16_UINT,
             }));
             list.IASetPrimitiveTopology(

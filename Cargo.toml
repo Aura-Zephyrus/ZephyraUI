@@ -45,6 +45,9 @@ members = [
     "zephyra/zephyra-base/zephyra-platform",
     "zephyra/zephyra-base/zephyra-platform-win",
     "zephyra/zephyra-base/zephyra-app-config",
+    # 窗口集合（每线程一个协调者 + 多顶层窗口）。与渲染后端无关，三个后端共用。
+    # 不进 default-members：它拉 winit，与其它 base crate 同一条理由。
+    "zephyra/zephyra-base/zephyra-window",
     # Linux 实现：与 `zephyra-platform-win` **同级**，两个平台互不认识。
     # 同一条理由不进 default-members（"按需选"），但它一行 unsafe 都没有，
     # 见 Cargo.toml 的说明。
@@ -72,7 +75,7 @@ members = [
     # 渲染后端（d3d12 / d3d11 / linux-vk 互斥），而控件层零后端依赖。
     # 同样不进 default-members：它编一整套应用。
     "gallery",
-    "examples",
+    "examples", "zephyra/zephyra-base/zephyra-render-ext",
 ]
 # `extra/` 下的包（`zephyra-bezier` / `zephyra-camera`）与 `zephyra-dcomp` 进 members
 # 但**不进** default-members：它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），

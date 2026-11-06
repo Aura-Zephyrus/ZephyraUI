@@ -8,12 +8,16 @@
 //! 窗口**最后**声明，因而**最先**被借用、最晚被析构。winit 的窗口句柄被 surface
 //! 与 HostWindow 同时持有，而 surface 的生命周期不能比它所依附的窗口长。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use ash::vk;
 use winit::application::ApplicationHandler;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+
+use zephyra_window::{
+    Backend, HostEventOutcome, HostTick, WindowHandle, WindowHost, WindowKey, WindowSpec,
+};
 
 use zephyra_core::context::Context;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
@@ -26,12 +30,52 @@ use zephyra_core::theme::{Theme, ThemeVariant};
 use zephyra_fx::{Frame, InputState, TextEngine, View};
 
 use crate::renderer::{RenderCtx, RenderHook, Renderer};
-use crate::surface::Gpu;
+use crate::surface::{Device, Surface};
+
+/// 进程级共享设备。
+///
+/// # 为什么是 `OnceLock<Arc<Mutex<Device>>>`
+///
+/// 与 D3D12 的 `SHARED` 同形：instance / 逻辑设备 / 队列是**进程级**资源，
+/// 第二个窗口再建一个设备会得到另一套纹理、管线与描述符空间，跨窗口共享就没了。
+/// `Device` 只 `Send` 不 `Sync`（`ash` 的句柄里是裸指针），所以外面套 `Mutex`；
+/// 事件循环是单线程的，锁的争用只可能来自应用自己另起的 `WindowSet` 线程。
+static SHARED_DEVICE: OnceLock<Arc<Mutex<Device>>> = OnceLock::new();
+
+fn shared_device() -> Result<Arc<Mutex<Device>>, crate::surface::SurfaceError> {
+    if let Some(existing) = SHARED_DEVICE.get() {
+        return Ok(Arc::clone(existing));
+    }
+    let device = Device::new()?;
+    let _ = SHARED_DEVICE.set(Arc::new(Mutex::new(device)));
+    // 竞争时 `set` 失败，`get` 拿到的仍是先到者建的那一份 —— 与 D3D12
+    // `shared_stack` 同一写法：设备创建本身比竞态窗口贵得多，重复建出来
+    // 直接丢弃即可。
+    Ok(Arc::clone(
+        SHARED_DEVICE.get().expect("刚刚 set 过或别人 set 了"),
+    ))
+}
+
+fn lock_device(shared: &Arc<Mutex<Device>>) -> MutexGuard<'_, Device> {
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// 窗口 + GPU + 保留树的组合体。
+///
+/// # 字段顺序是硬约束
+///
+/// `surface` 必须在 `window` **之前**声明（先析构），`window` 最后声明。
+/// 交换链依附于窗口，窗口先死就是拿悬垂句柄去 `vkDestroySwapchainKHR`。
 pub struct HostWindow<V: View> {
-    /// 设备、队列与 surface。全进程唯一一份。
-    gpu: Gpu,
+    window_key: WindowKey,
+    /// 应用侧句柄。单窗口兼容路径没有它。
+    handle: Option<WindowHandle>,
+    /// 进程级共享设备。每窗口只锁不持有。
+    device: Arc<Mutex<Device>>,
+    /// 本窗口的 surface + swapchain。
+    surface: Surface,
     renderer: Renderer,
     view: V,
     theme: &'static Theme,
@@ -138,14 +182,24 @@ impl<V: View> HostWindow<V> {
         // 所以先全局打开；有了焦点系统后改成随焦点开关。
         window.set_ime_allowed(true);
 
-        let gpu = match Gpu::new(&window) {
-            Ok(g) => g,
+        let device = match shared_device() {
+            Ok(d) => d,
             Err(e) => {
                 eprintln!(
                     "[zephyra] 建立 GPU 失败：{e}\n\
                      [zephyra] 这台机器上可能没有可用的 Vulkan 适配器。"
                 );
                 panic!("建立 GPU 失败");
+            }
+        };
+        let surface = {
+            let dev = lock_device(&device);
+            match Surface::new(&dev, &window) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[zephyra] 建立表面失败：{e}");
+                    panic!("建立表面失败");
+                }
             }
         };
 
@@ -155,36 +209,45 @@ impl<V: View> HostWindow<V> {
         // MSAA 与两个 Windows 后端同档（4×；ZEPHYRA_MSAA=0 可关）。渲染通道
         // 带 resolve 附件 —— 由硬件在通道结束时自动完成，等价 wgpu 版的
         //「画进 MSAA、resolve 进 surface」。
-        let samples = gpu.msaa_samples.as_raw();
-        let renderer = match Renderer::new(&gpu, 1024, samples) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[zephyra] 建渲染管线失败：{e}");
-                panic!("建渲染管线失败");
+        let (samples, cmd, fence) = {
+            let dev = lock_device(&device);
+            let samples = dev.msaa_samples.as_raw();
+            let cmd = unsafe {
+                dev.device.allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::builder()
+                        .command_pool(dev.command_pool)
+                        .level(vk::CommandBufferLevel::PRIMARY)
+                        .command_buffer_count(1)
+                        .build(),
+                )
+            }
+            .expect("command buffer")[0];
+            let fence = unsafe {
+                dev.device
+                    .create_fence(&vk::FenceCreateInfo::default(), None)
+            }
+            .expect("fence");
+            (samples, cmd, fence)
+        };
+        let renderer = {
+            let dev = lock_device(&device);
+            match Renderer::new(&dev, surface.format, 1024, samples) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[zephyra] 建渲染管线失败：{e}");
+                    panic!("建渲染管线失败");
+                }
             }
         };
 
         let platform = zephyra_platform_linux::current();
         let system_languages = platform.system_languages();
 
-        let cmd = unsafe {
-            gpu.device.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(gpu.command_pool)
-                    .level(vk::CommandBufferLevel::PRIMARY)
-                    .command_buffer_count(1)
-                    .build(),
-            )
-        }
-        .expect("command buffer")[0];
-        let fence = unsafe {
-            gpu.device
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-        }
-        .expect("fence");
-
         Self {
-            gpu,
+            window_key: WindowKey::unspecified(),
+            handle: None,
+            device,
+            surface,
             renderer,
             view,
             theme: Box::leak(Box::new(Theme::dark())),
@@ -252,8 +315,9 @@ impl<V: View> HostWindow<V> {
         width: u32,
         height: u32,
     ) -> Result<(), crate::surface::SurfaceError> {
+        let dev = lock_device(&self.device);
         self.renderer
-            .upload_texture(&self.gpu, name, pixels, (width, height))
+            .upload_texture(&dev, name, pixels, (width, height))
     }
 
     /// 窗口。
@@ -350,11 +414,14 @@ impl<V: View> HostWindow<V> {
             filters_enabled: true,
             default_blend: zephyra_core::filter::BlendMode::SrcOver,
         };
-        let render = match self.renderer.prepare(&self.gpu, &ctx) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[zephyra] 渲染失败：{e}");
-                return self.empty_frame();
+        let render = {
+            let dev = lock_device(&self.device);
+            match self.renderer.prepare(&dev, &ctx) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[zephyra] 渲染失败：{e}");
+                    return self.empty_frame();
+                }
             }
         };
         self.frames += 1;
@@ -379,18 +446,23 @@ impl<V: View> HostWindow<V> {
 
     /// 上屏：开渲染通道 → 画 → 提交 → present。
     pub fn present(&mut self) {
+        // ⚠ 锁住共享设备做整帧提交：`Device` 不 `Sync`，多个窗口的提交必须
+        // 串行。锁只覆盖本帧，空闲时不占用。
+        let shared = Arc::clone(&self.device);
+        let dev = lock_device(&shared);
         // 帧缓冲可能还没建（首次或 resize 后）。尺寸也要盯：resize 只变尺寸
         // 不变图数，光比个数会漏掉整段错位的帧缓冲。
-        if self.framebuffers.len() != self.gpu.images.len() || self.fb_extent != self.gpu.extent {
-            self.rebuild_framebuffers();
+        if self.framebuffers.len() != self.surface.images.len()
+            || self.fb_extent != self.surface.extent
+        {
+            self.rebuild_framebuffers(&dev);
         }
-        let (idx, wait_sem) = match self.gpu.acquire() {
+        let (idx, wait_sem) = match self.surface.acquire(&dev) {
             Ok(v) => v,
             Err(_) => return,
         };
         let signal_sem = unsafe {
-            self.gpu
-                .device
+            dev.device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
         }
         .expect("semaphore");
@@ -401,8 +473,7 @@ impl<V: View> HostWindow<V> {
 
         // 开渲染通道（用最近一次 frame() 录好的命令）。
         unsafe {
-            self.gpu
-                .device
+            dev.device
                 .begin_command_buffer(
                     self.cmd,
                     &vk::CommandBufferBeginInfo::builder()
@@ -412,38 +483,45 @@ impl<V: View> HostWindow<V> {
                 .ok();
             // ⚠ 绘制命令必须**在渲染通道内**录制 —— 这是本次重构的核心：
             // frame() 只做顶点展开与上传（prepare），真正的绘制在这里录。
-            let (unimplemented, refractions, backdrop_blurs) = self.renderer.record_frame(
-                &self.gpu,
-                self.cmd,
-                fb,
-                self.cache.list(),
-                zephyra_core::filter::BlendMode::SrcOver,
-            );
+            let (unimplemented, refractions, lens_passes, backdrop_blurs) =
+                self.renderer.record_frame(
+                    &dev,
+                    self.cmd,
+                    fb,
+                    self.cache.list(),
+                    zephyra_core::filter::BlendMode::SrcOver,
+                );
             if trace_enabled() && unimplemented > 0 {
                 eprintln!("[trace] 退回默认混合 {unimplemented} 段");
             }
             if trace_enabled() && refractions > 0 {
                 eprintln!("[trace] 折射趟 {refractions}");
             }
+            if trace_enabled() && lens_passes > 0 {
+                eprintln!("[trace] 透镜趟 {lens_passes}");
+            }
             if trace_enabled() && backdrop_blurs > 0 {
                 eprintln!("[trace] 背景模糊趟 {backdrop_blurs}");
             }
-            self.gpu.device.end_command_buffer(self.cmd).ok();
+            dev.device.end_command_buffer(self.cmd).ok();
         }
         let _ = self
-            .gpu
-            .submit_and_present(self.cmd, wait_sem, signal_sem, idx, self.fence);
+            .surface
+            .submit_and_present(&dev, self.cmd, wait_sem, signal_sem, idx, self.fence);
         // 等 GPU 完成（简化）。
         unsafe {
-            self.gpu.device.device_wait_idle().ok();
+            dev.device.device_wait_idle().ok();
         }
         // 诊断：ZEPHYRA_FRAME_DUMP —— 读回刚画完的那张交换链图（此刻还在
         // PRESENT_SRC；read_back 自己做布局往返并转回）。1:1 对比的测量工具。
         if !self.dumped {
             if let Ok(path) = std::env::var("ZEPHYRA_FRAME_DUMP") {
                 self.dumped = true;
-                let (w, h) = self.gpu.extent;
-                match self.gpu.read_back(self.gpu.images[idx as usize], w, h) {
+                let (w, h) = self.surface.extent;
+                match self
+                    .surface
+                    .read_back(&dev, self.surface.images[idx as usize], w, h)
+                {
                     Ok(data) => {
                         let px = zephyra_fx::pixels::PixelRead {
                             data,
@@ -458,8 +536,8 @@ impl<V: View> HostWindow<V> {
                         if path == "-" {
                             eprintln!("[dump] {w}x{h} 颜色数 {colors}");
                         } else {
-                            // `encode_srgb = false`：swapchain 用 UNORM（见 Gpu::new
-                            // 的格式取舍），读回字节 = 着色器线性值直通，与 Windows
+                            // `encode_srgb = false`：swapchain 用 UNORM（见
+                            // `Surface::new` 的格式取舍），读回字节 = 着色器线性值直通，与 Windows
                             // D3D12 完全同构 —— 直接落盘就是「Windows 显示的那个值」。
                             match zephyra_fx::write_bmp(&path, &px, false) {
                                 Ok(()) => {
@@ -476,8 +554,8 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 重建帧缓冲（resize 后或首次 present 时）。
-    fn rebuild_framebuffers(&mut self) {
-        let device = &self.gpu.device;
+    fn rebuild_framebuffers(&mut self, dev: &Device) {
+        let device = &dev.device;
         // 销毁旧的（fb 引用的交换链图在 resize 后已失效 —— 不销毁就是悬垂句柄）。
         for fb in self.framebuffers.drain(..) {
             unsafe {
@@ -489,9 +567,9 @@ impl<V: View> HostWindow<V> {
                 device.destroy_image_view(v, None);
             }
         }
-        let (w, h) = self.gpu.extent;
+        let (w, h) = self.surface.extent;
         // MSAA 时帧缓冲 = [MSAA 视图, 交换链视图]（两附件，与渲染通道一致）。
-        let msaa = self.renderer.ensure_msaa(&self.gpu, (w, h));
+        let msaa = self.renderer.ensure_msaa(dev, (w, h));
         let range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
@@ -499,13 +577,13 @@ impl<V: View> HostWindow<V> {
             base_array_layer: 0,
             layer_count: 1,
         };
-        for &img in &self.gpu.images {
+        for &img in &self.surface.images {
             let view = unsafe {
                 device.create_image_view(
                     &vk::ImageViewCreateInfo::builder()
                         .image(img)
                         .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(self.gpu.format)
+                        .format(self.surface.format)
                         .subresource_range(range)
                         .build(),
                     None,
@@ -555,7 +633,13 @@ impl<V: View> HostWindow<V> {
                 .pressed()
                 .or_else(|| self.activation.held())
                 .cloned(),
-            focused: self.focus.focused().cloned(),
+            // 视觉焦点 = 焦点环可见时才报告（鼠标点击设焦点但不画环，见
+            // `FocusState::is_visible`）。激活 / 无障碍另走 `self.focus.focused()`。
+            focused: if self.focus.is_visible() {
+                self.focus.focused().cloned()
+            } else {
+                None
+            },
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -675,48 +759,78 @@ impl<V: View> HostWindow<V> {
     }
 }
 
-impl<V: View> ApplicationHandler for HostWindow<V> {
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
-        // 帧缓冲在首次 present 时建。
+impl<V: View + 'static> WindowHost for HostWindow<V> {
+    fn key(&self) -> WindowKey {
+        self.window_key
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn winit_id(&self) -> Option<WindowId> {
+        Some(self.window.id())
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        // 帧缓冲在首次 present 时建。
+        self.sync_input();
+        let frame = self.frame();
+        if frame.redrawn {
+            self.present();
+        }
+        Ok(())
+    }
+
+    fn tick(&mut self) -> HostTick {
+        let mut tick = HostTick::default();
+        // 「动画播放中」由视图回答：保留式 UI 不常驻重画，动画只在事件到来时
+        // 推进一帧，然后循环睡死 —— 中间整段弹簧曲线看不到。
+        //
+        // ⚠ 标脏之外还必须**推时钟**：本后端的 `sync_input()`（→ `on_input`
+        // → 动画 `advance`）在下面的 dirty 分支里，所以顺序是「先标脏进来，
+        // 再在分支里推进」；`busy` 用**推进之后**的答案，收敛那一拍就交还
+        // `Wait`（否则多 Poll 一轮，且静止时永远空转）。
+        let mut animating = self.view.wants_frames();
+        if animating {
+            self.dirty = true;
+        }
         if self.dirty {
             self.dirty = false;
             self.sync_input();
             let frame = self.frame();
             if frame.redrawn {
                 self.present();
+                tick.painted = true;
             }
+            animating = self.view.wants_frames();
         }
-        self.window.request_redraw();
+        tick.busy = animating;
+        tick
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        id: WindowId,
-        event: winit::event::WindowEvent,
-    ) {
+    fn handle_event(&mut self, event: winit::event::WindowEvent) -> HostEventOutcome {
         use winit::event::{ElementState, MouseButton, WindowEvent};
         match event {
-            WindowEvent::CloseRequested if id == self.window.id() => event_loop.exit(),
+            WindowEvent::CloseRequested => return HostEventOutcome::Close,
+            WindowEvent::RedrawRequested => {
+                // 帧在 `tick` 里跑（`WindowSet` 每轮都会调它）。这里只标脏。
+                self.dirty = true;
+            }
             WindowEvent::Resized(_) => {
                 // 先销毁帧缓冲/视图再 resize：旧 fb 引用着即将被销毁的交换链图，
                 // 顺序反了就是悬垂句柄 —— 下一次 present 踩到的可能是已回收的内存。
+                let shared = Arc::clone(&self.device);
+                let dev = lock_device(&shared);
                 for fb in self.framebuffers.drain(..) {
                     unsafe {
-                        self.gpu.device.destroy_framebuffer(fb, None);
+                        dev.device.destroy_framebuffer(fb, None);
                     }
                 }
                 for v in self.fb_views.drain(..) {
                     unsafe {
-                        self.gpu.device.destroy_image_view(v, None);
+                        dev.device.destroy_image_view(v, None);
                     }
                 }
                 // ⚠ resize 失败必须显式处理：静默忽略的症状是「窗口拉大后画面
                 // 停在旧尺寸」，而那与「布局算错了」无法区分。
-                if let Err(e) = self.gpu.resize(&self.window) {
+                if let Err(e) = self.surface.resize(&dev, &self.window) {
                     eprintln!("[zephyra] resize 失败：{e}");
                 }
                 self.dirty = true;
@@ -815,6 +929,98 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                 self.dirty = true;
             }
             _ => {}
+        }
+        self.sync_input();
+        HostEventOutcome::Continue
+    }
+
+    fn set_theme(&mut self, variant: ThemeVariant) {
+        HostWindow::set_theme(self, variant);
+    }
+
+    fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        HostWindow::set_styler(self, styler);
+    }
+
+    fn set_title(&mut self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    fn request_close(&mut self) {
+        // 有应用侧句柄就投命令（`WindowSet` 下一轮 drain 时关窗口）；
+        // 单窗口兼容路径没有句柄，调用方自己决定怎么退出。
+        if let Some(handle) = &self.handle {
+            handle.close();
+        }
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// Vulkan 后端的 [`Backend`] 实现。
+///
+/// 与两个 Windows 后端同形：共享设备由 `SHARED_DEVICE` 单例保证，`create`
+/// 只解析 [`WindowSpec`] 再交给 [`HostWindow::new_lenient_opts`]。
+#[derive(Default)]
+pub struct VulkanBackend;
+
+impl VulkanBackend {
+    /// 建一个后端入口（设备在第一个窗口创建时才真正初始化）。
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Backend for VulkanBackend {
+    type Window<V: View + 'static> = HostWindow<V>;
+
+    fn create<V: View + 'static>(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        view: V,
+        spec: &WindowSpec,
+        handle: WindowHandle,
+    ) -> Result<Self::Window<V>, String> {
+        let config = zephyra_app_config::load_from_current_dir();
+        let opts = spec.resolve(&config);
+        let size = opts.size.unwrap_or(DEFAULT_CLIENT_SIZE);
+        let mut host = HostWindow::new_lenient_opts(event_loop, view, size, opts);
+        host.window_key = handle.key();
+        host.handle = Some(handle);
+        Ok(host)
+    }
+}
+
+impl<V: View + 'static> ApplicationHandler for HostWindow<V> {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        let _ = self.start();
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: winit::event::WindowEvent,
+    ) {
+        if self.handle_event(event) == HostEventOutcome::Close {
+            event_loop.exit();
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let tick = self.tick();
+        // 单窗口兼容路径：自己决定控制流。多窗口时这个决定上提到 `WindowSet`
+        // （N 个窗口各自设控制流会互相覆盖，最后一个说话的决定整个循环）。
+        if tick.busy {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        } else {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
         }
     }
 }

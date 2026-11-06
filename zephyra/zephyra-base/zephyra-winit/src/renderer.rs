@@ -83,6 +83,11 @@ use zephyra_core::filter::{BlendMode, Coeff};
 use zephyra_core::frame::Damage;
 use zephyra_core::paint::{Command, DisplayList, RenderSource};
 
+use zephyra_render_ext::{
+    lifecycle::{LifecycleContext, RenderLifecycle},
+    registration::{DrawHook, HookContext, HookContextDowncast, RenderExtension},
+};
+
 use crate::quad::{self, RenderReport, Vertex};
 use crate::shader::{ShaderError, Shaders};
 use crate::texture::TextureTable;
@@ -360,6 +365,8 @@ pub struct Renderer {
     atlas_size: u32,
     /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
+    /// 生命周期钩子（扩展注册的生命周期回调）。
+    lifecycle_hooks: Vec<Box<dyn RenderLifecycle>>,
 }
 
 /// 一次回放的输入。
@@ -638,6 +645,36 @@ pub struct HookCtx<'a> {
     pub rtv: &'a ID3D11RenderTargetView,
     /// 目标像素尺寸（宽，高）。
     pub size: (f32, f32),
+}
+
+/// `HookContext` 实现：提供后端无关的公共访问。
+impl HookContext for HookCtx<'_> {
+    fn size(&self) -> (f32, f32) {
+        self.size
+    }
+
+    fn damage(&self) -> Option<Rect> {
+        None
+    }
+
+    fn is_offscreen(&self) -> bool {
+        false
+    }
+
+    fn offscreen_pass_index(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// `HookContextDowncast` 实现：提供给后端特定类型的下转支持。
+impl<'a> HookContextDowncast for HookCtx<'a> {
+    fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        None
+    }
+
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        None
+    }
 }
 
 /// 离屏 pass 用的一对乒乓 RT（E4.4 / E4.6）。
@@ -940,6 +977,7 @@ impl Renderer {
             atlas_srv,
             atlas_size,
             hooks: Vec::new(),
+            lifecycle_hooks: Vec::new(),
         })
     }
 
@@ -2184,6 +2222,71 @@ impl Renderer {
                 .expect("DYNAMIC 缓冲应当能 Map(WRITE_DISCARD)");
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.pData.cast::<u8>(), bytes.len());
             context.Unmap(buffer, 0);
+        }
+    }
+}
+
+/// \DrawHook\\uff08\FnMut(&mut dyn HookContext, Rect, &RenderSource)\\uff09\u5230\u672c\u540e\u7aef \RenderHook\ \u7684\u8584\u9002\u914d\u5668\u3002
+///
+/// \u95e8\u9898\uff1a\RenderHook\ \u662f\u81ea\u5b9a\u4e49\u7684 trait\uff0c\u95ed\u5305\uff08closure\uff09\u65e0\u6cd5\u7ed9\u81ea\u5b9a\u4e49\u7684 trait \u505a\u9690\u5f0f\u5b9e\u73b0\u3002
+struct DrawHookAdapter(Box<DrawHook>);
+
+impl RenderHook for DrawHookAdapter {
+    fn draw(&mut self, mut ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+        (self.0)(&mut ctx, bounds, source);
+    }
+}
+
+// =============================================================================
+// zephyra-render-ext trait implementations
+// =============================================================================
+
+impl RenderExtension for Renderer {
+    type HookCtx = HookCtx<'static>;
+
+    fn register_hook(&mut self, kind: std::borrow::Cow<'static, str>, hook: Box<DrawHook>) {
+        self.register_hook(kind, Box::new(DrawHookAdapter(hook)));
+    }
+
+    fn unregister_hook(&mut self, kind: &str) -> bool {
+        let len_before = self.hooks.len();
+        self.hooks.retain(|(k, _)| k.as_ref() != kind);
+        self.hooks.len() < len_before
+    }
+
+    fn has_hook(&self, kind: &str) -> bool {
+        self.hooks.iter().any(|(k, _)| k.as_ref() == kind)
+    }
+
+    fn registered_kinds(&self) -> Vec<std::borrow::Cow<'static, str>> {
+        self.hooks.iter().map(|(k, _)| k.clone()).collect()
+    }
+}
+
+impl RenderLifecycle for Renderer {
+    fn on_prepare(&mut self, _ctx: &LifecycleContext) {
+        for hook in &mut self.lifecycle_hooks {
+            hook.on_prepare(_ctx);
+        }
+    }
+
+    fn on_resize(&mut self, ctx: &LifecycleContext) {
+        for hook in &mut self.lifecycle_hooks {
+            hook.on_resize(ctx);
+        }
+    }
+
+    fn on_device_lost(&mut self) {
+        for hook in &mut self.lifecycle_hooks {
+            hook.on_device_lost();
+        }
+        self.hooks.clear();
+        self.lifecycle_hooks.clear()
+    }
+
+    fn on_device_restored(&mut self, ctx: &LifecycleContext) {
+        for hook in &mut self.lifecycle_hooks {
+            hook.on_device_restored(ctx);
         }
     }
 }

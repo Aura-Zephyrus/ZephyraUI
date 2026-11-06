@@ -23,7 +23,7 @@
 //! ⚠ 另一个 crate 曾在注释里把这个结论写反（说「surface 必须声明在 window 之后」），
 //! 而那与实测的析构顺序相反。判据不是注释，是上面那两条约束 + 一次实测。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use windows::Win32::Foundation::HWND;
 use winit::event::WindowEvent as WEvent;
@@ -47,10 +47,14 @@ use zephyra_fx::{InputState, TextEngine, View};
 
 use zephyra_dcomp::{DcompCompositor, SwapchainDesc, VisualSlot};
 
-use crate::renderer::{RenderCtx, Renderer, TextureTable};
+use crate::renderer::{RenderCtx, Renderer, TextureTable, WindowTargets};
 use crate::surface::Gpu;
 use crate::swapchain::Swapchain;
 use crate::{Frame, RenderReport};
+
+use zephyra_window::{
+    Backend, HostEventOutcome, HostTick, WindowHandle, WindowHost, WindowKey, WindowSpec,
+};
 
 /// 窗口 + GPU + 保留树的组合体。
 ///
@@ -65,9 +69,19 @@ pub struct HostWindow<V: View> {
     compositor: Option<DcompCompositor>,
     /// 挂着交换链的那个 visual。单独存一份是为了「交换链重建后重新挂上去」。
     visual: Option<VisualSlot>,
-    /// D3D12 设备、命令队列、命令列表、栅栏（全进程唯一一份）。
-    gpu: Gpu,
-    renderer: Renderer,
+    /// 进程级共享的 GPU 栈（设备、渲染器、文本引擎、纹理表）。
+    ///
+    /// 多个窗口 / 多个 `WindowSet`（不同线程）共用一个 `Arc<Mutex<Shared>>`，
+    /// 所有 GPU 访问都在这把锁里串行 —— D3D12 的命令列表与栅栏是**单份**的。
+    shared: Arc<Mutex<Shared>>,
+    /// 本窗口私有的渲染目标（几何缓冲、离屏 RT、目标副本、钩子）。
+    targets: WindowTargets,
+    /// 本窗口的稳定标识（`WindowSet` 分发用）。
+    window_key: WindowKey,
+    /// 应用侧句柄（命令队列）。单窗口兼容路径下为 `None`。
+    handle: Option<WindowHandle>,
+    /// 建本窗口交换链时共享栈的代次；与 `shared.generation` 不一致就重建本链。
+    seen_generation: u64,
     view: V,
     theme: &'static Theme,
     /// 帧缓存 —— 保留树 + `DisplayList` + 上一帧视口，全在核心里。
@@ -121,11 +135,6 @@ pub struct HostWindow<V: View> {
     ///
     /// 设备重置后要按间隔重建整条 GPU 栈才恢复，见 [`Self::try_recover_device`]。
     last_recovery_attempt: Option<std::time::Instant>,
-    /// 文本引擎。用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求
-    /// 这一点。
-    engine: std::cell::RefCell<TextEngine>,
-    /// 已上传的图集字形数，用来避免每帧重传 4MB。
-    atlas_revision_uploaded: u64,
     /// 本窗口是否透明（逐像素 alpha 进合成器）。
     ///
     /// resolution 在 [`Self::new_lenient_opts`] 里做完：`WindowOpts` 显式给定
@@ -149,8 +158,6 @@ pub struct HostWindow<V: View> {
     /// 重排；这一份纯粹是「resize 之后到底发生了什么」的观测点。
     /// 两者的值应当一致 —— 不一致本身就是缺陷（见 `docs/dev-log/task-responsive.md` B2）。
     traced_viewport: Option<(f32, f32)>,
-    /// 图像纹理表：`Command::Image` 的句柄 → SRV 描述符位置。
-    textures: TextureTable,
     /// 调试桥（`ZEPHYRA_DEBUG_PORT` 开启时存在）。见 `zephyra_fx::bridge`。
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
@@ -179,6 +186,87 @@ pub struct HostWindow<V: View> {
     uia_redraw: bool,
     /// 窗口。**最后析构**，见模块文档。
     window: Arc<Window>,
+}
+
+/// 进程级共享的 GPU 栈。
+///
+/// # 为什么这些是共享的
+///
+/// 「一个进程一个设备」不是可选项：D3D12 的设备 / 命令队列 / 栅栏是**单份**的，
+/// 每窗口各建一套会让「谁的队列在跑」无法回答，而且驱动对多设备共享纹理的支持很脆。
+/// 图集与纹理表、PSO 也一样 —— 它们描述的是*怎么画*，与窗口无关。
+///
+/// 每窗口自己的东西在 [`HostWindow::targets`]（[`WindowTargets`]）。
+///
+/// # 锁
+///
+/// 所有字段都在 `SHARED` 的 `Mutex` 里。一次帧（布局 + 记录 + 提交）在同一把锁内
+/// 完成，所以两个窗口不会同时操作命令列表。这也是「跨线程再起一个 `WindowSet`」
+/// 能成立的全部原因：锁串行化，而不是每个线程各建一份设备。
+pub(crate) struct Shared {
+    /// 设备、命令队列、命令列表、栅栏。
+    pub(crate) gpu: Gpu,
+    /// 管线状态、图集、SRV 描述符堆、纹理表。
+    pub(crate) renderer: Renderer,
+    /// 文本引擎（字形来源 + 图集位图）。
+    ///
+    /// `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求这一点。
+    pub(crate) engine: std::cell::RefCell<TextEngine>,
+    /// 已上传的图集 revision，用来避免每帧重传 4MB。
+    pub(crate) atlas_revision_uploaded: u64,
+    /// 已注册的图像纹理（名字 → SRV 槽位）。
+    pub(crate) textures: TextureTable,
+    /// 设备代次。设备重建时 +1；各窗口据此重建自己的交换链。
+    pub(crate) generation: u64,
+}
+
+// SAFETY: `Shared` 只通过 `SHARED` 的 `Mutex` 访问，所有 D3D12 调用都在锁内串行。
+// `Gpu` 里的 COM 指针与栅栏事件句柄本身是自由线程的；`TextEngine` 只在锁内被一个
+// 线程使用（它没有线程局部状态 —— 那正是 `Windows` 上每线程一个事件循环仍然共用
+// 同一份字形图集的前提）。
+unsafe impl Send for Shared {}
+
+/// 进程级唯一一份共享栈。
+static SHARED: OnceLock<Arc<Mutex<Shared>>> = OnceLock::new();
+
+/// 取（必要时建）进程级共享栈。
+///
+/// 第一个窗口建它；之后每个窗口（含别的线程上的 `WindowSet`）拿到同一个 `Arc`。
+fn shared_stack() -> Arc<Mutex<Shared>> {
+    SHARED
+        .get_or_init(|| {
+            // 文本引擎：core 的 `TextStack` + ab_glyph 字形来源。找不到字体时退回禁用模式。
+            let (engine, note) = zephyra_fx::from_system_font();
+            eprintln!("[zephyra-d3d12] {note}");
+            let gpu = Gpu::new().expect("创建 D3D12 设备：需要可用的 GPU");
+            // `msaa_samples()` 是**进程级**环境变量读取，所以所有窗口的采样数一致 ——
+            // 共享的那个 `Renderer` 的 PSO 采样数因此对每个窗口都成立。
+            let renderer = Renderer::new(
+                &gpu.device,
+                zephyra_core::text::atlas::ATLAS_SIZE,
+                crate::swapchain::msaa_samples(),
+            )
+            .expect("建根签名 / PSO / 描述符堆");
+            Arc::new(Mutex::new(Shared {
+                gpu,
+                renderer,
+                engine: std::cell::RefCell::new(engine),
+                atlas_revision_uploaded: 0,
+                textures: TextureTable::new(),
+                generation: 0,
+            }))
+        })
+        .clone()
+}
+
+/// 锁住共享栈。锁中毒时继续用（`panic` 的那个窗口已经挂了，其余窗口不该跟着死）。
+pub(crate) fn lock_shared(shared: &Arc<Mutex<Shared>>) -> std::sync::MutexGuard<'_, Shared> {
+    shared.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 已在锁内的调试层消息拉取（`frame_inner` / `render_pass` 走这条，避免自锁）。
+fn drain_debug_shared(shared: &Shared) {
+    shared.gpu.drain_debug();
 }
 
 /// 未指定尺寸时的默认客户区尺寸。
@@ -334,13 +422,19 @@ impl<V: View> HostWindow<V> {
         opts: zephyra_app_config::WindowOpts,
     ) -> Self {
         let config = zephyra_app_config::load_from_current_dir();
-        let transparent = opts.transparent.unwrap_or(config.window.transparent);
-        let frameless = config.window.frameless || transparent;
+        let transparent = opts.resolve_transparent(&config);
+        let frameless = opts.resolve_frameless(&config);
+        let resizable = opts.resolve_resizable(&config);
+        let title = opts
+            .title
+            .clone()
+            .unwrap_or_else(|| "ZephyraUI (D3D12)".to_string());
         let attrs = Window::default_attributes()
-            .with_title("ZephyraUI (D3D12)")
+            .with_title(title)
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1))
             .with_decorations(!frameless)
-            .with_transparent(transparent);
+            .with_transparent(transparent)
+            .with_resizable(resizable);
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
@@ -353,6 +447,9 @@ impl<V: View> HostWindow<V> {
         // `KeyboardInput`，于是组字中的快捷键本来也不生效。焦点系统还没建，
         // 所以先全局打开；有了焦点系统后改成随焦点开关。
         window.set_ime_allowed(true);
+        if opts.resolve_always_on_top(&config) {
+            window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+        }
         eprintln!(
             "[zephyra-d3d12] 窗口装饰: {}{}",
             if frameless { "frameless" } else { "system" },
@@ -372,11 +469,10 @@ impl<V: View> HostWindow<V> {
             window.scale_factor()
         );
 
-        // 文本引擎：core 的 `TextStack` + ab_glyph 字形来源。找不到字体时退回禁用模式。
-        let (engine, note) = zephyra_fx::from_system_font();
-        eprintln!("[zephyra-d3d12] {note}");
-
-        let gpu = Gpu::new().expect("创建 D3D12 设备：需要可用的 GPU");
+        // 共享 GPU 栈：第一个窗口建它，之后同一进程的所有窗口共用。
+        let shared = shared_stack();
+        let shared_guard = lock_shared(&shared);
+        let gpu = &shared_guard.gpu;
 
         // 后缓冲格式必须与 PSO 的 `RTVFormats[0]` 一致（`R8G8B8A8`）。用
         // `SwapchainDesc::default()` 的 `B8G8R8A8` 会让 D3D12 在 `DrawIndexedInstanced`
@@ -387,7 +483,7 @@ impl<V: View> HostWindow<V> {
             format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
         };
         let chain = Swapchain::new(
-            &gpu,
+            gpu,
             (size.width, size.height),
             &desc,
             crate::swapchain::msaa_samples(),
@@ -397,7 +493,7 @@ impl<V: View> HostWindow<V> {
         // composition swapchain **必须**挂在 visual 上才会被合成，否则窗口是黑的。
         // 所以这里失败要如实说出来，不能只打一行 warn 就继续跑。
         let (compositor, visual) = match hwnd_of(window.as_ref()) {
-            Some(h) => match attach_visual(HWND(h as *mut _), &gpu, &chain) {
+            Some(h) => match attach_visual(HWND(h as *mut _), gpu, &chain) {
                 Ok((c, v)) => {
                     eprintln!("[zephyra-d3d12] 呈现路径: DirectComposition");
                     (Some(c), Some(v))
@@ -418,10 +514,16 @@ impl<V: View> HostWindow<V> {
         };
 
         let atlas_size = zephyra_core::text::atlas::ATLAS_SIZE;
+        let _ = atlas_size;
         // ⚠ 采样数必须**取自交换链**，不能在这里另写一个常量 —— PSO 建好就固定了，
         // 而它必须与实际绑定的渲染目标一致（见 `Swapchain::samples` 的文档）。
-        let renderer = Renderer::new(&gpu.device, atlas_size, chain.samples())
-            .expect("建根签名 / PSO / 描述符堆");
+        //
+        // 共享 `Renderer` 的采样数在 `shared_stack()` 里由同一个进程级
+        // `msaa_samples()` 决定，所以与这里的 `chain.samples()` 一致。
+        let targets =
+            WindowTargets::new(&gpu.device).expect("建本窗口渲染目标（几何缓冲 / 离屏 RTV 堆）");
+        let generation = shared_guard.generation;
+        drop(shared_guard);
         eprintln!(
             "[zephyra-d3d12] MSAA: {}×",
             if chain.samples() > 1 {
@@ -442,8 +544,11 @@ impl<V: View> HostWindow<V> {
             chain,
             compositor,
             visual,
-            gpu,
-            renderer,
+            shared,
+            targets,
+            window_key: WindowKey::unspecified(),
+            handle: None,
+            seen_generation: generation,
             view,
             theme,
             cache: FrameCache::new(),
@@ -463,14 +568,11 @@ impl<V: View> HostWindow<V> {
             swap_state: SwapState::Same,
             resize_failures: 0,
 
-            engine: std::cell::RefCell::new(engine),
-            atlas_revision_uploaded: 0,
             transparent,
             frames: 0,
             system_languages: zephyra_platform_win::current().system_languages(),
             last_frame_at: None,
             traced_viewport: None,
-            textures: TextureTable::new(),
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
             last_stats: String::new(),
             resource_telemetry: None,
@@ -507,6 +609,10 @@ impl<V: View> HostWindow<V> {
         let theme: &'static Theme = Box::leak(Box::new(Theme::builtin(variant)));
         self.theme = theme;
         self.cache.invalidate();
+        // 换主题本身就是「该重画」的信号。`cache.invalidate()` 只清 core 的判据，
+        // 而 `tick` 先看宿主自己的 `dirty` —— 漏掉这一行时，事件驱动宿主在静止
+        // 状态下换主题**不会**画出新主题，要等下一次输入。
+        self.dirty = true;
     }
 
     /// 当前主题变体（应用据此判断「想切的」与「在用的」是否一致）。
@@ -514,14 +620,17 @@ impl<V: View> HostWindow<V> {
         self.theme.variant
     }
 
-    /// 图像纹理表（只读）。
-    pub fn textures(&self) -> &TextureTable {
-        &self.textures
+    /// 已注册的图像纹理数量。
+    ///
+    /// 纹理表是进程级共享的（`Shared::textures`，私有字段），所以没法返回一个
+    /// `&TextureTable`。注册走 [`Self::register_texture`]。
+    pub fn texture_count(&self) -> usize {
+        lock_shared(&self.shared).textures.len()
     }
 
-    /// 图像纹理表（可变）。宿主在这里注册 / 更新纹理。
-    pub fn textures_mut(&mut self) -> &mut TextureTable {
-        &mut self.textures
+    /// 图集边长（像素）。
+    pub fn atlas_size(&self) -> u32 {
+        lock_shared(&self.shared).renderer.atlas_size()
     }
 
     /// 注册一张图像纹理，返回写进 `props::IMAGE_TEXTURE` 的槽位句柄。
@@ -543,15 +652,22 @@ impl<V: View> HostWindow<V> {
         w: u32,
         h: u32,
     ) -> Result<u32, String> {
+        let mut shared_guard = lock_shared(&self.shared);
+        let Shared {
+            gpu,
+            renderer,
+            textures,
+            ..
+        } = &mut *shared_guard;
         let mut slot = None;
-        if let Err(e) = self.gpu.submit_one_off(|list| {
-            slot = Some(self.renderer.upload_texture(list, pixels, w, h));
+        if let Err(e) = gpu.submit_one_off(|list| {
+            slot = Some(renderer.upload_texture(list, pixels, w, h));
         }) {
             return Err(format!("提交纹理上传命令失败: {e}"));
         }
         let slot = slot.expect("submit_one_off 一定跑一遍回调");
         let slot = slot.map_err(|e| format!("上传纹理 {name}: {e}"))?;
-        self.textures.insert(name.to_string(), slot);
+        textures.insert(name.to_string(), slot);
         Ok(slot)
     }
 
@@ -627,7 +743,8 @@ impl<V: View> HostWindow<V> {
 
     /// 拉取调试层消息（`ZEPHYRA_D3D12_DEBUG=1` 时才有内容）。
     pub fn drain_debug(&self) {
-        self.gpu.drain_debug();
+        let shared = lock_shared(&self.shared);
+        shared.gpu.drain_debug();
     }
 
     /// 一帧什么都没做时返回的东西。
@@ -657,6 +774,14 @@ impl<V: View> HostWindow<V> {
 
     fn frame_inner(&mut self, capture: bool) -> (Frame, Option<Vec<u8>>) {
         let frame_started = self.profiler.is_running().then(std::time::Instant::now);
+        // 整帧（resize + 布局 + 记录 + 提交）都在共享栈的锁内完成。
+        //
+        // 锁在这里而不是在 `render_pass`：布局要读 `shared.engine`（字形图集），
+        // 而设备恢复要替换整份 `shared`。两处各自加锁会在 `frame_inner` 调
+        // `render_pass` 时自锁。
+        let shared_arc = self.shared.clone();
+        let mut shared_guard = lock_shared(&shared_arc);
+        let shared = &mut *shared_guard;
         // ⚠ resize 必须在**布局与绘制之前**，见 [`Self::sync_swapchain`] 的说明。
         // 顺序反了会留下一个「从未被写过的新后缓冲」，而且它可能永远等不到下一帧。
         //
@@ -665,25 +790,33 @@ impl<V: View> HostWindow<V> {
         // 早先是照样往下走，于是每帧产出三连错（resize 重试 / 后缓冲下标越界 /
         // present 失败），而 DComp 视角下是「一个 Present 不出来的 visual」——
         // 症状就是「窗口一直闪 + 错误刷屏」。
-        self.swap_state = self.sync_swapchain();
+        // 设备如果在**别的窗口**那边被重建过，本窗口的交换链与目标都已失效 ——
+        // 先按新设备重建本链，再走 resize。
+        if self.seen_generation != shared.generation {
+            if let Err(e) = self.rebuild_chain(shared) {
+                eprintln!("[zephyra-d3d12] 重建本窗口交换链失败（{e}）");
+                return (self.empty_frame(), None);
+            }
+        }
+        self.swap_state = self.sync_swapchain(shared);
         let dead = self.chain.device_dead();
         if !should_draw_frame(self.swap_state, dead) {
             // ⚠ 只有**设备真的死了**才报「设备不可用」。resize 暂时失败时设备还活着，
             // 那条路径唯一该响的是 `sync_swapchain` 里的 trace 行（它每秒可能来几十
             // 次，不该按错误报）。
             if dead {
-                self.report_device_dead_once();
+                self.report_device_dead_once(shared);
                 // 设备重置后**按间隔重试**：驱动通常几百毫秒内恢复，重试成功就接着画。
                 //
                 // ⚠ 没有这一步的话，设备一旦在空闲时挂掉，宿主就**永久**停止绘制 ——
                 // 用户看到的正是「点哪都没反应」。注意那不是点击分派坏了：
                 // `window_event` 仍无条件 `sync_input()`，点击一直在处理，只是画面
                 // 不再更新，于是「看着没反应」。
-                self.try_recover_device();
+                self.try_recover_device(shared);
             }
             return (self.empty_frame(), None);
         }
-        self.drain_debug();
+        drain_debug_shared(shared);
 
         let update_started = frame_started.map(|_| std::time::Instant::now());
         let theme = self.theme;
@@ -700,8 +833,8 @@ impl<V: View> HostWindow<V> {
             // 经 `include_str!`），零运行时准备成本，且 `OnceLock` 只解析一次。
             // 应用自己的图标库应当自己建一个 `IconSet` 再挂进来 —— 那是宿主的事，
             // 与纹理句柄同一层。
-            let ctx =
-                Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
+            let ctx = Context::with_engine(theme, &shared.engine)
+                .with_icons(zephyra_core::icon::builtin());
             let element = self.view.view(&ctx);
             let size = self.client_size();
 
@@ -716,8 +849,8 @@ impl<V: View> HostWindow<V> {
             // 判据是 `atlas_revision()` 而不是「已缓存字形数」：加了 LRU 淘汰之后
             // 「数量不变 ⇒ 内容不变」不成立 —— 淘汰一个再放进一个，数量不变而纹理已
             // 整体重排。
-            let revision_now = self.engine.borrow().atlas_revision();
-            if revision_now != self.atlas_revision_uploaded {
+            let revision_now = shared.engine.borrow().atlas_revision();
+            if revision_now != shared.atlas_revision_uploaded {
                 self.cache.invalidate();
             }
 
@@ -742,7 +875,7 @@ impl<V: View> HostWindow<V> {
         let damage = if capture { Damage::Full } else { damage };
         let render_started = frame_started.map(|_| std::time::Instant::now());
         let (report, captured) = if redrawn {
-            self.render_pass(damage, capture)
+            self.render_pass(shared, damage, capture)
         } else {
             (RenderReport::default(), None)
         };
@@ -777,7 +910,7 @@ impl<V: View> HostWindow<V> {
                 // 字形没出来」这件事一定能在这一行里看到（是 `GLYPH` 一个都没有，
                 // 还是有一堆但采样不出来）。这两者的排查方向完全不同。
                 let mut kinds = [0usize; 3];
-                for c in self.list_kind_histogram() {
+                for c in self.list_kind_histogram(&shared.textures) {
                     kinds[c] += 1;
                 }
                 eprintln!(
@@ -790,7 +923,7 @@ impl<V: View> HostWindow<V> {
                     kinds[1],
                     kinds[2],
                     report.image_batches,
-                    self.engine.borrow().atlas_stats().glyphs,
+                    shared.engine.borrow().atlas_stats().glyphs,
                     report.vertex_bytes,
                     self.client_size(),
                     self.chain.size(),
@@ -847,7 +980,12 @@ impl<V: View> HostWindow<V> {
     /// 「先上传、等一帧、再画」会在中间那帧读到**已销毁**的纹理资源。
     ///
     /// 因此这里把两件事记进**同一条命令列表**：要么都成，要么都不成。
-    fn render_pass(&mut self, damage: Damage, capture: bool) -> (RenderReport, Option<Vec<u8>>) {
+    fn render_pass(
+        &mut self,
+        shared: &mut Shared,
+        damage: Damage,
+        capture: bool,
+    ) -> (RenderReport, Option<Vec<u8>>) {
         // # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
         //
         // flip model（`CreateSwapChainForComposition` 恒为 FLIP_SEQUENTIAL）的
@@ -870,31 +1008,31 @@ impl<V: View> HostWindow<V> {
         } else {
             Damage::Full
         };
-        if let Err(e) = self.gpu.begin_frame() {
+        if let Err(e) = shared.gpu.begin_frame() {
             eprintln!("[zephyra-d3d12] 开帧失败: {e}");
-            self.drain_debug();
+            drain_debug_shared(shared);
             return (RenderReport::default(), None);
         }
 
         // 图集：只有**位图内容**变了才传。判据是 `atlas_revision()`，不是字形数 ——
         // 淘汰一个再进一个时字形数不变而纹理已整体重排，用数量当判据会让 GPU 一直
         // 抱着旧图集（画面上字全跑到别的位置）。每帧传 4MB 又会让稳态多几毫秒。
-        let revision_now = self.engine.borrow().atlas_revision();
-        if revision_now != self.atlas_revision_uploaded {
-            if let Err(e) = self
+        let revision_now = shared.engine.borrow().atlas_revision();
+        if revision_now != shared.atlas_revision_uploaded {
+            if let Err(e) = shared
                 .renderer
-                .record_upload_atlas(self.gpu.list(), self.engine.borrow().atlas().pixels())
+                .record_upload_atlas(shared.gpu.list(), shared.engine.borrow().atlas().pixels())
             {
                 eprintln!("[zephyra-d3d12] 图集上传失败（{e}），本帧文字可能不显示");
             }
-            self.atlas_revision_uploaded = revision_now;
+            shared.atlas_revision_uploaded = revision_now;
         }
 
         // 后缓冲在每帧开头都是 `PRESENT`。不转就没有渲染目标 —— 且**不报任何错**。
         //
         // MSAA 开启时它**仍然要转**：它是 resolve 的目标，而 D3D12 不为 resolve
         // 自动转换状态。所以这一段与 MSAA 无关，始终执行。
-        if let Err(e) = self.chain.barrier_to_render_target(self.gpu.list()) {
+        if let Err(e) = self.chain.barrier_to_render_target(shared.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转 RENDER_TARGET 失败: {e}");
             return (RenderReport::default(), None);
         }
@@ -936,17 +1074,21 @@ impl<V: View> HostWindow<V> {
             .msaa_tex()
             .cloned()
             .or_else(|| self.chain.back_buffer().ok());
-        let report = match self.renderer.record(RenderCtx {
-            device: &self.gpu.device,
-            list: self.gpu.list(),
-            rtv,
-            display_list: self.cache.list(),
-            damage,
-            size: self.client_size(),
-            clear,
-            textures: &self.textures,
-            rt: rt.as_ref(),
-        }) {
+        let size = self.client_size();
+        let report = match shared.renderer.record_with(
+            &mut self.targets,
+            RenderCtx {
+                device: &shared.gpu.device,
+                list: shared.gpu.list(),
+                rtv,
+                display_list: self.cache.list(),
+                damage,
+                size,
+                clear,
+                textures: &shared.textures,
+                rt: rt.as_ref(),
+            },
+        ) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[zephyra-d3d12] 记录绘制命令失败: {e}");
@@ -959,14 +1101,14 @@ impl<V: View> HostWindow<V> {
         // 旧内容」或「全黑」，且零 HRESULT 错误。顺序也不能反：先转回 PRESENT
         // 再 resolve 是非法的（resolve 目标必须在 RENDER_TARGET）。
         if self.chain.samples() > 1 {
-            if let Err(e) = self.chain.resolve_msaa(self.gpu.list()) {
+            if let Err(e) = self.chain.resolve_msaa(shared.gpu.list()) {
                 eprintln!("[zephyra-d3d12] MSAA 解析失败: {e}");
             }
         }
         let staging = if capture {
             match self
                 .chain
-                .record_readback(&self.gpu.device, self.gpu.list())
+                .record_readback(&shared.gpu.device, shared.gpu.list())
             {
                 Ok(staging) => Some(staging),
                 Err(e) => {
@@ -977,15 +1119,15 @@ impl<V: View> HostWindow<V> {
         } else {
             None
         };
-        if let Err(e) = self.chain.barrier_to_present(self.gpu.list()) {
+        if let Err(e) = self.chain.barrier_to_present(shared.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转回 PRESENT 失败: {e}");
         }
-        if let Err(e) = self.gpu.submit() {
+        if let Err(e) = shared.gpu.submit() {
             eprintln!("[zephyra-d3d12] 提交失败: {e}");
             return (report, None);
         }
         let captured = if let Some(staging) = staging {
-            if let Err(e) = self.gpu.wait_gpu() {
+            if let Err(e) = shared.gpu.wait_gpu() {
                 eprintln!("[zephyra-d3d12] 等待截图读回失败: {e}");
                 None
             } else {
@@ -1069,24 +1211,27 @@ impl<V: View> HostWindow<V> {
             return Ok(());
         };
         let me = HostPtr(self as *mut Self);
-        zephyra_platform_win::set_render_hook(Arc::new(move || {
-            // ⚠ 这一行不是废代码。Rust 2021 的 `move` 闭包**按字段**捕获：
-            // 下面要用 `me.0`，编译器就会只把那个裸指针字段搬进闭包 ——
-            // 于是 `HostPtr` 上那两条 `unsafe impl Send/Sync` **根本没被用上**，
-            // 整个包装白写，编译直接报 E0277。
-            // 把整个 `me` 重新绑一次，捕获的就变成 `me` 本身。
-            let me = &me;
-            // SAFETY：见上面「SAFETY」三条。这三段是同一个不变量的三个侧面。
-            let host = unsafe { &mut *me.0 };
-            host.dirty = false;
-            let f = host.frame();
-            if f.redrawn {
-                host.present();
-            }
-            // 返回 `true` = 这一帧确实画了。没画也无所谓 —— 调用方只看
-            // 「有没有跳过」，那由 `IN_HOOK` 决定，不是这里。
-            true
-        }));
+        zephyra_platform_win::set_render_hook(
+            hwnd,
+            Arc::new(move || {
+                // ⚠ 这一行不是废代码。Rust 2021 的 `move` 闭包**按字段**捕获：
+                // 下面要用 `me.0`，编译器就会只把那个裸指针字段搬进闭包 ——
+                // 于是 `HostPtr` 上那两条 `unsafe impl Send/Sync` **根本没被用上**，
+                // 整个包装白写，编译直接报 E0277。
+                // 把整个 `me` 重新绑一次，捕获的就变成 `me` 本身。
+                let me = &me;
+                // SAFETY：见上面「SAFETY」三条。这三段是同一个不变量的三个侧面。
+                let host = unsafe { &mut *me.0 };
+                host.dirty = false;
+                let f = host.frame();
+                if f.redrawn {
+                    host.present();
+                }
+                // 返回 `true` = 这一帧确实画了。没画也无所谓 —— 调用方只看
+                // 「有没有跳过」，那由 `IN_HOOK` 决定，不是这里。
+                true
+            }),
+        );
         zephyra_platform_win::install_live_resize(hwnd)
     }
 
@@ -1208,10 +1353,18 @@ impl<V: View> HostWindow<V> {
     /// **不含 resize** —— 见 `sync_swapchain`：resize 必须发生在**绘制之前**，
     /// 否则新建的后缓冲要到下一次 `frame()` 才有内容，而那一次可能永远不会来。
     pub fn present(&mut self) {
+        let shared_arc = self.shared.clone();
+        let mut guard = lock_shared(&shared_arc);
+        let shared = &mut *guard;
+        // 设备如果在**别的窗口**那边被重建过，本窗口的交换链与目标都已失效 ——
+        // 先按新设备重建本链，再 present。
+        if self.seen_generation != shared.generation && self.rebuild_chain(shared).is_err() {
+            return;
+        }
         // 设备已死时**一个 API 都不调**。每次拖动/恢复都重试 present，
         // 在 DComp 看来就是反复推一个无效 visual ⇒ 闪。
         if self.chain.device_dead() {
-            self.report_device_dead_once();
+            self.report_device_dead_once(shared);
             return;
         }
         // 新交换链第一次 present 之前把 GPU 排空。
@@ -1223,11 +1376,11 @@ impl<V: View> HostWindow<V> {
         if self.chain.take_first_present_flush() {
             // 等不到也不阻断 present：这是消闪，不是正确性前提。真在这儿死等，
             // 症状会变成「UI 静止不变」—— 比黑一闪难查得多。
-            let _ = self.gpu.wait_gpu();
+            let _ = shared.gpu.wait_gpu();
         }
         if let Err(e) = self.chain.present(1) {
             eprintln!("[zephyra-d3d12] present 失败: {e}");
-            self.drain_debug();
+            drain_debug_shared(shared);
         }
     }
 
@@ -1238,7 +1391,7 @@ impl<V: View> HostWindow<V> {
     /// 早先是每帧三条错误（resize / 后缓冲越界 / present），拖动期间一秒几十条，
     /// 把真正有用的信息全埋掉 —— 用户看到的就是一片刷屏。而原因码要
     /// `GetDeviceRemovedReason()` 才拿得到，那才是「该采取什么措施」的答案。
-    fn report_device_dead_once(&mut self) {
+    fn report_device_dead_once(&mut self, shared: &Shared) {
         if self.reported_device_dead {
             return;
         }
@@ -1274,7 +1427,7 @@ impl<V: View> HostWindow<V> {
             // 但也不能沉默：静默的黑屏比响一声的黑屏难查得多。
             eprintln!("[zephyra-d3d12] 设备被标记为不可用，但拿不到原因码");
         }
-        self.drain_debug();
+        drain_debug_shared(shared);
         // ⚠ 上面那几行 `[d3d12 debug] ID=... severity=...: <描述>` 就是**唯一的
         // 一手证据**，请把它们连同本条日志一起贴回来 —— 它们会直接点名是哪个 API
         // 在哪个资源上出的问题（典型：`ID=527` = 屏障的 Before 状态与实际不符）。
@@ -1301,7 +1454,7 @@ impl<V: View> HostWindow<V> {
     /// 中途任何一步失败都直接 `return Err`，此时 `self` 一个字都没改 —— 旧的链、
     /// 设备、渲染器都还在，下一轮重试的起点是干净的。反过来先拆旧的再建新的，
     /// 一旦中途失败就留下一个「旧的没了、新的没建起来」的空壳，窗口彻底不显示。
-    fn rebuild_gpu(&mut self) -> Result<(), String> {
+    fn rebuild_gpu(&mut self, shared: &mut Shared) -> Result<(), String> {
         let (width, height) = self.client_size();
         let gpu = Gpu::new().map_err(|e| format!("创建 D3D12 设备: {e}"))?;
         // 后缓冲格式必须与 PSO 的 `RTVFormats[0]` 一致（`R8G8B8A8`）—— 见
@@ -1336,18 +1489,68 @@ impl<V: View> HostWindow<V> {
             chain.samples(),
         )
         .map_err(|e| format!("建根签名 / PSO / 描述符堆: {e}"))?;
+        // 本窗口的渲染目标也一起重建 —— 它引用的设备马上要被替换。
+        let targets =
+            WindowTargets::new(&gpu.device).map_err(|e| format!("重建本窗口渲染目标: {e}"))?;
         // 全部成功才替换。赋值顺序按「谁引用谁」：先放引用方（DComp），再放被引用的
         // （chain），最后是设备与渲染器 —— 与字段声明顺序**相反**，因为这里是部分
         // 重建而不是整体析构。
+        shared.gpu = gpu;
+        shared.renderer = renderer;
+        // 旧纹理属于旧设备，必须清掉（槽位也失效了）。
+        shared.textures = TextureTable::new();
+        shared.atlas_revision_uploaded = 0;
+        // 代次 +1：其它窗口在自己的下一帧看到它，就会重建各自的交换链。
+        shared.generation = shared.generation.wrapping_add(1);
         self.compositor = compositor;
         self.visual = visual;
         self.chain = chain;
-        self.gpu = gpu;
-        self.renderer = renderer;
+        self.targets = targets;
+        self.seen_generation = shared.generation;
         // 保留树是旧视口的、图集纹理是空的（新渲染器）—— 强制重来。
         self.cache = FrameCache::new();
-        self.textures = TextureTable::new();
-        self.atlas_revision_uploaded = 0;
+        self.reported_device_dead = false;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// 只重建**本窗口**的交换链与渲染目标（共享设备仍有效）。
+    ///
+    /// 触发条件：别的窗口（或另一个线程上的 `WindowSet`）重建了设备，
+    /// `shared.generation` 变了。此时共享的 `Gpu` / `Renderer` 是新的，而本窗口的
+    /// `chain` / `targets` 还指着旧设备上的资源。继续用旧链只会每帧失败，且失败点
+    /// 各不相同 —— 所以必须重建。
+    fn rebuild_chain(&mut self, shared: &Shared) -> Result<(), String> {
+        let (width, height) = self.client_size();
+        let desc = SwapchainDesc {
+            buffer_count: 2,
+            format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
+        };
+        let chain = Swapchain::new(
+            &shared.gpu,
+            (width, height),
+            &desc,
+            crate::swapchain::msaa_samples(),
+        )
+        .map_err(|e| format!("重建 composition swapchain: {e}"))?;
+        let (compositor, visual) = match hwnd_of(self.window.as_ref()) {
+            Some(h) => match attach_visual(HWND(h as *mut _), &shared.gpu, &chain) {
+                Ok((c, v)) => (Some(c), Some(v)),
+                Err(e) => {
+                    eprintln!("[zephyra-d3d12] ⚠ DComp 建树失败（{e}）");
+                    (None, None)
+                }
+            },
+            None => (None, None),
+        };
+        let targets = WindowTargets::new(&shared.gpu.device)
+            .map_err(|e| format!("重建本窗口渲染目标: {e}"))?;
+        self.compositor = compositor;
+        self.visual = visual;
+        self.chain = chain;
+        self.targets = targets;
+        self.seen_generation = shared.generation;
+        self.cache = FrameCache::new();
         self.reported_device_dead = false;
         self.dirty = true;
         Ok(())
@@ -1359,7 +1562,7 @@ impl<V: View> HostWindow<V> {
     ///
     /// 恢复要重建整条 GPU 栈，而拖动期间 `frame()` 每秒被叫几十次 —— 不限流就是
     /// 每秒几十次重建，那比「画面冻结」更糟。
-    fn try_recover_device(&mut self) {
+    fn try_recover_device(&mut self, shared: &mut Shared) {
         let now = std::time::Instant::now();
         let due = match self.last_recovery_attempt {
             None => true,
@@ -1369,7 +1572,7 @@ impl<V: View> HostWindow<V> {
             return;
         }
         self.last_recovery_attempt = Some(now);
-        match self.rebuild_gpu() {
+        match self.rebuild_gpu(shared) {
             Ok(()) => {
                 eprintln!("[zephyra-d3d12] 设备已恢复：GPU 栈重建成功，继续绘制");
             }
@@ -1416,7 +1619,7 @@ impl<V: View> HostWindow<V> {
     ///
     /// 跳过本帧而不是硬 present，另一头是「不 present 就不闪」：flip model 下
     /// DComp 会继续显示上一次成功 present 的内容，等下一次成功 resize 再更新。
-    fn sync_swapchain(&mut self) -> SwapState {
+    fn sync_swapchain(&mut self, shared: &mut Shared) -> SwapState {
         let (w, h) = self.client_size();
 
         // ⚠ 零尺寸 = 窗口被最小化。此时**什么都不做、本帧跳过**。
@@ -1440,7 +1643,7 @@ impl<V: View> HostWindow<V> {
         // 只有窗口大到装不下时才重建整条链，且一次给 25% 余量。详见
         // [`Swapchain::resize`] 的文档（含为什么本机不能用 `ResizeBuffers`）。
         let before = self.chain.size();
-        if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
+        if let Err(e) = self.chain.resize(&shared.gpu, (w, h)) {
             self.resize_failures = self.resize_failures.saturating_add(1);
             eprintln!(
                 "[zephyra-d3d12] 调整交换链容量到 {w}×{h} 失败（第 {} 次）：{e}",
@@ -1510,10 +1713,10 @@ impl<V: View> HostWindow<V> {
     /// 把上一帧的顶点流按 `kind` 归类（0 矩形 / 1 字形 / 2 图像），逐个返回。
     ///
     /// 只给 `trace` 用 —— 它要重跑一次 `quad::expand`，不该进稳态路径。
-    fn list_kind_histogram(&self) -> Vec<usize> {
+    fn list_kind_histogram(&self, textures: &TextureTable) -> Vec<usize> {
         use zephyra_fx::quad::{self, kind};
         let size = self.chain.size();
-        let batch = quad::expand(self.cache.list(), size, |n| self.textures.contains(n));
+        let batch = quad::expand(self.cache.list(), size, |n| textures.contains(n));
         batch
             .solid
             .iter()
@@ -1556,7 +1759,13 @@ impl<V: View> HostWindow<V> {
                 .pressed()
                 .or_else(|| self.activation.held())
                 .cloned(),
-            focused: self.focus.focused().cloned(),
+            // 视觉焦点 = 焦点环可见时才报告（鼠标点击设焦点但不画环，见
+            // `FocusState::is_visible`）。激活 / 无障碍另走 `self.focus.focused()`。
+            focused: if self.focus.is_visible() {
+                self.focus.focused().cloned()
+            } else {
+                None
+            },
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -1900,25 +2109,21 @@ impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     }
 }
 
-impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V> {
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
-        // 窗口在 `new_lenient` 里就建好了；这里补第一帧。
-        self.sync_input();
-        self.frame();
-        self.present();
-        // 拖边时逐帧跟随。**必须放在第一帧之后**：钩子里会 `frame()`，
-        // 而那时 `cache` 还是空的 —— 空树上跑一趟布局既是白费，也更容易
-        // 把「首帧就该建好的缓存」留到一个不对劲的时刻再建。
-        if let Err(e) = self.enable_live_resize() {
-            eprintln!("[zephyra-d3d12] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
-        }
+impl<V: View + 'static> WindowHost for HostWindow<V> {
+    fn key(&self) -> WindowKey {
+        self.window_key
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WEvent) {
+    fn winit_id(&self) -> Option<WindowId> {
+        Some(self.window.id())
+    }
+
+    fn handle_event(&mut self, event: WEvent) -> HostEventOutcome {
         match event {
             WEvent::CloseRequested => {
-                event_loop.exit();
-                return;
+                // 单窗口路径由 `ApplicationHandler` 退出事件循环；多窗口路径由
+                // `WindowSet` 只关这一个窗口。这里只把结论报上去。
+                return HostEventOutcome::Close;
             }
             WEvent::Resized(_) => {
                 // 只置脏，**不**在这里 resize：同一帧里「提交 + resize + 呈现」会打架。
@@ -1930,15 +2135,22 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
             }
             WEvent::CursorMoved { position, .. } => {
                 self.on_cursor_moved(position.x as f32, position.y as f32);
+                // `revision` 只在 hover/pressed **状态切换**时递增——拖拽中
+                // hover 不变，`route()` 不会置脏。不加这行，事件被送进队列
+                // 但没有任何一帧被泵起，视图永远看不到 Move（慢速拖动「卡住」）。
+                self.dirty = true;
             }
-            WEvent::MouseInput { state, .. } => match state {
-                ElementState::Pressed => {
-                    self.on_pointer_down();
+            WEvent::MouseInput { state, .. } => {
+                match state {
+                    ElementState::Pressed => {
+                        self.on_pointer_down();
+                    }
+                    ElementState::Released => {
+                        self.on_pointer_up();
+                    }
                 }
-                ElementState::Released => {
-                    self.on_pointer_up();
-                }
-            },
+                self.dirty = true;
+            }
             WEvent::ModifiersChanged(m) => {
                 self.translator.on_modifiers(m.state());
             }
@@ -2012,16 +2224,12 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
             _ => {}
         }
         self.sync_input();
+        HostEventOutcome::Continue
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn tick(&mut self) -> HostTick {
         // 桥的 poll 放在帧判定之前：注入的 hover/click 在**本帧**就参与命中
         // 测试与布局（与 D3D11 侧同一时序契约）。
-        //
-        // ⚠ 控制流要跟桥联动：本后端是**事件驱动**（静止时 `about_to_wait`
-        // 不被调，与 D3D11 的常驻重绘循环不同），而 TCP 数据不会唤醒 Wait 模式。
-        // 所以有客户端时切 Poll；没有客户端但桥已开启时以低频 WaitUntil 重试 accept，
-        // 避免首个客户端断开后宿主永久睡眠。未启用桥时仍保留静止零开销。
         if let Some(mut b) = self.bridge.take() {
             b.poll(self);
             self.bridge = Some(b);
@@ -2037,12 +2245,25 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         // DComp 路径 `FLIP_SEQUENTIAL`），`Present` 之后后缓冲内容未定义 ——
         // 不画就 present 会把未定义内容推上屏（通常是黑，或上一次的帧）。
         //
-        // ⚠ 这里**只**在画完之后 `present`，事件回调里不 present：那会在第一帧之前就
-        // 呈现一个从未被写过的交换链（屏幕上一块纯白），也会在拖拽缩放时把
-        // 「还没重建完」的状态推上屏。
-        //
         // ⚠ 设备已死时**无条件**跑一帧：`dirty` 可能已经被清掉（设备是在
         // `present()` 里死的），那样就再没有 `frame()` 可跑，恢复代码永远不执行。
+        //
+        // ⚠ 「动画播放中」由**视图**回答：保留式 UI 不常驻重画，动画只在事件
+        // 到来时推进一帧，然后循环睡死 —— 中间整段弹簧曲线看不到。
+        // 视图说「还要帧」时，这里**推一次时钟**（`sync_input` → `on_input` →
+        // 动画 `advance`）再标脏；顺手再问一次，若这一拍刚好收敛就把控制流
+        // 交还给 `Wait`（否则会多 Poll 一轮、多画一张终态帧）。
+        //
+        // ⚠ 只标脏不推时钟是不够的：本后端的 `sync_input()` 只在
+        // `handle_event` 末尾调用，`frame()` 自己不推。那样泵出来的是一张
+        // **冻住的旧画面**，循环空转却毫无变化（比不动更糟：烧 GPU 还看不见动画）。
+        let mut animating = self.view.wants_frames();
+        if animating {
+            self.sync_input();
+            self.dirty = true;
+            animating = self.view.wants_frames();
+        }
+        let mut tick = HostTick::default();
         if self.dirty
             || self.chain.device_dead()
             || self.profiler.is_running()
@@ -2051,32 +2272,133 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
             let f = self.frame();
             if f.redrawn {
                 self.present();
+                tick.painted = true;
             }
         }
-        // 设备死了就周期性唤醒 —— 恢复尝试在 `frame()` 里，而空闲时事件循环不会
-        // 自己醒。不这么做，设备在空闲时挂掉就永远等不到下一次 `about_to_wait`，
-        // 于是「恢复代码永不执行」。
-        //
-        // 控制流在这里统一决定：桥有客户端时低延迟 Poll；桥空闲时 50ms 重试 accept，
-        // 因为 TCP 连接本身不会唤醒 `Wait`；未启用桥时仍然零开销等待。
-        if self.chain.device_dead() {
-            let next = std::time::Instant::now() + DEVICE_RECOVERY_RETRY_INTERVAL;
-            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next));
-        } else if self
+        tick.device_dead = self.chain.device_dead();
+        tick.wants_poll = self
             .bridge
             .as_ref()
-            .is_some_and(zephyra_fx::bridge::DebugBridge::has_client)
-        {
+            .is_some_and(zephyra_fx::bridge::DebugBridge::has_client);
+        tick.busy = self.dirty || self.profiler.is_running() || self.uia_needs_frame() || animating;
+        if tick.device_dead {
+            tick.wake_at = Some(std::time::Instant::now() + DEVICE_RECOVERY_RETRY_INTERVAL);
+        } else if self.bridge.is_some() && !tick.wants_poll && !tick.busy {
+            // 桥空闲但还开着：低频重试 accept（TCP 连接不会唤醒 Wait 模式）。
+            tick.wake_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(50));
+        }
+        tick
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        // 窗口在构造函数里就建好了；这里补第一帧。
+        self.sync_input();
+        self.frame();
+        self.present();
+        // 拖边时逐帧跟随。**必须放在第一帧之后**：钩子里会 `frame()`，
+        // 而那时 `cache` 还是空的 —— 空树上跑一趟布局既是白费，也更容易
+        // 把「首帧就该建好的缓存」留到一个不对劲的时刻再建。
+        if let Err(e) = self.enable_live_resize() {
+            eprintln!("[zephyra-d3d12] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+        }
+        Ok(())
+    }
+
+    fn set_theme(&mut self, variant: zephyra_core::theme::ThemeVariant) {
+        HostWindow::set_theme(self, variant);
+    }
+
+    fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        HostWindow::set_styler(self, styler);
+    }
+
+    fn set_title(&mut self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    fn request_close(&mut self) {
+        // 有应用侧句柄就投命令（`WindowSet` 下一轮 drain 时关窗口）；
+        // 单窗口兼容路径没有句柄，调用方自己决定怎么退出。
+        if let Some(handle) = &self.handle {
+            handle.close();
+        }
+    }
+
+    fn teardown(&mut self) {
+        // 摘掉窗口过程子类与渲染钩子：钩子闭包持有指向本宿主的裸指针，
+        // 宿主一析构，下一次 `WM_SIZE` 就是 use-after-free。
+        if let Some(hwnd) = hwnd_of(self.window.as_ref()) {
+            zephyra_platform_win::restore_live_resize(hwnd);
+        }
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// D3D12 后端的 [`Backend`] 实现。
+///
+/// 只是把 [`WindowSpec`] 解析成 [`zephyra_app_config::WindowOpts`] 再交给
+/// [`HostWindow::new_lenient_opts`]。共享 GPU 栈由 `shared_stack()` 单例保证 ——
+/// 每个窗口都拿到同一个 `Arc<Mutex<Shared>>`。
+#[derive(Default)]
+pub struct D3d12Backend;
+
+impl D3d12Backend {
+    /// 建一个后端入口（共享栈在第一个窗口创建时才真正初始化）。
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Backend for D3d12Backend {
+    type Window<V: View + 'static> = HostWindow<V>;
+
+    fn create<V: View + 'static>(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        view: V,
+        spec: &WindowSpec,
+        handle: WindowHandle,
+    ) -> Result<Self::Window<V>, String> {
+        let config = zephyra_app_config::load_from_current_dir();
+        let opts = spec.resolve(&config);
+        let size = opts.size.unwrap_or(DEFAULT_WINDOW_SIZE);
+        let mut host = HostWindow::new_lenient_opts(event_loop, view, size, opts);
+        host.window_key = handle.key();
+        host.handle = Some(handle);
+        Ok(host)
+    }
+}
+
+impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V> {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        let _ = self.start();
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WEvent) {
+        if self.handle_event(event) == HostEventOutcome::Close {
+            event_loop.exit();
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let tick = self.tick();
+        // 单窗口兼容路径：自己决定控制流。多窗口时这个决定上提到 `WindowSet`
+        // （N 个窗口各自设控制流会互相覆盖，最后一个说话的决定整个循环）。
+        if tick.device_dead {
+            let next = std::time::Instant::now() + DEVICE_RECOVERY_RETRY_INTERVAL;
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next));
+        } else if tick.wants_poll {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        } else if self.bridge.is_some() {
-            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
-                std::time::Instant::now() + std::time::Duration::from_millis(50),
-            ));
-        } else if self.uia_needs_frame() {
-            // 无障碍侧还有活（动作排队 / 闩住未松 / 欠一帧重画）⇒ 保持唤醒。
-            //
-            // 用 `Poll` 而不是 `WaitUntil(now)`：后者在时间点到达前会睡，而
-            // 「欠一帧」这种事没有时间点 —— 它就是「下一帧」。
+        } else if let Some(wake) = tick.wake_at {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(wake));
+        } else if tick.busy {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         } else {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);

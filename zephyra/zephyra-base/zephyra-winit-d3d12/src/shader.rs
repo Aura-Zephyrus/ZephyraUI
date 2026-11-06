@@ -67,7 +67,7 @@ pub const BUILD_COMMAND_HINT: &str = "fxc /nologo /T {vs_5_0|ps_5_0} /E <Entry>"
 /// 决定**，放在一起反而会让两边互相牵制。
 ///
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
-pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
+pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
     (
         "PSOverlay",
@@ -142,6 +142,19 @@ pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
         "PSBackdropBlur",
         include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
     ),
+    (
+        "PSHollowShadow",
+        include_bytes!("../shaders/zephyra.PSHollowShadow.ps.bin"),
+    ),
+    (
+        "PSHighlight",
+        include_bytes!("../shaders/zephyra.PSHighlight.ps.bin"),
+    ),
+    (
+        "PSInnerShadow",
+        include_bytes!("../shaders/zephyra.PSInnerShadow.ps.bin"),
+    ),
+    ("PSLens", include_bytes!("../shaders/zephyra.PSLens.ps.bin")),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
@@ -184,6 +197,17 @@ pub const PS_REFRACTION: usize = 18;
 ///
 /// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] **互斥**：一条 pass 只走其中之一。
 pub const PS_BACKDROP_BLUR: usize = 19;
+/// 挖洞外投影合成 —— 影子（已模糊）染色后**挖掉元素内侧**（装饰专用）。
+pub const PS_HOLLOW_SHADOW: usize = 20;
+/// 镜面高光 overlay —— 纯 SDF，零采样；Plus 混合槽。
+pub const PS_HIGHLIGHT: usize = 21;
+/// 内阴影 overlay —— 纯 SDF，零采样；SrcOver，画在高光之后（层序契约）。
+pub const PS_INNER_SHADOW: usize = 22;
+/// 透镜（原版 `lens()`）合成 —— 读 `g_dst` + `circleMap` 位移剖面 + 7 通道分色。
+///
+/// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] / [`PS_BACKDROP_BLUR`] **互斥**：
+/// 一条 pass 只走其中之一。
+pub const PS_LENS: usize = 23;
 
 /// D3D12 那边不再有单一 `PS_BYTECODE`：见 [`PS_VARIANTS`]。
 ///

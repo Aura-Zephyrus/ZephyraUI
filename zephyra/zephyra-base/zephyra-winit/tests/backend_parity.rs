@@ -74,6 +74,7 @@ fn scene_with(blend: BlendMode, fg: Color) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -89,6 +90,7 @@ fn scene_with(blend: BlendMode, fg: Color) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();

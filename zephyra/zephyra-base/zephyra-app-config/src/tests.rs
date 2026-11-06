@@ -38,12 +38,111 @@ fn window_opts_override_the_main_window_default() {
     config.window.transparent = true;
 
     let follow = WindowOpts::default();
-    assert!(follow.transparent.unwrap_or(config.window.transparent));
+    assert!(follow.resolve_transparent(&config));
 
     let explicit = WindowOpts {
         transparent: Some(false),
+        ..Default::default()
     };
-    assert!(!explicit.transparent.unwrap_or(config.window.transparent));
+    assert!(!explicit.resolve_transparent(&config));
+}
+
+/// `windows.<name>` 只写它要改的字段，其余继承 `window` 节。
+#[test]
+fn named_profile_inherits_unspecified_fields() {
+    let root = test_root("profile-inherit");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join(CONFIG_FILE),
+        r#"{
+            "window": { "frameless": true, "transparent": false },
+            "windows": { "inspector": { "title": "Inspector", "width": 420, "height": 600 } }
+        }"#,
+    )
+    .unwrap();
+
+    let config = load_from_project_root(&root).unwrap();
+    let opts = WindowOpts::named(&config, "inspector");
+
+    assert_eq!(opts.title.as_deref(), Some("Inspector"));
+    assert_eq!(opts.size, Some((420, 600)));
+    // 没写的字段继承主窗口节。
+    assert!(opts.resolve_frameless(&config));
+    assert!(!opts.resolve_transparent(&config));
+    assert!(
+        opts.resolve_resizable(&config),
+        "未写 resizable ⇒ 默认可调整"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 命名定义里显式写的字段优先于 `window` 节。
+#[test]
+fn named_profile_overrides_main_window_fields() {
+    let root = test_root("profile-override");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join(CONFIG_FILE),
+        r#"{
+            "window": { "frameless": false, "transparent": false },
+            "windows": { "hud": { "frameless": true, "transparent": true, "always_on_top": true, "tool_window": true } }
+        }"#,
+    )
+    .unwrap();
+
+    let config = load_from_project_root(&root).unwrap();
+    let opts = WindowOpts::named(&config, "hud");
+
+    assert!(opts.resolve_frameless(&config));
+    assert!(opts.resolve_transparent(&config));
+    assert!(opts.resolve_always_on_top(&config));
+    assert!(opts.resolve_tool_window(&config));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 未知名字回退到主窗口节，但保留名字（让拼错在日志里看得见）。
+#[test]
+fn unknown_named_profile_falls_back_to_main_window() {
+    let mut config = AppConfig::default();
+    config.window.frameless = true;
+
+    let opts = WindowOpts::named(&config, "typo");
+
+    assert_eq!(opts.name.as_deref(), Some("typo"));
+    assert!(opts.resolve_frameless(&config));
+}
+
+/// `WindowOpts::main` 与 `WindowOpts::default()` 对同一份配置给出同样的结果。
+#[test]
+fn main_opts_match_default_resolution() {
+    let mut config = AppConfig::default();
+    config.window.frameless = true;
+    config.window.transparent = false;
+
+    let main = WindowOpts::main(&config);
+    let default = WindowOpts::default();
+
+    assert_eq!(
+        main.resolve_frameless(&config),
+        default.resolve_frameless(&config)
+    );
+    assert_eq!(
+        main.resolve_transparent(&config),
+        default.resolve_transparent(&config)
+    );
+}
+
+/// 透明必然无边框：这是三个后端共用的判据，不能只在某一层做。
+#[test]
+fn transparent_implies_frameless() {
+    let config = AppConfig::default();
+    let opts = WindowOpts {
+        transparent: Some(true),
+        frameless: Some(false),
+        ..Default::default()
+    };
+
+    assert!(opts.resolve_frameless(&config));
 }
 
 #[test]

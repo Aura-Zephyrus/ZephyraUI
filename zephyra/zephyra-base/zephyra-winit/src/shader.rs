@@ -81,7 +81,7 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// `PSMain` 是默认路径（系数可表达模式走固定功能混合方程，PS 只算源色）；
 /// 紧随其后的 14 个是可分离 / 非可分离混合模式的合成变体（E4.2 / E4.3）。
 /// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
-pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
+pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
     (
         "PSOverlay",
@@ -156,6 +156,19 @@ pub const PS_VARIANTS: [(&str, &[u8]); 20] = [
         "PSBackdropBlur",
         include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
     ),
+    (
+        "PSHollowShadow",
+        include_bytes!("../shaders/zephyra.PSHollowShadow.ps.bin"),
+    ),
+    (
+        "PSHighlight",
+        include_bytes!("../shaders/zephyra.PSHighlight.ps.bin"),
+    ),
+    (
+        "PSInnerShadow",
+        include_bytes!("../shaders/zephyra.PSInnerShadow.ps.bin"),
+    ),
+    ("PSLens", include_bytes!("../shaders/zephyra.PSLens.ps.bin")),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体。
@@ -199,6 +212,22 @@ pub const PS_REFRACTION: usize = 18;
 ///
 /// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] **互斥**：一条 pass 只走其中之一。
 pub const PS_BACKDROP_BLUR: usize = 19;
+/// 挖洞外投影合成 —— 影子（已模糊）染色后**挖掉元素内侧**。
+///
+/// 与 [`PS_COMPOSITE`] 同一条模糊管线（`blurs` / `tint` / `translate`），
+/// 只是最后一步的入口不同；只有装饰的外投影（`Decorations::shadow`）才走它，
+/// 普通 `DropShadow` 滤镜仍走 [`PS_COMPOSITE`]（它的消费者是不透明卡片，
+/// 内侧本来就被内容盖住）。
+pub const PS_HOLLOW_SHADOW: usize = 20;
+/// 镜面高光 overlay —— 纯 SDF，零采样；Plus 混合槽。
+pub const PS_HIGHLIGHT: usize = 21;
+/// 内阴影 overlay —— 纯 SDF，零采样；SrcOver，画在高光之后（层序契约）。
+pub const PS_INNER_SHADOW: usize = 22;
+/// 透镜（原版 `lens()`）合成 —— 读 `g_dst` + `circleMap` 位移剖面 + 7 通道分色。
+///
+/// ⚠ 与 [`PS_COMPOSITE`] / [`PS_REFRACTION`] / [`PS_BACKDROP_BLUR`] **互斥**：
+/// 一条 pass 只走其中之一。
+pub const PS_LENS: usize = 23;
 
 /// 顶点布局表：`(HLSL 语义名, 语义索引, DXGI 格式, 字节偏移)`。
 ///

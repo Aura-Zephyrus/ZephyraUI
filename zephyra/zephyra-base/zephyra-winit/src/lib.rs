@@ -40,6 +40,7 @@
 #![cfg(windows)]
 #![allow(unsafe_code)]
 
+use std::sync::{Arc, Mutex, OnceLock};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -55,6 +56,9 @@ use zephyra_core::input::{PointerEvent, PointerPhase, PointerSource, RoutedEvent
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_core::theme::Theme;
+use zephyra_window::{
+    Backend, HostEventOutcome, HostTick, WindowHandle, WindowHost, WindowKey, WindowSpec,
+};
 
 pub mod renderer;
 pub mod shader;
@@ -101,6 +105,43 @@ pub use zephyra_fx::Z_INDEX;
 /// （DComp 硬约束 #1）。Rust 按**声明顺序**释放字段，所以 `surface` 必须声明在
 /// `window` **之后** —— 否则窗口先死、DComp 树后死，绑定被拆除时窗口已不可见，
 /// 现象是关窗瞬间闪一下黑。
+/// 进程级共享的 D3D11 设备与立即上下文。
+///
+/// # 为什么共享
+///
+/// 一个进程一个设备：多窗口共用同一个 device/context，而 D3D11 的**立即上下文
+/// 不是线程安全的** —— 所有记录 / `Present` 都在同一把锁内串行（同步 `Map` 与
+/// 状态切换也在这把锁里，见各调用点）。
+///
+/// 每个窗口自己的 `Renderer` / `TextEngine` / `TextureTable` 仍归各自宿主：它们
+/// 与交换链和内容树一起是窗口私有的。这与 D3D12 那份把 `Renderer` 也放进共享栈
+/// 的做法不同 —— D3D12 的 PSO/图集是显式资源，共享收益更大；D3D11 的管线状态
+/// 由驱动隐式缓存，共享 `Renderer` 反而会把两套图集挤进同一份 SRV 表。
+struct SharedGpu {
+    gpu: Gpu,
+}
+
+// SAFETY: 只通过 `SHARED_GPU` 的 `Mutex` 访问；所有 D3D11 调用都在锁内串行。
+unsafe impl Send for SharedGpu {}
+
+static SHARED_GPU: OnceLock<Arc<Mutex<SharedGpu>>> = OnceLock::new();
+
+/// 取（必要时建）进程级共享设备。
+fn shared_gpu() -> Arc<Mutex<SharedGpu>> {
+    SHARED_GPU
+        .get_or_init(|| {
+            Arc::new(Mutex::new(SharedGpu {
+                gpu: Gpu::new().expect("创建 D3D11 设备：需要可用的 GPU"),
+            }))
+        })
+        .clone()
+}
+
+/// 锁住共享设备（锁中毒时继续用）。
+fn lock_gpu(shared: &Arc<Mutex<SharedGpu>>) -> std::sync::MutexGuard<'_, SharedGpu> {
+    shared.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub struct HostWindow<V: View> {
     /// 上一次 `sync_input` 的时刻 —— 动画时钟的唯一来源（`InputState::dt_ms`）。
     ///
@@ -109,11 +150,15 @@ pub struct HostWindow<V: View> {
     /// "距上一帧多久"可言，填 0 而不是猜一个值，否则首帧动画从中间开始。
     last_frame_at: Option<std::time::Instant>,
     window: std::sync::Arc<Window>,
-    /// D3D11 设备与上下文（唯一一份）。
-    gpu: Gpu,
+    /// D3D11 设备与上下文（进程级共享，多窗口同一份）。
+    gpu: Arc<Mutex<SharedGpu>>,
     /// 交换链 + 可选 DComp 树。
     surface: Surface,
     renderer: Renderer,
+    /// 本窗口的稳定标识（`WindowSet` 分发用）。
+    window_key: WindowKey,
+    /// 应用侧句柄（命令队列）。单窗口兼容路径下为 `None`。
+    handle: Option<WindowHandle>,
     view: V,
     theme: &'static Theme,
     /// 帧缓存 —— 保留树 + `DisplayList` + 上一帧视口，全在核心里。
@@ -223,12 +268,18 @@ impl<V: View> HostWindow<V> {
         opts: zephyra_app_config::WindowOpts,
     ) -> Self {
         let config = zephyra_app_config::load_from_current_dir();
-        let transparent = opts.transparent.unwrap_or(config.window.transparent);
-        let frameless = config.window.frameless || transparent;
+        let transparent = opts.resolve_transparent(&config);
+        let frameless = opts.resolve_frameless(&config);
+        let resizable = opts.resolve_resizable(&config);
+        let title = opts
+            .title
+            .clone()
+            .unwrap_or_else(|| "ZephyraUI".to_string());
         let attrs = Window::default_attributes()
-            .with_title("ZephyraUI")
+            .with_title(title)
             .with_decorations(!frameless)
-            .with_transparent(transparent);
+            .with_transparent(transparent)
+            .with_resizable(resizable);
         let window = std::sync::Arc::new(event_loop.create_window(attrs).expect("create_window"));
         // winit **默认不允许** IME（`Window::set_ime_allowed` 的文档原话），
         // 不开就永远收不到 `WindowEvent::Ime` —— 那条分支会变成死代码。
@@ -237,6 +288,9 @@ impl<V: View> HostWindow<V> {
         // `KeyboardInput`，于是组字中的快捷键本来也不生效。焦点系统还没建，
         // 所以先全局打开；有了焦点系统后改成随焦点开关。
         window.set_ime_allowed(true);
+        if opts.resolve_always_on_top(&config) {
+            window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+        }
         eprintln!(
             "[zephyra] 窗口装饰: {}",
             if frameless { "frameless" } else { "system" }
@@ -248,7 +302,9 @@ impl<V: View> HostWindow<V> {
         let (engine, note) = text::from_system_font();
         eprintln!("[zephyra] {note}");
 
-        let gpu = Gpu::new().expect("创建 D3D11 设备：需要可用的 GPU");
+        let gpu = shared_gpu();
+        let gpu_guard = lock_gpu(&gpu);
+        let gpu_ref = &gpu_guard.gpu;
 
         // DComp 走不走由 `ZEPHYRA_DCOMP` 决定。它只影响**要不要建 DComp 树**，
         // 两条路的调用方式完全一致（见 `surface` 模块文档），所以这里没有回退分支：
@@ -267,7 +323,7 @@ impl<V: View> HostWindow<V> {
         // 裸句柄存一份：UIA 的窗口过程子类要用它（`zephyra_uia::install`）。
         let raw_hwnd = hwnd.0 as isize;
 
-        let surface = match Surface::new(hwnd, &gpu, (size.width, size.height), use_dcomp) {
+        let surface = match Surface::new(hwnd, gpu_ref, (size.width, size.height), use_dcomp) {
             Ok(s) => s,
             Err(e) => {
                 if use_dcomp {
@@ -280,7 +336,8 @@ impl<V: View> HostWindow<V> {
                     // 建树失败不能静默：少了 DComp 特性窗口依然完全可用，为此启动失败
                     // 是本末倒置；但**必须让用户看得见**，否则无从排查。
                     eprintln!("[zephyra] DComp 不可用（{e}），退回普通 DXGI 交换链");
-                    Surface::new(hwnd, &gpu, (size.width, size.height), false).expect("普通交换链")
+                    Surface::new(hwnd, gpu_ref, (size.width, size.height), false)
+                        .expect("普通交换链")
                 } else {
                     panic!("创建交换链失败: {e}");
                 }
@@ -299,9 +356,10 @@ impl<V: View> HostWindow<V> {
                 ""
             }
         );
-        let renderer = Renderer::new(&gpu.device).expect("编译着色器 / 建管线");
+        let renderer = Renderer::new(&gpu_ref.device).expect("编译着色器 / 建管线");
         // 首帧就要上传图集（字体字形此刻还没打包，但纹理得先有内容）。
-        renderer.upload_atlas(&gpu.context, engine.atlas()).ok();
+        renderer.upload_atlas(&gpu_ref.context, engine.atlas()).ok();
+        drop(gpu_guard);
 
         let theme: &'static Theme = Box::leak(Box::new(Theme::dark()));
 
@@ -309,6 +367,8 @@ impl<V: View> HostWindow<V> {
             last_frame_at: None,
             window,
             gpu,
+            window_key: WindowKey::unspecified(),
+            handle: None,
             surface,
             renderer,
             view,
@@ -440,15 +500,12 @@ impl<V: View> HostWindow<V> {
         width: u32,
         height: u32,
     ) -> zephyra_core::paint::TextureRef {
-        let tex = texture::create_rgba_texture(
-            &self.gpu.device,
-            &self.gpu.context,
-            pixels,
-            width,
-            height,
-        )
-        .expect("创建纹理");
-        let srv = texture::create_srv(&self.gpu.device, &tex).expect("创建采样视图");
+        let gpu = lock_gpu(&self.gpu);
+        let tex =
+            texture::create_rgba_texture(&gpu.gpu.device, &gpu.gpu.context, pixels, width, height)
+                .expect("创建纹理");
+        let srv = texture::create_srv(&gpu.gpu.device, &tex).expect("创建采样视图");
+        drop(gpu);
         self.textures.insert(name, srv, tex);
         zephyra_core::paint::TextureRef::new(name.to_string())
     }
@@ -458,8 +515,9 @@ impl<V: View> HostWindow<V> {
     /// 返回 `false` = 纹理未注册或像素长度不足 —— 此时什么都没写入，调用方必须
     /// 自己重建纹理。采样视图不变，所以没有任何需要失效的缓存。
     pub fn update_texture(&self, name: &str, pixels: &[u8], width: u32, height: u32) -> bool {
+        let gpu = lock_gpu(&self.gpu);
         self.textures
-            .update(&self.gpu.context, name, pixels, width, height)
+            .update(&gpu.gpu.context, name, pixels, width, height)
     }
 
     /// 移除一张图像纹理。**必须在销毁纹理之前调用。**
@@ -548,11 +606,12 @@ impl<V: View> HostWindow<V> {
             // 不变」这条**不成立** —— 淘汰一个再放进一个，数量不变而纹理已整体重排。
             let revision_now = self.engine.borrow().atlas_revision();
             if revision_now != self.atlas_revision_uploaded {
-                if self
+                let gpu = lock_gpu(&self.gpu);
+                let uploaded = self
                     .renderer
-                    .upload_atlas(&self.gpu.context, self.engine.borrow().atlas())
-                    .is_err()
-                {
+                    .upload_atlas(&gpu.gpu.context, self.engine.borrow().atlas());
+                drop(gpu);
+                if uploaded.is_err() {
                     eprintln!("[zephyra] 图集上传失败，本帧文字可能不显示");
                 }
                 self.atlas_revision_uploaded = revision_now;
@@ -644,7 +703,13 @@ impl<V: View> HostWindow<V> {
                 .pressed()
                 .or_else(|| self.activation.held())
                 .cloned(),
-            focused: self.focus.focused().cloned(),
+            // 视觉焦点 = 焦点环可见时才报告（鼠标点击设焦点但不画环，见
+            // `FocusState::is_visible`）。激活 / 无障碍另走 `self.focus.focused()`。
+            focused: if self.focus.is_visible() {
+                self.focus.focused().cloned()
+            } else {
+                None
+            },
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -689,9 +754,10 @@ impl<V: View> HostWindow<V> {
             }
         };
         let clear = clear_color(self.transparent, self.theme.surface);
+        let gpu = lock_gpu(&self.gpu);
         let report = self.renderer.render(RenderCtx {
-            context: &self.gpu.context,
-            device: &self.gpu.device,
+            context: &gpu.gpu.context,
+            device: &gpu.gpu.device,
             rtv: &rtv,
             list: self.cache.list(),
             damage: Damage::Full,
@@ -699,6 +765,7 @@ impl<V: View> HostWindow<V> {
             clear,
             textures: &self.textures,
         });
+        drop(gpu);
 
         // 诊断截帧必须在 `present` **之前**，且由 `read_pixels` 用
         // `current_rtv()` 反查资源 —— 两个条件缺一不可。
@@ -1115,53 +1182,33 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     }
 }
 
-impl<V: View> ApplicationHandler for HostWindow<V> {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.dirty = true;
-        event_loop.set_control_flow(ControlFlow::Poll);
+impl<V: View + 'static> WindowHost for HostWindow<V> {
+    fn key(&self) -> WindowKey {
+        self.window_key
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn winit_id(&self) -> Option<WindowId> {
+        Some(self.window.id())
+    }
+
+    fn handle_event(&mut self, event: WindowEvent) -> HostEventOutcome {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => return HostEventOutcome::Close,
             WindowEvent::Resized(size) => {
                 let (w, h) = (size.width.max(1), size.height.max(1));
                 self.surface.resize(w, h);
                 self.dirty = true;
             }
             WindowEvent::RedrawRequested => {
-                // 桥的 poll 放在帧首：注入的 hover/click 在**本帧**就参与命中
-                // 测试与布局，AI 读回的树永远是操控后的状态。
-                //
-                // `take` 出来再调：`poll` 要 `&mut BridgeHost`（= self）而桥自己
-                // 也是 self 的字段——借检查器解不开这个环。桥没有 Drop 语义
-                // （监听 socket 移动即可），take-放回是安全的。
-                if let Some(mut b) = self.bridge.take() {
-                    b.poll(self);
-                    self.bridge = Some(b);
-                }
-                if self.dirty || self.profiler.is_running() {
-                    let f = self.frame();
-                    if std::env::var("ZEPHYRA_TRACE").as_deref() == Ok("1") {
-                        eprintln!(
-                            "[zephyra] quads={} skipped={} img_batches={} missing_tex={} \
-                             dirty={} needs_layout={} hovered={:?}",
-                            f.render.quads,
-                            f.render.skipped,
-                            f.render.image_batches,
-                            f.render.missing_textures,
-                            f.diff.dirtied,
-                            f.diff.needs_layout,
-                            f.hovered
-                        );
-                    }
-                }
-                self.window.request_redraw();
+                // 帧在 `tick` 里跑（`WindowSet` 每轮都会调它）。这里只标脏。
+                self.dirty = true;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.on_cursor_moved(position.x as f32, position.y as f32) {
-                    self.dirty = true;
-                }
+                // `revision` 只在 hover/pressed **状态切换**时递增——拖拽中 hover 不变，
+                // `on_cursor_moved` 返回 false。不标脏，移动事件堆在队列里没人消费，
+                // 视图永远看不到 Move（慢速拖拽「卡住」）。
+                let _ = self.on_cursor_moved(position.x as f32, position.y as f32);
+                self.dirty = true;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
@@ -1220,7 +1267,9 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         }
                     }
                     match event.logical_key.clone() {
-                        Key::Named(NamedKey::Escape) => event_loop.exit(),
+                        // 单窗口路径下由 `ApplicationHandler` 把它翻成
+                        // `event_loop.exit()`；多窗口路径下只关这一个窗口。
+                        Key::Named(NamedKey::Escape) => return HostEventOutcome::Close,
                         Key::Character(c) if c.as_str() == "t" => {
                             // 演示「切主题不碰树」：只换一个 &Theme，树完全不动。
                             let next =
@@ -1237,7 +1286,7 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             }
             WindowEvent::Ime(ime) => {
                 // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，于是用
-                // 最近一次指针位置当代理（用户点进输入框就在那）。
+                // 最近一次指针位置当代理（用户点进输入框就是在那）。
                 self.translator
                     .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
                 self.dirty = true;
@@ -1273,11 +1322,132 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
             }
             _ => {}
         }
+        HostEventOutcome::Continue
+    }
+
+    fn tick(&mut self) -> HostTick {
+        // 桥的 poll 放在帧首：注入的 hover/click 在**本帧**就参与命中
+        // 测试与布局，AI 读回的树永远是操控后的状态。
+        //
+        // `take` 出来再调：`poll` 要 `&mut BridgeHost`（= self）而桥自己
+        // 也是 self 的字段——借检查器解不开这个环。桥没有 Drop 语义
+        // （监听 socket 移动即可），take-放回是安全的。
+        if let Some(mut b) = self.bridge.take() {
+            b.poll(self);
+            self.bridge = Some(b);
+        }
+        let mut tick = HostTick::default();
+        if self.dirty || self.profiler.is_running() {
+            let f = self.frame();
+            tick.painted = f.redrawn;
+            if std::env::var("ZEPHYRA_TRACE").as_deref() == Ok("1") {
+                eprintln!(
+                    "[zephyra] quads={} skipped={} img_batches={} missing_tex={} \
+                     dirty={} needs_layout={} hovered={:?}",
+                    f.render.quads,
+                    f.render.skipped,
+                    f.render.image_batches,
+                    f.render.missing_textures,
+                    f.diff.dirtied,
+                    f.diff.needs_layout,
+                    f.hovered
+                );
+            }
+        }
+        self.window.request_redraw();
+        // D3D11 后端一直是常驻重绘（`ControlFlow::Poll`）。多窗口时把这条
+        // 上提给 `WindowSet`，由它统一设置一次控制流。
+        tick.wants_poll = true;
+        tick.busy = self.dirty;
+        tick
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn set_theme(&mut self, variant: zephyra_core::theme::ThemeVariant) {
+        HostWindow::set_theme(self, Theme::builtin(variant));
+    }
+
+    fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        HostWindow::set_styler(self, styler);
+    }
+
+    fn set_title(&mut self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    fn request_close(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.close();
+        }
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// D3D11 后端的 [`Backend`] 实现。
+#[derive(Default)]
+pub struct D3d11Backend;
+
+impl D3d11Backend {
+    /// 建一个后端入口（共享设备在第一个窗口创建时初始化）。
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Backend for D3d11Backend {
+    type Window<V: View + 'static> = HostWindow<V>;
+
+    fn create<V: View + 'static>(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        view: V,
+        spec: &WindowSpec,
+        handle: WindowHandle,
+    ) -> Result<Self::Window<V>, String> {
+        let config = zephyra_app_config::load_from_current_dir();
+        let opts = spec.resolve(&config);
+        let mut host = HostWindow::new_lenient_opts(event_loop, view, opts);
+        host.window_key = handle.key();
+        host.handle = Some(handle);
+        Ok(host)
+    }
+}
+
+impl<V: View + 'static> ApplicationHandler for HostWindow<V> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.dirty = true;
+        event_loop.set_control_flow(ControlFlow::Poll);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.handle_event(event) == HostEventOutcome::Close {
+            event_loop.exit();
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let tick = self.tick();
+        if tick.wants_poll || tick.busy {
+            event_loop.set_control_flow(ControlFlow::Poll);
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
     }
 }
 
 /// 用一个已构造好的窗口宿主跑事件循环。
-pub fn run_with<V: View>(app: HostWindow<V>) -> Result<(), winit::error::EventLoopError> {
+pub fn run_with<V: View + 'static>(app: HostWindow<V>) -> Result<(), winit::error::EventLoopError> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = app;
@@ -1289,7 +1459,7 @@ pub fn run_with<V: View>(app: HostWindow<V>) -> Result<(), winit::error::EventLo
 /// winit 0.30 要求 `run_app` 收到的 `EventLoop` 与建窗时那个是同一个，所以
 /// [`HostWindow::new_lenient`] 的调用方必须自己持有它 —— 这时用本函数，而不是会
 /// 新建 `EventLoop` 的 [`run_with`]。
-pub fn run_with_on<V: View>(
+pub fn run_with_on<V: View + 'static>(
     event_loop: EventLoop<()>,
     app: HostWindow<V>,
 ) -> Result<(), winit::error::EventLoopError> {

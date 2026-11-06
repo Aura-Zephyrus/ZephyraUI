@@ -37,7 +37,7 @@ use zephyra_core::paint::{
 };
 use zephyra_fx::quad::{self, RenderReport, Scratch, Vertex};
 
-use crate::surface::{Gpu, SurfaceError};
+use crate::surface::{Device, SurfaceError};
 
 /// 顶点属性表（7 个属性，与 `zephyra_fx::quad::Vertex` 一一对应）。
 ///
@@ -265,8 +265,11 @@ enum SegmentPlan {
     /// 外部渲染源：record 阶段用原命令下标取回宿主载荷。
     Custom { index: usize },
     /// 离屏段：计划 + 两趟顶点偏移（模糊趟们 / 合成趟）。
+    ///
+    /// `pass` **装箱** —— 玻璃装饰把 `OffscreenPass` 撑大了，与 `Plain` 的
+    /// 尺寸差触发 clippy 的 `large_enum_variant`（与 `Segment` 的处理一致）。
     Offscreen {
-        pass: zephyra_fx::offscreen::OffscreenPass,
+        pass: Box<zephyra_fx::offscreen::OffscreenPass>,
         /// 这条命令**自身**的几何（已按 `pass.translate` 平移），要画进 RT。
         ///
         /// ⚠ RT 里装的是「被模糊的东西」，**不是**背后的屏幕。把整屏 resolve 进
@@ -289,6 +292,20 @@ enum SegmentPlan {
         /// 与 `refraction` 同形、互斥（`pass_for_chain` 里后写者清前者）：
         /// 顶点字段约定与普通合成不同（按元素矩形铺 + 元素 SDF 遮罩），所以单独建。
         backdrop_blur: Option<(u32, u32)>,
+        /// 透镜合成趟的顶点/索引偏移；`None` = 这条命令不带透镜。
+        ///
+        /// 与 `refraction` / `backdrop_blur` 同形、互斥：透镜也按元素矩形铺、
+        /// 也读目标副本，只是着色器换成 `fs_lens`（原版 `lens()` 的逐字转译）。
+        lens: Option<(u32, u32)>,
+        /// 挖洞外投影合成趟的顶点/索引偏移；`None` = 无装饰外投影。
+        ///
+        /// 几何按 `hollow_shadow_composite_quad` 铺（bounds 区域 + 元素坐标系
+        /// `local`），管线采样**离屏 RT**（模糊后的影子）。
+        hollow_composite: Option<(u32, u32)>,
+        /// 高光 overlay 趟的顶点/索引偏移；`None` = 不画。
+        highlight: Option<(u32, u32)>,
+        /// 内阴影 overlay 趟的顶点/索引偏移；`None` = 不画。画在**高光之后**。
+        inner_shadow: Option<(u32, u32)>,
         /// 元素在**屏幕**上的内容矩形 —— 折射四边形的几何来源。
         ///
         /// 取命令自己的内容矩形而不是 `pass.bounds`：折射四边形的 `position` 与
@@ -358,8 +375,18 @@ pub struct RenderCtx<'a> {
 }
 
 /// 渲染器：管线、常驻缓冲与纹理。
+///
+/// # 为什么每窗口一份
+///
+/// 与 D3D11 同一个判据：MSAA 目标、离屏 RT、顶点/索引缓冲、纹理表都与**这个
+/// 窗口的尺寸和内容**绑定。跨窗口共享它们就得为每次 draw 重新换算尺寸与偏移，
+/// 而收益只是省下几条管线 —— 代价却是「两个窗口尺寸不同时画面错位」这类
+/// 只能靠肉眼发现的问题。设备（instance / device / queue）才是真正共享的那层。
 pub struct Renderer {
     device: ash::Device,
+    /// 本窗口交换链的颜色格式。管线把它烤进 `VkPipeline`，所以从 [`Device`]
+    /// 移到这里（见 `Surface::format` 的文档）。
+    format: vk::Format,
     /// 描述符集布局：{ binding 0 = texture, binding 1 = sampler }。
     desc_layout: vk::DescriptorSetLayout,
     /// 描述符集布局（set 1：目标副本）。只在 PS 变体管线上被静态使用。
@@ -422,6 +449,15 @@ pub struct Renderer {
     refraction: vk::Pipeline,
     /// 背景模糊合成趟管线（`fs_backdrop_blur`）：画回 MSAA 附件，采样目标副本 + 高斯卷积。
     backdrop_blur: vk::Pipeline,
+    /// 透镜合成趟管线（`fs_lens`）：画回 MSAA 附件，采样目标副本 + `circleMap` 位移。
+    lens: vk::Pipeline,
+    /// 挖洞外投影合成趟（`fs_hollow_shadow`）：采样离屏 RT，装饰专用。
+    hollow_shadow: vk::Pipeline,
+    /// 高光 overlay 趟（`fs_highlight`）—— Plus 与 SrcOver（Ambient）两条。
+    highlight: vk::Pipeline,
+    highlight_ambient: vk::Pipeline,
+    /// 内阴影 overlay 趟（`fs_inner_shadow`）：画在高光之后。
+    inner_shadow: vk::Pipeline,
     /// 描述符池。
     desc_pool: vk::DescriptorPool,
     /// 采样器。
@@ -485,8 +521,16 @@ fn custom_command(list: &DisplayList, index: usize) -> (Rect, &RenderSource) {
 
 impl Renderer {
     /// 建管线与常驻资源。
-    pub fn new(gpu: &Gpu, atlas_side: u32, samples: u32) -> Result<Self, SurfaceError> {
-        let device = &gpu.device;
+    ///
+    /// `format` 是本窗口交换链的颜色格式（`Surface::format`）：管线与 render
+    /// pass 都把格式烤死，所以它必须由调用方按**这个窗口**传进来。
+    pub fn new(
+        dev: &Device,
+        format: vk::Format,
+        atlas_side: u32,
+        samples: u32,
+    ) -> Result<Self, SurfaceError> {
+        let device = &dev.device;
         let samples = samples.max(1);
 
         // ── 描述符集布局 ──
@@ -556,14 +600,14 @@ impl Renderer {
 
         // ── 顶点/索引缓冲（初始 1MB，按需增长）──
         let (vertex_buffer, vertex_memory, vertex_capacity) =
-            create_host_buffer(device, gpu, 1024 * 1024)?;
+            create_host_buffer(device, dev, 1024 * 1024)?;
         let (index_buffer, index_memory, index_capacity) =
-            create_host_buffer(device, gpu, 1024 * 1024)?;
+            create_host_buffer(device, dev, 1024 * 1024)?;
 
         // ── 图集纹理 ──
         let (atlas_image, atlas_view, atlas_memory) = create_image_texture(
             device,
-            gpu,
+            dev,
             atlas_side,
             atlas_side,
             // 图集用非 sRGB：alpha 通道是**覆盖率**不是颜色 —— 传输函数会破坏它
@@ -576,20 +620,12 @@ impl Renderer {
         // ── 渲染通道 ──
         // 只有**一条**主通道：`loadOp` 恒 LOAD（清空走显式 cmd_clear_*），见
         // create_render_pass 的文档 —— 两条 loadOp 不同的通道会让管线各建一套。
-        let msaa_render_pass = create_render_pass(
-            device,
-            gpu.format,
-            samples,
-            vk::ImageLayout::PRESENT_SRC_KHR,
-        )?;
+        let msaa_render_pass =
+            create_render_pass(device, format, samples, vk::ImageLayout::PRESENT_SRC_KHR)?;
         // 离屏通道：终点布局必须是 COLOR_ATTACHMENT_OPTIMAL —— PRESENT_SRC 只对
         // 交换链图合法，拿它转 RT 的布局是非法转换。
-        let offscreen_render_pass = create_render_pass(
-            device,
-            gpu.format,
-            1,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        )?;
+        let offscreen_render_pass =
+            create_render_pass(device, format, 1, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)?;
 
         // ── 描述符池 ──
         let desc_pool = unsafe {
@@ -662,6 +698,53 @@ impl Renderer {
             "fs_backdrop_blur",
             src_over_blend(),
         )?;
+        // 透镜合成趟：与折射同一条纪律（预乘输出），入口换成 `fs_lens`。
+        let lens = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_lens",
+            src_over_blend(),
+        )?;
+        // 挖洞外投影合成趟（装饰）：采样离屏 RT（模糊后的影子），
+        // `fs_hollow_shadow` 挖掉元素内侧后 SrcOver 贴回。
+        let hollow_shadow = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_hollow_shadow",
+            src_over_blend(),
+        )?;
+        // 高光 overlay 趟：纯 SDF 零采样。Default / Plain 是 **Plus**（加色）；
+        // Ambient 原版是 SrcOver —— 半黑半白在 Plus 下黑半变无操作。
+        // 两条管线各建一条，录制时按 kind 挑。
+        let highlight = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_highlight",
+            plus_blend(),
+        )?;
+        let highlight_ambient = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_highlight",
+            src_over_blend(),
+        )?;
+        // 内阴影 overlay 趟：SrcOver，画在高光之后（层序契约）。
+        let inner_shadow = create_entry_pipeline(
+            device,
+            samples,
+            pipeline_layout,
+            msaa_render_pass,
+            "fs_inner_shadow",
+            src_over_blend(),
+        )?;
 
         // ── 14 档 PS 变体管线 ──
         // 直通混合（`src_blend`）：片元输出的已经是「与目标混完之后」的最终色，
@@ -683,7 +766,7 @@ impl Renderer {
         for mode in blend_modes() {
             let pipeline = create_graphics_pipeline(
                 device,
-                gpu.format,
+                format,
                 samples,
                 pipeline_layout,
                 msaa_render_pass,
@@ -694,6 +777,7 @@ impl Renderer {
 
         Ok(Self {
             device: device.clone(),
+            format,
             desc_layout,
             desc_layout_dst,
             pipeline_layout,
@@ -729,6 +813,11 @@ impl Renderer {
             composite,
             refraction,
             backdrop_blur,
+            lens,
+            hollow_shadow,
+            highlight,
+            highlight_ambient,
+            inner_shadow,
             desc_pool,
             sampler,
             scratch: Scratch::new(),
@@ -772,7 +861,7 @@ impl Renderer {
     /// 注册 / 重传一张图像纹理。
     pub fn upload_texture(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         name: &str,
         pixels: &[u8],
         (width, height): (u32, u32),
@@ -780,7 +869,7 @@ impl Renderer {
         // 图像纹理用 sRGB 格式（彩色），与 wgpu 版 Rgba8UnormSrgb 对应。
         let (image, view, memory) = create_image_texture(
             &self.device,
-            gpu,
+            dev,
             width,
             height,
             vk::Format::R8G8B8A8_SRGB,
@@ -788,7 +877,7 @@ impl Renderer {
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         )?;
         if !pixels.is_empty() {
-            upload_image(gpu, image, pixels, (width, height))?;
+            upload_image(dev, image, pixels, (width, height))?;
         }
         let slot = if let Some(&s) = self.textures.index.get(name) {
             s
@@ -830,7 +919,7 @@ impl Renderer {
     /// 91×59 / 85×53 交替）。那点开销换「不用在段之间搬来搬去」更划算。
     pub fn offscreen_framebuffers(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         size: (u32, u32),
     ) -> Option<(vk::Framebuffer, vk::Framebuffer)> {
         if self.samples <= 1 {
@@ -840,8 +929,8 @@ impl Renderer {
         self.rt_extent = size;
         if self.rt_size != Some(size) {
             self.destroy_offscreen();
-            let rt_a = create_rt(&self.device, gpu, size)?;
-            let rt_b = create_rt(&self.device, gpu, size)?;
+            let rt_a = create_rt(&self.device, dev, self.format, size)?;
+            let rt_b = create_rt(&self.device, dev, self.format, size)?;
             let fb_a =
                 create_rt_framebuffer(&self.device, self.offscreen_render_pass, rt_a.view, size);
             let fb_b =
@@ -880,7 +969,7 @@ impl Renderer {
     }
 
     /// MSAA 目标视图（`samples <= 1` 时 None）。尺寸变化时重建。
-    pub fn ensure_msaa(&mut self, gpu: &Gpu, size: (u32, u32)) -> Option<vk::ImageView> {
+    pub fn ensure_msaa(&mut self, dev: &Device, size: (u32, u32)) -> Option<vk::ImageView> {
         if self.samples <= 1 {
             return None;
         }
@@ -895,10 +984,10 @@ impl Renderer {
             }
             let (image, view, memory) = create_image_texture(
                 &self.device,
-                gpu,
+                dev,
                 size.0,
                 size.1,
-                gpu.format,
+                self.format,
                 vk::SampleCountFlags::from_raw(self.samples),
                 // MSAA 只当颜色附件 + resolve 源。`TRANSFER_SRC` 留着是因为
                 // resolve 在 spec 里归为 transfer 操作、要求**源**带这个位 ——
@@ -926,7 +1015,7 @@ impl Renderer {
     /// `record()` 内部自己开 encoder 自己提交。拆成两段正是这个差异的直接映射。
     pub fn prepare(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         ctx: &RenderCtx<'_>,
     ) -> Result<RenderReport, SurfaceError> {
         let mut report = RenderReport::default();
@@ -939,7 +1028,7 @@ impl Renderer {
                 && ctx.atlas_pixels.len() == (self.atlas_size * self.atlas_size * 4) as usize
             {
                 upload_image(
-                    gpu,
+                    dev,
                     self.atlas_image,
                     ctx.atlas_pixels,
                     (self.atlas_size, self.atlas_size),
@@ -1036,6 +1125,10 @@ impl Renderer {
                         composite: None,
                         refraction: None,
                         backdrop_blur: None,
+                        lens: None,
+                        hollow_composite: None,
+                        highlight: None,
+                        inner_shadow: None,
                         element,
                         corner_radius,
                     });
@@ -1068,7 +1161,7 @@ impl Renderer {
         // 离屏趟的四边形追加到**末尾**：它们用独立的顶点偏移绑定，与主几何互不干涉。
         self.build_offscreen_geometry(ctx.size, &mut scratch);
 
-        self.upload_geometry(gpu, &scratch, &mut report)?;
+        self.upload_geometry(dev, &scratch, &mut report)?;
         self.scratch = scratch;
         Ok(report)
     }
@@ -1085,25 +1178,41 @@ impl Renderer {
             // 先只读地取到要用的数据（克隆 blur 列表与 refraction，其余 Copy），
             // 之后才可变地写回偏移 —— 一次解构里同时拿 `&pass` 与 `&mut blurs`
             // 编译不过。
-            let (blur_steps, bounds, tint, rt_f, refraction, backdrop_blur, element, corner_radius) =
-                match &self.segments[i] {
-                    SegmentPlan::Offscreen {
-                        pass,
-                        element,
-                        corner_radius,
-                        ..
-                    } => (
-                        pass.blurs.clone(),
-                        pass.bounds,
-                        pass.tint,
-                        (pass.rt_size.0 as f32, pass.rt_size.1 as f32),
-                        pass.refraction,
-                        pass.backdrop_blur,
-                        *element,
-                        *corner_radius,
-                    ),
-                    SegmentPlan::Plain { .. } | SegmentPlan::Custom { .. } => continue,
-                };
+            let (
+                blur_steps,
+                bounds,
+                tint,
+                rt_f,
+                refraction,
+                lens,
+                backdrop_blur,
+                element,
+                corner_radius,
+                hollow_shadow,
+                highlight,
+                inner_shadow,
+            ) = match &self.segments[i] {
+                SegmentPlan::Offscreen {
+                    pass,
+                    element,
+                    corner_radius,
+                    ..
+                } => (
+                    pass.blurs.clone(),
+                    pass.bounds,
+                    pass.tint,
+                    (pass.rt_size.0 as f32, pass.rt_size.1 as f32),
+                    pass.refraction,
+                    pass.lens,
+                    pass.backdrop_blur,
+                    *element,
+                    *corner_radius,
+                    pass.hollow_shadow.then_some(pass.element_rect),
+                    pass.highlight,
+                    pass.inner_shadow,
+                ),
+                SegmentPlan::Plain { .. } | SegmentPlan::Custom { .. } => continue,
+            };
             for step in &blur_steps {
                 let vtx_off = scratch.vertices.len() as u32;
                 let idx_off = scratch.indices.len() as u32;
@@ -1150,6 +1259,18 @@ impl Renderer {
             // 背景模糊合成四边形：套路与折射完全一样（按元素矩形铺 + 元素 SDF），
             // 只是着色器做高斯卷积而不是位移。两份几何都先建好，录制时按 `pass`
             // 里哪个 Some 挑 —— 拿不到目标副本时都退化回普通合成。
+            if let Some(l) = lens {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad =
+                    zephyra_fx::offscreen::lens_composite_quad(element, screen_f, corner_radius, l);
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen { lens: slot, .. } = &mut self.segments[i] else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
             if let Some(bb) = backdrop_blur {
                 let vtx_off = scratch.vertices.len() as u32;
                 let idx_off = scratch.indices.len() as u32;
@@ -1170,6 +1291,61 @@ impl Renderer {
                 };
                 *slot = Some((vtx_off, idx_off));
             }
+            // 挖洞外投影合成四边形：铺 bounds 区域（影子整块），`local` 走元素
+            // 坐标系（`hollow_shadow_composite_quad` 的表）。参数齐了才建 ——
+            // tint 是 `None` 时着色器直通，同样合法，但 pass 说没有挖洞就别建。
+            if let Some(elem) = hollow_shadow {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad = zephyra_fx::offscreen::hollow_shadow_composite_quad(
+                    bounds,
+                    elem,
+                    screen_f,
+                    corner_radius,
+                    tint,
+                );
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen {
+                    hollow_composite: slot,
+                    ..
+                } = &mut self.segments[i]
+                else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
+            // 高光 overlay 四边形：铺元素 + 描边外侧余量（`fs_highlight` 的
+            // Ambient 外侧白半要画得出来）。
+            if let Some(hl) = highlight {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad = zephyra_fx::offscreen::highlight_overlay_quad(element, screen_f, hl);
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen {
+                    highlight: slot, ..
+                } = &mut self.segments[i]
+                else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
+            // 内阴影 overlay 四边形：铺元素矩形（只画内侧）。
+            if let Some(sh) = inner_shadow {
+                let vtx_off = scratch.vertices.len() as u32;
+                let idx_off = scratch.indices.len() as u32;
+                let quad = zephyra_fx::offscreen::inner_shadow_overlay_quad(element, screen_f, sh);
+                scratch.vertices.extend_from_slice(&quad);
+                scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
+                let SegmentPlan::Offscreen {
+                    inner_shadow: slot, ..
+                } = &mut self.segments[i]
+                else {
+                    unreachable!("刚才是 Offscreen 分支")
+                };
+                *slot = Some((vtx_off, idx_off));
+            }
         }
     }
 
@@ -1178,9 +1354,10 @@ impl Renderer {
     /// 调用方只需 `begin_command_buffer` → 本方法 → `end_command_buffer`；
     /// 所有 `begin_render_pass` 与布局屏障都在这里。
     ///
-    /// 返回 `(unimplemented, refractions, backdrop_blurs)`：前者是退回默认混合的段数，
-    /// 后两者是本帧**真正画出**的折射 / 背景模糊趟数（`RenderReport::refraction_passes`
-    /// / `backdrop_blur_passes` 的记录来源 —— 计划了但拿不到目标副本时不计，与 D3D12 同）。
+    /// 返回 `(unimplemented, refractions, lens_passes, backdrop_blurs)`：前者是退回
+    /// 默认混合的段数，后三者是本帧**真正画出**的折射 / 透镜 / 背景模糊趟数
+    /// （`RenderReport::{refraction_passes, lens_passes, backdrop_blur_passes}` 的记录来源
+    /// —— 计划了但拿不到目标副本时不计，与 D3D12 同）。
     ///
     /// # 单采样为什么不拆段
     ///
@@ -1191,12 +1368,12 @@ impl Renderer {
     /// 做 resolve 起点），段边界对画面没有意义。
     pub fn record_frame(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         display_list: &DisplayList,
         default_blend: BlendMode,
-    ) -> (u32, u32, u32) {
+    ) -> (u32, u32, u32, u32) {
         let mut unimplemented = 0u32;
         // 描述符池每帧重置一次（**不是每段一次**）。
         //
@@ -1225,7 +1402,7 @@ impl Renderer {
                         // 单采样直接画进交换链图：没有 MSAA 可 resolve，PS 变体在此
                         // 退化为默认混合（由 record_draws 内部计数）。
                         self.record_draws(
-                            gpu,
+                            dev,
                             cmd,
                             framebuffer,
                             None,
@@ -1260,7 +1437,7 @@ impl Renderer {
             unsafe {
                 self.device.cmd_end_render_pass(cmd);
             }
-            return (unimplemented, 0, 0);
+            return (unimplemented, 0, 0, 0);
         }
         // ── 帧首：把 MSAA 转到 COLOR_ATTACHMENT_OPTIMAL ──
         //
@@ -1292,6 +1469,7 @@ impl Renderer {
         // 本帧真正画出的折射趟数（`RenderReport::refraction_passes` 的记录
         // 来源）—— 与「计划了折射」不是一回事：拿不到目标副本时会退化。
         let mut refractions = 0u32;
+        let mut lens_passes = 0u32;
         let mut backdrop_blurs = 0u32;
         let segments = std::mem::take(&mut self.segments);
         for seg in &segments {
@@ -1299,7 +1477,7 @@ impl Renderer {
                 SegmentPlan::Plain { draws } => {
                     self.begin_main_pass(cmd, framebuffer, !opened);
                     self.record_draws(
-                        gpu,
+                        dev,
                         cmd,
                         framebuffer,
                         None,
@@ -1339,11 +1517,15 @@ impl Renderer {
                     blurs,
                     composite,
                     refraction,
+                    lens,
                     backdrop_blur,
+                    hollow_composite,
+                    highlight,
+                    inner_shadow,
                     ..
                 } => {
                     // 每段按**自己的** rt_size 准备 RT（尺寸变了会重建）。
-                    let Some((fb_a, fb_b)) = self.offscreen_framebuffers(gpu, pass.rt_size) else {
+                    let Some((fb_a, fb_b)) = self.offscreen_framebuffers(dev, pass.rt_size) else {
                         // 没有离屏 RT（单采样 / 建不出来）：折返段退化为不画，
                         // 与「滤镜不可用」的既有语义一致。
                         continue;
@@ -1359,7 +1541,7 @@ impl Renderer {
                         opened = true;
                     }
                     self.record_offscreen(
-                        gpu,
+                        dev,
                         cmd,
                         framebuffer,
                         fb_a,
@@ -1369,17 +1551,22 @@ impl Renderer {
                         blurs,
                         *composite,
                         *refraction,
+                        *lens,
                         *backdrop_blur,
+                        *hollow_composite,
+                        *highlight,
+                        *inner_shadow,
                         default_blend,
                         &mut unimplemented,
                         &mut refractions,
+                        &mut lens_passes,
                         &mut backdrop_blurs,
                     );
                 }
             }
         }
         self.segments = segments;
-        (unimplemented, refractions, backdrop_blurs)
+        (unimplemented, refractions, lens_passes, backdrop_blurs)
     }
 
     /// 开主通道（MSAA → surface）并设视口/裁剪。
@@ -1489,7 +1676,7 @@ impl Renderer {
     )]
     fn record_offscreen(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         fb_a: vk::Framebuffer,
@@ -1499,14 +1686,21 @@ impl Renderer {
         blurs: &[(u32, u32)],
         composite: Option<(u32, u32)>,
         refraction: Option<(u32, u32)>,
+        lens: Option<(u32, u32)>,
         backdrop_blur: Option<(u32, u32)>,
+        hollow_composite: Option<(u32, u32)>,
+        highlight: Option<(u32, u32)>,
+        inner_shadow: Option<(u32, u32)>,
         default_blend: BlendMode,
         unimplemented: &mut u32,
         refractions: &mut u32,
+        lens_passes: &mut u32,
         backdrop_blurs: &mut u32,
     ) {
         // ⚠ 必须把 view **拷成局部值**：直接持有 `&self.rt_a` 会让后面
         // `&mut self` 的 `update_descriptor` 借不出来（句柄都是 Copy 的复制品）。
+        // 高光按 kind 挑管线（Ambient 走 SrcOver，其余 Plus）。
+        let highlight_kind_ambient = pass.highlight.is_some_and(|h| h.kind > 1.5);
         let (Some(rt_a_view), Some(rt_b_view), Some(rt_b_img), Some(rt_a_img)) = (
             self.rt_a.as_ref().map(|r| r.view),
             self.rt_b.as_ref().map(|r| r.view),
@@ -1535,7 +1729,7 @@ impl Renderer {
             origin: (pass.origin.0 as i32, pass.origin.1 as i32),
         };
         self.record_draws(
-            gpu,
+            dev,
             cmd,
             fb_a,
             Some(rt_ctx),
@@ -1619,8 +1813,8 @@ impl Renderer {
         //
         // resolve 是 transfer 类操作，**不能在渲染通道内**录 —— 此刻内容趟与
         // 模糊趟都已 end，正好在通道外。
-        let dst_snapshot = if refraction.is_some() || backdrop_blur.is_some() {
-            self.ensure_dst_rt(gpu, self.size);
+        let dst_snapshot = if refraction.is_some() || lens.is_some() || backdrop_blur.is_some() {
+            self.ensure_dst_rt(dev, self.size);
             self.dst_rt.as_ref().map(|rt| (rt.image, rt.view, rt.size))
         } else {
             None
@@ -1642,20 +1836,24 @@ impl Renderer {
         // 选择顺序：折射 > 背景模糊 > 普通合成。`pass_for_chain` 保证两者互斥，
         // 这里两个都 Some 时先挑折射（不会发生）。拿不到目标副本时退化。
         let (pipeline, vtx_off, idx_off, dst_effect) =
-            match (refraction, backdrop_blur, dst_snapshot) {
-                (Some(_), _, Some(_)) => {
+            match (refraction, lens, backdrop_blur, dst_snapshot) {
+                (Some(_), _, _, Some(_)) => {
                     let (v, i) = refraction.expect("上面刚匹配过 Some");
-                    (self.refraction, v, i, Some(true))
+                    (self.refraction, v, i, Some(1u8))
                 }
-                (_, Some(_), Some(_)) => {
+                (_, Some(_), _, Some(_)) => {
+                    let (v, i) = lens.expect("上面刚匹配过 Some");
+                    (self.lens, v, i, Some(2))
+                }
+                (_, _, Some(_), Some(_)) => {
                     let (v, i) = backdrop_blur.expect("上面刚匹配过 Some");
-                    (self.backdrop_blur, v, i, Some(false))
+                    (self.backdrop_blur, v, i, Some(3))
                 }
                 _ => {
-                    // 退化路径：计划了折射/背景模糊但拿不到目标副本（dst_rt 建不出来）
-                    // ⇒ 照常画普通合成，计进 unimplemented。屏幕上有玻璃但没有
-                    // 弯曲/模糊，与 D3D12 同一条语义 —— 不能让整帧失败。
-                    if refraction.is_some() || backdrop_blur.is_some() {
+                    // 退化路径：计划了折射/透镜/背景模糊但拿不到目标副本（dst_rt
+                    // 建不出来）⇒ 照常画普通合成，计进 unimplemented。屏幕上有玻璃
+                    // 但没有弯曲/模糊，与 D3D12 同一条语义 —— 不能让整帧失败。
+                    if refraction.is_some() || lens.is_some() || backdrop_blur.is_some() {
                         *unimplemented += 1;
                     }
                     let Some((v, i)) = composite else {
@@ -1679,8 +1877,44 @@ impl Renderer {
                 }
             };
             let sets = [desc, dst_set];
-            let vertex_offsets = [vtx_off as u64 * mem::size_of::<Vertex>() as u64];
+            let mut vertex_offsets = [vtx_off as u64 * mem::size_of::<Vertex>() as u64];
             unsafe {
+                // ── 挖洞外投影（装饰，**最先**）：影子在最底层 ──
+                //
+                // 与内容合成**并存**而不互斥（玻璃块 = 折射内容 + 装饰三件），
+                // 所以独立于上面那个 match：影子先贴，内容（折射 / 普通合成）
+                // 再贴上来盖住中间，层序契约（投影 → 内容 → 高光 → 内阴影）
+                // 靠这里的先后顺序兑现。
+                if let Some((hv, hi)) = hollow_composite {
+                    self.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.hollow_shadow,
+                    );
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.pipeline_layout,
+                        0,
+                        &sets,
+                        &[],
+                    );
+                    vertex_offsets[0] = hv as u64 * mem::size_of::<Vertex>() as u64;
+                    self.device.cmd_bind_vertex_buffers(
+                        cmd,
+                        0,
+                        &[self.vertex_buffer],
+                        &vertex_offsets,
+                    );
+                    self.device.cmd_bind_index_buffer(
+                        cmd,
+                        self.index_buffer,
+                        0,
+                        vk::IndexType::UINT16,
+                    );
+                    self.device.cmd_draw_indexed(cmd, 6, 1, hi, 0, 0);
+                }
+                // ── 内容合成（折射 / 背景模糊 / 普通）──
                 self.device
                     .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 self.device.cmd_bind_descriptor_sets(
@@ -1691,6 +1925,7 @@ impl Renderer {
                     &sets,
                     &[],
                 );
+                vertex_offsets[0] = vtx_off as u64 * mem::size_of::<Vertex>() as u64;
                 self.device
                     .cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer], &vertex_offsets);
                 self.device
@@ -1698,9 +1933,76 @@ impl Renderer {
                 self.device.cmd_draw_indexed(cmd, 6, 1, idx_off, 0, 0);
             }
             match dst_effect {
-                Some(true) => *refractions += 1,
-                Some(false) => *backdrop_blurs += 1,
+                Some(1) => *refractions += 1,
+                Some(2) => *lens_passes += 1,
+                Some(_) => *backdrop_blurs += 1,
                 None => {}
+            }
+            // ── 装饰 overlay：画在内容**之上**（顺序 = 层序契约）──
+            //
+            // 高光按 kind 挑管线（Ambient = SrcOver，其余 = Plus）；内阴影
+            // SrcOver 且画在高光之后。两趟都只绑 set0（着色器不采样）。
+            unsafe {
+                if let Some((hv, hi)) = highlight {
+                    let pipeline = if highlight_kind_ambient {
+                        self.highlight_ambient
+                    } else {
+                        self.highlight
+                    };
+                    self.device
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.pipeline_layout,
+                        0,
+                        &[desc],
+                        &[],
+                    );
+                    vertex_offsets[0] = hv as u64 * mem::size_of::<Vertex>() as u64;
+                    self.device.cmd_bind_vertex_buffers(
+                        cmd,
+                        0,
+                        &[self.vertex_buffer],
+                        &vertex_offsets,
+                    );
+                    self.device.cmd_bind_index_buffer(
+                        cmd,
+                        self.index_buffer,
+                        0,
+                        vk::IndexType::UINT16,
+                    );
+                    self.device.cmd_draw_indexed(cmd, 6, 1, hi, 0, 0);
+                }
+                if let Some((sv, si)) = inner_shadow {
+                    self.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.inner_shadow,
+                    );
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.pipeline_layout,
+                        0,
+                        &[desc],
+                        &[],
+                    );
+                    vertex_offsets[0] = sv as u64 * mem::size_of::<Vertex>() as u64;
+                    self.device.cmd_bind_vertex_buffers(
+                        cmd,
+                        0,
+                        &[self.vertex_buffer],
+                        &vertex_offsets,
+                    );
+                    self.device.cmd_bind_index_buffer(
+                        cmd,
+                        self.index_buffer,
+                        0,
+                        vk::IndexType::UINT16,
+                    );
+                    self.device.cmd_draw_indexed(cmd, 6, 1, si, 0, 0);
+                }
             }
         }
         unsafe {
@@ -1795,7 +2097,7 @@ impl Renderer {
     )]
     fn record_draws(
         &mut self,
-        gpu: &Gpu,
+        dev: &Device,
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         rt: Option<RtCtx>,
@@ -1838,7 +2140,7 @@ impl Renderer {
             // 两条通道的快照方式不同：主通道 resolve MSAA，RT 通道 copy RT 内容
             // （按屏幕坐标摆，见 `snapshot_rt` 的文档）。
             let dst = if is_ps {
-                self.ensure_dst_rt(gpu, self.size);
+                self.ensure_dst_rt(dev, self.size);
                 self.dst_rt.as_ref().map(|rt| (rt.image, rt.view, rt.size))
             } else {
                 None
@@ -1961,7 +2263,7 @@ impl Renderer {
     }
 
     /// 目标副本 RT（PS 变体的 `g_dst`），按 MSAA 尺寸惰性建。
-    fn ensure_dst_rt(&mut self, gpu: &Gpu, size: (u32, u32)) {
+    fn ensure_dst_rt(&mut self, dev: &Device, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));
         if self.dst_rt.as_ref().map(|r| r.size) != Some(size) {
             if let Some(old) = self.dst_rt.take() {
@@ -1973,10 +2275,10 @@ impl Renderer {
             }
             let Ok((image, view, memory)) = create_image_texture(
                 &self.device,
-                gpu,
+                dev,
                 size.0,
                 size.1,
-                gpu.format,
+                self.format,
                 vk::SampleCountFlags::TYPE_1,
                 // ⚠ 三个位缺一即崩：
                 //   COLOR_ATTACHMENT —— resolve 的目标必须带这个（resolve 走
@@ -2185,7 +2487,7 @@ impl Renderer {
     /// 上传顶点和索引到 GPU 可见缓冲。
     fn upload_geometry(
         &mut self,
-        _gpu: &Gpu,
+        _dev: &Device,
         scratch: &Scratch,
         _report: &mut RenderReport,
     ) -> Result<(), SurfaceError> {
@@ -2425,6 +2727,26 @@ fn src_over_blend() -> vk::PipelineColorBlendAttachmentState {
         color_blend_op: vk::BlendOp::ADD,
         src_alpha_blend_factor: vk::BlendFactor::ONE,
         dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        alpha_blend_op: vk::BlendOp::ADD,
+        color_write_mask: vk::ColorComponentFlags::R
+            | vk::ColorComponentFlags::G
+            | vk::ColorComponentFlags::B
+            | vk::ColorComponentFlags::A,
+    }
+}
+
+/// **Plus**（预乘空间加色，`ONE / ONE`）：玻璃高光（Default / Plain）用。
+///
+/// 与 [`BlendMode::Plus`](zephyra_core::filter::BlendMode::Plus) 的系数表
+/// 逐项一致 —— 输出已是预乘色，加法即可。
+fn plus_blend() -> vk::PipelineColorBlendAttachmentState {
+    vk::PipelineColorBlendAttachmentState {
+        blend_enable: vk::TRUE,
+        src_color_blend_factor: vk::BlendFactor::ONE,
+        dst_color_blend_factor: vk::BlendFactor::ONE,
+        color_blend_op: vk::BlendOp::ADD,
+        src_alpha_blend_factor: vk::BlendFactor::ONE,
+        dst_alpha_blend_factor: vk::BlendFactor::ONE,
         alpha_blend_op: vk::BlendOp::ADD,
         color_write_mask: vk::ColorComponentFlags::R
             | vk::ColorComponentFlags::G
@@ -2713,7 +3035,7 @@ fn parse_spv_entry(spv: &[u8], _entry: &str) -> Result<Vec<u32>, SurfaceError> {
 /// 建主机可见缓冲。
 fn create_host_buffer(
     device: &ash::Device,
-    gpu: &Gpu,
+    dev: &Device,
     size: u64,
 ) -> Result<(vk::Buffer, vk::DeviceMemory, u64), SurfaceError> {
     let buffer = unsafe {
@@ -2733,8 +3055,8 @@ fn create_host_buffer(
             &vk::MemoryAllocateInfo::builder()
                 .allocation_size(req.size)
                 .memory_type_index(crate::surface::pick_type(
-                    &gpu.instance,
-                    gpu.physical,
+                    &dev.instance,
+                    dev.physical,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
                 )?)
                 .build(),
@@ -2751,7 +3073,7 @@ fn create_host_buffer(
 #[allow(clippy::type_complexity)]
 fn create_image_texture(
     device: &ash::Device,
-    gpu: &Gpu,
+    dev: &Device,
     width: u32,
     height: u32,
     format: vk::Format,
@@ -2786,8 +3108,8 @@ fn create_image_texture(
             &vk::MemoryAllocateInfo::builder()
                 .allocation_size(req.size)
                 .memory_type_index(crate::surface::pick_type(
-                    &gpu.instance,
-                    gpu.physical,
+                    &dev.instance,
+                    dev.physical,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 )?)
                 .build(),
@@ -2829,13 +3151,18 @@ fn create_image_texture(
 /// （frame 2 core dump，无 backtrace）。所以这里的 usage 位不是「按需精简」，
 /// 而是「少一个就是崩」—— 本函数没有按调用点分档的余地。
 /// （`TRANSFER_DST` 是为将来可能的 resolve 预留的；当前没有调用点用它。）
-fn create_rt(device: &ash::Device, gpu: &Gpu, size: (u32, u32)) -> Option<Rt> {
+fn create_rt(
+    device: &ash::Device,
+    dev: &Device,
+    format: vk::Format,
+    size: (u32, u32),
+) -> Option<Rt> {
     let (image, view, memory) = create_image_texture(
         device,
-        gpu,
+        dev,
         size.0.max(1),
         size.1.max(1),
-        gpu.format,
+        format,
         vk::SampleCountFlags::TYPE_1,
         vk::ImageUsageFlags::COLOR_ATTACHMENT
             | vk::ImageUsageFlags::SAMPLED
@@ -2879,12 +3206,12 @@ fn create_rt_framebuffer(
 /// 一次性命令 + 等 fence —— 图集/纹理只在 revision 变化时重传（帧循环之外），
 /// 同步等待的开销是可接受的；把它们挪进帧命令缓冲只会让时序复杂化。
 fn upload_image(
-    gpu: &Gpu,
+    dev: &Device,
     image: vk::Image,
     pixels: &[u8],
     (w, h): (u32, u32),
 ) -> Result<(), SurfaceError> {
-    let device = &gpu.device;
+    let device = &dev.device;
     let byte_len = pixels.len() as vk::DeviceSize;
     let buffer = unsafe {
         device.create_buffer(
@@ -2903,8 +3230,8 @@ fn upload_image(
             &vk::MemoryAllocateInfo::builder()
                 .allocation_size(req.size)
                 .memory_type_index(crate::surface::pick_type(
-                    &gpu.instance,
-                    gpu.physical,
+                    &dev.instance,
+                    dev.physical,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
                 )?)
                 .build(),
@@ -2924,7 +3251,7 @@ fn upload_image(
     let cmd = unsafe {
         device.allocate_command_buffers(
             &vk::CommandBufferAllocateInfo::builder()
-                .command_pool(gpu.command_pool)
+                .command_pool(dev.command_pool)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1)
                 .build(),
@@ -3017,7 +3344,7 @@ fn upload_image(
         let cmds = [cmd];
         device
             .queue_submit(
-                gpu.queue,
+                dev.queue,
                 &[vk::SubmitInfo::builder().command_buffers(&cmds).build()],
                 fence,
             )
@@ -3026,7 +3353,7 @@ fn upload_image(
             .wait_for_fences(&[fence], true, u64::MAX)
             .map_err(|e| SurfaceError::new("wait upload", e.to_string()))?;
         device.destroy_fence(fence, None);
-        device.free_command_buffers(gpu.command_pool, &cmds);
+        device.free_command_buffers(dev.command_pool, &cmds);
         device.destroy_buffer(buffer, None);
         device.free_memory(mem, None);
     }

@@ -28,6 +28,8 @@ zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 zephyra-platform = { path = "../zephyra-platform" }
 zephyra-platform-linux = { path = "../zephyra-platform-linux" }
+# 多窗口协调（`WindowSet` / `Backend` / `WindowHost`）。三个后端共用这一份契约。
+zephyra-window = { path = "../zephyra-window" }
 # winit 事件 → core 文本事件的翻译。三后端共用这一份 —— 本后端此前把键盘与
 # 滚轮写死成空值，这两条输入在 Linux 上从未接通过。
 zephyra-winit-input = { path = "../zephyra-winit-input" }

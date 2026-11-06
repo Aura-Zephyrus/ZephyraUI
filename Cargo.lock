@@ -2419,6 +2419,7 @@ dependencies = [
  "zephyra-ui",
  "zephyra-uia",
  "zephyra-vulkan",
+ "zephyra-window",
  "zephyra-winit",
  "zephyra-winit-d3d12",
  "zstylec",
@@ -2446,6 +2447,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-render-ext"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "zephyra-core",
+ "zephyra-fx",
+]
+
+[[package]]
 name = "zephyra-style"
 version = "0.1.0"
 dependencies = [
@@ -2458,6 +2468,7 @@ name = "zephyra-ui"
 version = "0.1.0"
 dependencies = [
  "zephyra-core",
+ "zephyra-fx",
 ]
 
 [[package]]
@@ -2482,7 +2493,18 @@ dependencies = [
  "zephyra-fx",
  "zephyra-platform",
  "zephyra-platform-linux",
+ "zephyra-window",
  "zephyra-winit-input",
+]
+
+[[package]]
+name = "zephyra-window"
+version = "0.1.0"
+dependencies = [
+ "winit",
+ "zephyra-app-config",
+ "zephyra-core",
+ "zephyra-fx",
 ]
 
 [[package]]
@@ -2499,7 +2521,9 @@ dependencies = [
  "zephyra-dcomp",
  "zephyra-fx",
  "zephyra-platform-win",
+ "zephyra-render-ext",
  "zephyra-uia",
+ "zephyra-window",
  "zephyra-winit-d3d12",
  "zephyra-winit-input",
 ]
@@ -2519,6 +2543,7 @@ dependencies = [
  "zephyra-platform",
  "zephyra-platform-win",
  "zephyra-uia",
+ "zephyra-window",
  "zephyra-winit-input",
 ]
 

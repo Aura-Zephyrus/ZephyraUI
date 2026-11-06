@@ -777,7 +777,7 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
         }
         eprintln!(
             "[demo] 已注册 {}/{} 张纹理（32×32 RGBA）",
-            app.textures().len(),
+            app.texture_count(),
             ICON_NAMES.len()
         );
 

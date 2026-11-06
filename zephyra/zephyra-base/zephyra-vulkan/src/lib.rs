@@ -7,7 +7,7 @@
 //!
 //! # 模块划分
 //!
-//! - `surface`：Instance / Device / Queue / Swapchain / 读回
+//! - `surface`：Instance / Device / Queue / Surface / Swapchain / 读回
 //! - `renderer`：顶点流 → GPU 一帧
 //! - `host`：窗口、事件循环、帧调度
 //!
@@ -21,6 +21,10 @@ mod host;
 mod renderer;
 mod surface;
 
-pub use host::HostWindow;
+#[cfg(test)]
+#[path = "tests/backend_contract.rs"]
+mod backend_contract;
+
+pub use host::{HostWindow, VulkanBackend};
 pub use renderer::{HookCtx, RenderCtx, RenderHook, Renderer, TextureTable};
-pub use surface::{Gpu, SurfaceError};
+pub use surface::{Device, Surface, SurfaceError};

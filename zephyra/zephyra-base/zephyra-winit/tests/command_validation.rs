@@ -294,6 +294,7 @@ fn quad(rect: Rect, filter: FilterChain, blend: BlendMode) -> DisplayList {
             stroke: None,
             filter,
             blend,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l
@@ -326,6 +327,7 @@ fn glass_page() -> DisplayList {
                 stroke: None,
                 filter,
                 blend,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     };
@@ -660,6 +662,7 @@ fn stress_many_filtered_commands_stay_clean() {
                 stroke: None,
                 filter: chains[(i as usize) % chains.len()].clone(),
                 blend: blends[(i as usize / 3) % blends.len()],
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -739,6 +742,7 @@ fn stress_filtered_ps_variant_blends_stay_counted() {
                 } else {
                     BlendMode::SoftLight
                 },
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -790,6 +794,7 @@ fn composite_uses_the_commands_own_blend_mode() {
             stroke: None,
             filter: FilterChain::none(),
             blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // 内容：200×200 白色 80% + 小模糊 + **Src** 混合。
@@ -809,6 +814,7 @@ fn composite_uses_the_commands_own_blend_mode() {
                 sigma_y: 2.0,
             }),
             blend: BlendMode::Src,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -919,6 +925,7 @@ fn stress_alternating_pages_keep_the_rt_pair_honest() {
                 sigma_y: 10.0,
             }),
             blend: BlendMode::SrcOver,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
 
@@ -943,6 +950,7 @@ fn stress_alternating_pages_keep_the_rt_pair_honest() {
                 stroke: None,
                 filter: refraction_chain(),
                 blend: BlendMode::SrcOver,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }

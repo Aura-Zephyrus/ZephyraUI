@@ -185,6 +185,7 @@ fn d3d12_quad_reaches_pixels() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
 
@@ -570,6 +571,7 @@ fn translucent_quad_composites_in_premultiplied_space_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -585,6 +587,7 @@ fn translucent_quad_composites_in_premultiplied_space_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     let (px, report) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
@@ -649,6 +652,7 @@ fn blend_modes_switch_pso_on_d3d12() {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: BlendMode::default(),
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
         list.push(
@@ -664,6 +668,7 @@ fn blend_modes_switch_pso_on_d3d12() {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: mode,
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
         let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
@@ -698,6 +703,7 @@ fn per_run_dst_refresh_on_d3d12() {
                     stroke: None,
                     filter: zephyra_core::filter::FilterChain::none(),
                     blend,
+                    decorations: zephyra_core::decoration::Decorations::none(),
                 },
             );
         };
@@ -763,6 +769,7 @@ fn separable_blends_are_applied_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.push(
@@ -778,6 +785,7 @@ fn separable_blends_are_applied_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: BlendMode::Darken,
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
@@ -821,6 +829,7 @@ fn one(
             stroke: None,
             filter,
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l
@@ -941,6 +950,7 @@ fn composite_lands_only_on_the_bounds_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -959,6 +969,7 @@ fn composite_lands_only_on_the_bounds_on_d3d12() {
                 sigma_y: 2.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1004,6 +1015,7 @@ fn composite_blends_over_the_destination_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -1022,6 +1034,7 @@ fn composite_blends_over_the_destination_on_d3d12() {
                 sigma_y: 2.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1055,6 +1068,7 @@ fn drop_shadow_works_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -1076,6 +1090,7 @@ fn drop_shadow_works_on_d3d12() {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1225,6 +1240,7 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
                 sigma_y: 1.0,
             }),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     // order 2：全屏纯红（"更上层"）。
@@ -1241,6 +1257,7 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1288,6 +1305,7 @@ fn stripes_glass(ior: f32, thickness: f32, bezel: f32) -> DisplayList {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: zephyra_core::filter::BlendMode::default(),
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -1318,6 +1336,7 @@ fn stripes_glass(ior: f32, thickness: f32, bezel: f32) -> DisplayList {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1375,6 +1394,7 @@ fn solid_glass(ior: f32) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.push(
@@ -1402,6 +1422,7 @@ fn solid_glass(ior: f32) -> DisplayList {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1424,6 +1445,7 @@ fn solid_only() -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();
@@ -1684,6 +1706,7 @@ fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: zephyra_core::filter::BlendMode::default(),
+                decorations: zephyra_core::decoration::Decorations::none(),
             },
         );
     }
@@ -1712,6 +1735,7 @@ fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
                 },
             ),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     l.sort();

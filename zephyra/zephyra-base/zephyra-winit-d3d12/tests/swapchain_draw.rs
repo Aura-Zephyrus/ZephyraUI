@@ -860,6 +860,7 @@ fn one_red_quad(size: u32) -> DisplayList {
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),
+            decorations: zephyra_core::decoration::Decorations::none(),
         },
     );
     list.sort();

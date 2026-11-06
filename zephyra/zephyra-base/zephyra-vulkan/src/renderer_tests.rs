@@ -120,28 +120,36 @@ impl ApplicationHandler for ValidationApp {
 
 fn run_render_hook_test(window: &Window) {
     eprintln!("[vk-test] creating Vulkan device with validation layer");
-    let gpu = Gpu::new(window).expect("create Vulkan device");
+    let device = Device::new().expect("create Vulkan device");
+    let surface = Surface::new(&device, window).expect("create Vulkan surface");
     eprintln!("[vk-test] Vulkan device and swapchain ready");
-    let debug = gpu
+    let debug = device
         .debug()
         .expect("validation layer and VK_EXT_debug_utils must be available");
 
     validation_layer_reverse_control(debug);
     eprintln!("[vk-test] reverse control passed");
-    let size = gpu.extent;
+    let size = surface.extent;
     assert!(size.0 > 20 && size.1 > 20, "surface is too small: {size:?}");
-    let mut renderer = Renderer::new(&gpu, 64, gpu.msaa_samples.as_raw()).expect("create renderer");
+    let mut renderer = Renderer::new(&device, surface.format, 64, device.msaa_samples.as_raw())
+        .expect("create renderer");
     renderer.register_hook(KIND, Box::new(FillRed));
-    let framebuffer_views = create_framebuffer_views(&gpu, &mut renderer);
+    let framebuffer_views = create_framebuffer_views(&device, &surface, &mut renderer);
     eprintln!("[vk-test] renderer and framebuffers ready: {size:?}");
 
     let registered = custom_list(KIND);
-    let (report, image_index) = render_one(&gpu, &mut renderer, &registered, &framebuffer_views);
+    let (report, image_index) = render_one(
+        &device,
+        &surface,
+        &mut renderer,
+        &registered,
+        &framebuffer_views,
+    );
     assert_eq!(report.custom_passes, 1);
     assert_eq!(report.unhandled_custom, 0);
-    let pixels = read_last_frame(&gpu, image_index, size);
+    let pixels = read_last_frame(&device, &surface, image_index, size);
     assert_pixel_counts(
-        &gpu,
+        &surface,
         &pixels,
         BOUNDS.width as usize * BOUNDS.height as usize,
     );
@@ -149,15 +157,21 @@ fn run_render_hook_test(window: &Window) {
     eprintln!("[vk-test] registered hook pixel check passed");
 
     let unregistered = custom_list("test:not-registered");
-    let (report, image_index) = render_one(&gpu, &mut renderer, &unregistered, &framebuffer_views);
+    let (report, image_index) = render_one(
+        &device,
+        &surface,
+        &mut renderer,
+        &unregistered,
+        &framebuffer_views,
+    );
     assert_eq!(report.custom_passes, 0);
     assert_eq!(report.unhandled_custom, 1);
-    let pixels = read_last_frame(&gpu, image_index, size);
-    assert_pixel_counts(&gpu, &pixels, 0);
+    let pixels = read_last_frame(&device, &surface, image_index, size);
+    assert_pixel_counts(&surface, &pixels, 0);
     assert_no_validation_errors(debug, "unregistered hook frame");
     eprintln!("[vk-test] unregistered hook pixel check passed");
 
-    destroy_framebuffer_views(&gpu, framebuffer_views);
+    destroy_framebuffer_views(&device, framebuffer_views);
 }
 
 fn validation_layer_reverse_control(debug: &crate::surface::DebugState) {
@@ -202,21 +216,23 @@ fn custom_list(kind: &str) -> DisplayList {
 }
 
 fn create_framebuffer_views(
-    gpu: &Gpu,
+    dev: &Device,
+    surface: &Surface,
     renderer: &mut Renderer,
 ) -> Vec<(vk::ImageView, vk::Framebuffer)> {
-    let extent = gpu.extent;
-    let msaa_view = renderer.ensure_msaa(gpu, extent);
-    gpu.images
+    let extent = surface.extent;
+    let msaa_view = renderer.ensure_msaa(dev, extent);
+    surface
+        .images
         .iter()
         .map(|&image| {
             let view = unsafe {
-                gpu.device
+                dev.device
                     .create_image_view(
                         &vk::ImageViewCreateInfo::builder()
                             .image(image)
                             .view_type(vk::ImageViewType::TYPE_2D)
-                            .format(gpu.format)
+                            .format(surface.format)
                             .subresource_range(vk::ImageSubresourceRange {
                                 aspect_mask: vk::ImageAspectFlags::COLOR,
                                 base_mip_level: 0,
@@ -230,7 +246,7 @@ fn create_framebuffer_views(
             };
             let attachments = msaa_view.map_or_else(|| vec![view], |msaa| vec![msaa, view]);
             let framebuffer = unsafe {
-                gpu.device
+                dev.device
                     .create_framebuffer(
                         &vk::FramebufferCreateInfo::builder()
                             .render_pass(renderer.msaa_render_pass)
@@ -247,28 +263,29 @@ fn create_framebuffer_views(
         .collect()
 }
 
-fn destroy_framebuffer_views(gpu: &Gpu, views: Vec<(vk::ImageView, vk::Framebuffer)>) {
+fn destroy_framebuffer_views(dev: &Device, views: Vec<(vk::ImageView, vk::Framebuffer)>) {
     unsafe {
         for (view, framebuffer) in views {
-            gpu.device.destroy_framebuffer(framebuffer, None);
-            gpu.device.destroy_image_view(view, None);
+            dev.device.destroy_framebuffer(framebuffer, None);
+            dev.device.destroy_image_view(view, None);
         }
-        gpu.device.device_wait_idle().expect("wait for GPU");
+        dev.device.device_wait_idle().expect("wait for GPU");
     }
 }
 
 fn render_one(
-    gpu: &Gpu,
+    dev: &Device,
+    surface: &Surface,
     renderer: &mut Renderer,
     list: &DisplayList,
     framebuffers: &[(vk::ImageView, vk::Framebuffer)],
 ) -> (zephyra_fx::RenderReport, u32) {
     let report = renderer
         .prepare(
-            gpu,
+            dev,
             &RenderCtx {
                 display_list: list,
-                size: gpu.extent,
+                size: surface.extent,
                 damage: Damage::Full,
                 atlas_pixels: &[],
                 atlas_size: 64,
@@ -278,12 +295,12 @@ fn render_one(
             },
         )
         .expect("prepare frame");
-    let (image_index, wait_sem) = gpu.acquire().expect("acquire swapchain image");
+    let (image_index, wait_sem) = surface.acquire(dev).expect("acquire swapchain image");
     let cmd = unsafe {
-        gpu.device
+        dev.device
             .allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(gpu.command_pool)
+                    .command_pool(dev.command_pool)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(1),
             )
@@ -291,45 +308,47 @@ fn render_one(
     };
     let (_, framebuffer) = framebuffers[image_index as usize];
     unsafe {
-        gpu.device
+        dev.device
             .begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default())
             .expect("begin frame command buffer");
     }
-    renderer.record_frame(gpu, cmd, framebuffer, list, BlendMode::SrcOver);
+    renderer.record_frame(dev, cmd, framebuffer, list, BlendMode::SrcOver);
     unsafe {
-        gpu.device
+        dev.device
             .end_command_buffer(cmd)
             .expect("end frame command buffer");
     }
     let signal_sem = unsafe {
-        gpu.device
+        dev.device
             .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
             .expect("create render semaphore")
     };
     let fence = unsafe {
-        gpu.device
+        dev.device
             .create_fence(&vk::FenceCreateInfo::default(), None)
             .expect("create render fence")
     };
-    gpu.submit_and_present(cmd, wait_sem, signal_sem, image_index, fence)
+    surface
+        .submit_and_present(dev, cmd, wait_sem, signal_sem, image_index, fence)
         .expect("submit and present frame");
     unsafe {
-        gpu.device.device_wait_idle().expect("wait for render");
-        gpu.device.free_command_buffers(gpu.command_pool, &[cmd]);
-        gpu.device.destroy_fence(fence, None);
-        gpu.device.destroy_semaphore(wait_sem, None);
-        gpu.device.destroy_semaphore(signal_sem, None);
+        dev.device.device_wait_idle().expect("wait for render");
+        dev.device.free_command_buffers(dev.command_pool, &[cmd]);
+        dev.device.destroy_fence(fence, None);
+        dev.device.destroy_semaphore(wait_sem, None);
+        dev.device.destroy_semaphore(signal_sem, None);
     }
     (report, image_index)
 }
 
-fn read_last_frame(gpu: &Gpu, image_index: u32, size: (u32, u32)) -> Vec<u8> {
-    gpu.read_back(gpu.images[image_index as usize], size.0, size.1)
+fn read_last_frame(dev: &Device, surface: &Surface, image_index: u32, size: (u32, u32)) -> Vec<u8> {
+    surface
+        .read_back(dev, surface.images[image_index as usize], size.0, size.1)
         .expect("read back swapchain image")
 }
 
-fn assert_pixel_counts(gpu: &Gpu, bytes: &[u8], expected_red: usize) {
-    let (red, green, blue) = match gpu.format {
+fn assert_pixel_counts(surface: &Surface, bytes: &[u8], expected_red: usize) {
+    let (red, green, blue) = match surface.format {
         vk::Format::R8G8B8A8_UNORM | vk::Format::R8G8B8A8_SRGB => (0, 1, 2),
         vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB => (2, 1, 0),
         format => panic!("unexpected swapchain format: {format:?}"),
