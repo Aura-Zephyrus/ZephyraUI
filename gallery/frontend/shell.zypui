@@ -220,7 +220,11 @@
   <PageRoot key="switches" cls="page-switches">
     <Section key="sec-switch" title="{tr('ui.switch')}">
       <DemoRow label="{tr('ui.toggle')}">
-        <ToggleSwitch key="switch:demo" label_key="ui.switch.airplane-mode" checked="{@switch_demo_on}" knob_x="{@switch_knob_x}" knob_scale_x="{@switch_knob_scale_x}" knob_scale_y="{@switch_knob_scale_y}" track_bg="{@switch_track_color}" knob_bg="{@switch_knob_bg}" knob_filter="{@switch_knob_filter}" knob_decoration="{@switch_knob_decoration}" animated="animated"/>
+        <ToggleSwitch key="switch:demo" label_key="ui.switch.airplane-mode" material="glass" checked="{@switch_demo_on}" knob_x="{@switch_knob_x}" knob_scale_x="{@switch_knob_scale_x}" knob_scale_y="{@switch_knob_scale_y}" track_bg="{@switch_track_color}" knob_bg="{@switch_knob_bg}" knob_filter="{@switch_knob_filter}" knob_decoration="{@switch_knob_decoration}" animated="animated"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.materials')}">
+        <ToggleSwitch key="switch:solid" label_key="ui.solid" material="solid" checked="{@switch_solid_on}" knob_x="{@switch_solid_x}" track_bg="{@switch_solid_track_color}" knob_bg="{@switch_solid_knob_bg}" animated="animated"/>
+        <ToggleSwitch key="switch:glass" label_key="ui.glass" material="glass" checked="{@switch_glass_on}" knob_x="{@switch_glass_x}" knob_scale_x="{@switch_glass_scale_x}" knob_scale_y="{@switch_glass_scale_y}" track_bg="{@switch_glass_track_color}" knob_bg="{@switch_glass_knob_bg}" knob_filter="{@switch_glass_knob_filter}" knob_decoration="{@switch_glass_knob_decoration}" animated="animated"/>
       </DemoRow>
       <DemoRow label="{tr('ui.radio')}">
         <for var="e" list="@radio_items">
@@ -237,6 +241,10 @@
       <GlassParams/>
       <GlassDecor/>
       <MaterialBoard/>
+      <DemoRow label="{tr('ui.materials')}">
+        <ToggleSwitch key="mat:solid" label_key="ui.solid" material="solid" checked="{@mat_solid_on}" knob_x="{@mat_solid_x}" track_bg="{@mat_solid_track_color}" knob_bg="{@mat_solid_knob_bg}" animated="animated"/>
+        <ToggleSwitch key="mat:glass" label_key="ui.glass" material="glass" checked="{@mat_glass_on}" knob_x="{@mat_glass_x}" knob_scale_x="{@mat_glass_scale_x}" knob_scale_y="{@mat_glass_scale_y}" track_bg="{@mat_glass_track_color}" knob_bg="{@mat_glass_knob_bg}" knob_filter="{@mat_glass_knob_filter}" knob_decoration="{@mat_glass_knob_decoration}" animated="animated"/>
+      </DemoRow>
     </Section>
   </PageRoot>
 </component>
@@ -254,7 +262,7 @@
 </component>
 <component name="GlassDecor" params="">
   <PageRoot key="glass-decor" cls="glass-decor-row">
-    <ToggleSwitch key="glass:decor" label_key="ui.decorations" checked="{@glass_decor_on}" knob_x="{@glass_decor_knob_x}" knob_scale_x="{@glass_decor_knob_scale_x}" knob_scale_y="{@glass_decor_knob_scale_y}" track_bg="{@glass_decor_track_color}" knob_bg="{@glass_decor_knob_bg}" knob_filter="{@glass_decor_knob_filter}" knob_decoration="{@glass_decor_knob_decoration}" animated="animated"/>
+    <ToggleSwitch key="glass:decor" label_key="ui.decorations" material="glass" checked="{@glass_decor_on}" knob_x="{@glass_decor_knob_x}" knob_scale_x="{@glass_decor_knob_scale_x}" knob_scale_y="{@glass_decor_knob_scale_y}" track_bg="{@glass_decor_track_color}" knob_bg="{@glass_decor_knob_bg}" knob_filter="{@glass_decor_knob_filter}" knob_decoration="{@glass_decor_knob_decoration}" animated="animated"/>
   </PageRoot>
 </component>
 <component name="MaterialBoard" params="">

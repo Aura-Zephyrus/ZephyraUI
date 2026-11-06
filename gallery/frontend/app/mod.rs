@@ -746,6 +746,10 @@ pub const CHECK_GROUP_KEY: &str = "group:checks";
 /// 加一项时就会漏改一边，症状是"点了没反应"。
 pub const SWITCH_DEMO_KEY: &str = "switch:demo";
 pub const GLASS_DECOR_KEY: &str = "glass:decor";
+pub const SWITCH_SOLID_KEY: &str = "switch:solid";
+pub const SWITCH_GLASS_KEY: &str = "switch:glass";
+pub const MAT_SOLID_KEY: &str = "mat:solid";
+pub const MAT_GLASS_KEY: &str = "mat:glass";
 /// 装饰开关的标签语义 key。
 pub const GLASS_DECOR_LABEL_KEY: &str = "ui.decorations";
 /// 开关的标签语义 key（译文由控件模板内部 `tr()` 取）。
@@ -809,6 +813,10 @@ pub struct Gallery {
     /// 控制三块玻璃的 `decoration`（`glass` ↔ `none`），**默认开**。
     /// 开/关都走同一个控件模型 —— 与拨杆的把手动画同一条路径。
     pub glass_decor: zephyra_ui::ToggleSwitch,
+    pub switch_solid: zephyra_ui::ToggleSwitch,
+    pub switch_glass: zephyra_ui::ToggleSwitch,
+    pub mat_solid: zephyra_ui::ToggleSwitch,
+    pub mat_glass: zephyra_ui::ToggleSwitch,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1139,10 +1147,18 @@ impl Default for Gallery {
             // 装饰默认**开**（与 `Decorations::glass()` 同款；`none` 是
             // 恒等，画面零差别只是不进离屏 pass）。
             glass_decor: zephyra_ui::ToggleSwitch::new(GLASS_DECOR_KEY, GLASS_DECOR_LABEL_KEY)
-                .with_checked(true),
+                .with_checked(true)
+                .with_material(zephyra_core::filter::Material::Glass),
             // 开关默认**关**着；单选组默认选中第一项（「关」）—— 一进页面就看得见
             // 两种状态，不必先点一下才知道控件长什么样。
-            switch_demo: zephyra_ui::ToggleSwitch::new(SWITCH_DEMO_KEY, SWITCH_LABEL_KEY),
+            switch_demo: zephyra_ui::ToggleSwitch::new(SWITCH_DEMO_KEY, SWITCH_LABEL_KEY)
+                .with_material(zephyra_core::filter::Material::Glass),
+            switch_solid: zephyra_ui::ToggleSwitch::new(SWITCH_SOLID_KEY, "ui.solid"),
+            switch_glass: zephyra_ui::ToggleSwitch::new(SWITCH_GLASS_KEY, "ui.glass")
+                .with_material(zephyra_core::filter::Material::Glass),
+            mat_solid: zephyra_ui::ToggleSwitch::new(MAT_SOLID_KEY, "ui.solid"),
+            mat_glass: zephyra_ui::ToggleSwitch::new(MAT_GLASS_KEY, "ui.glass")
+                .with_material(zephyra_core::filter::Material::Glass),
             radio_group: {
                 let mut g = zephyra_ui::RadioGroup::new();
                 for (key, label_key) in RADIO_KEYS.iter().zip(RADIO_LABEL_KEYS) {
@@ -1334,6 +1350,34 @@ impl Gallery {
                     self.glass_decor.toggle();
                 }
             }
+            SWITCH_SOLID_KEY => {
+                if let Some(target) = self.switch_solid.take_drag_completed_target_checked() {
+                    self.switch_solid.set_checked(target);
+                } else {
+                    self.switch_solid.toggle();
+                }
+            }
+            SWITCH_GLASS_KEY => {
+                if let Some(target) = self.switch_glass.take_drag_completed_target_checked() {
+                    self.switch_glass.set_checked(target);
+                } else {
+                    self.switch_glass.toggle();
+                }
+            }
+            MAT_SOLID_KEY => {
+                if let Some(target) = self.mat_solid.take_drag_completed_target_checked() {
+                    self.mat_solid.set_checked(target);
+                } else {
+                    self.mat_solid.toggle();
+                }
+            }
+            MAT_GLASS_KEY => {
+                if let Some(target) = self.mat_glass.take_drag_completed_target_checked() {
+                    self.mat_glass.set_checked(target);
+                } else {
+                    self.mat_glass.toggle();
+                }
+            }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
             }
@@ -1409,6 +1453,30 @@ impl View for Gallery {
         self.glass_decor
             .process_pointer_events(&state.pointer_events, state.scale);
 
+        let solid_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(SWITCH_SOLID_KEY);
+        self.switch_solid.set_pressed(solid_now_pressed);
+        self.switch_solid
+            .process_pointer_events(&state.pointer_events, state.scale);
+
+        let glass_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(SWITCH_GLASS_KEY);
+        self.switch_glass.set_pressed(glass_now_pressed);
+        self.switch_glass
+            .process_pointer_events(&state.pointer_events, state.scale);
+
+        let mat_solid_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(MAT_SOLID_KEY);
+        self.mat_solid.set_pressed(mat_solid_now_pressed);
+        self.mat_solid
+            .process_pointer_events(&state.pointer_events, state.scale);
+
+        let mat_glass_now_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(MAT_GLASS_KEY);
+        self.mat_glass.set_pressed(mat_glass_now_pressed);
+        self.mat_glass
+            .process_pointer_events(&state.pointer_events, state.scale);
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         let click_key = match (&self.last_pressed, &state.pressed) {
@@ -1422,6 +1490,10 @@ impl View for Gallery {
 
         self.switch_demo.advance(dt);
         self.glass_decor.advance(dt);
+        self.switch_solid.advance(dt);
+        self.switch_glass.advance(dt);
+        self.mat_solid.advance(dt);
+        self.mat_glass.advance(dt);
 
         // 入场动画时钟。
         //
@@ -1488,6 +1560,10 @@ impl View for Gallery {
         self.enter_ms < zephyra_style::anim::ENTER_MS
             || self.switch_demo.is_animating()
             || self.glass_decor.is_animating()
+            || self.switch_solid.is_animating()
+            || self.switch_glass.is_animating()
+            || self.mat_solid.is_animating()
+            || self.mat_glass.is_animating()
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
@@ -1649,6 +1725,31 @@ impl zypui::Host for Gallery {
             "glass_decor_knob_bg" => switch_knob_bg_value(&g.glass_decor),
             "glass_decor_knob_filter" => switch_knob_filter_value(&g.glass_decor),
             "glass_decor_knob_decoration" => switch_knob_decoration_value(&g.glass_decor),
+            // ---- 材质对比开关（PageSwitches / MaterialBoard 各一对） ----
+            "switch_solid_on" => B(g.switch_solid.is_checked()),
+            "switch_solid_x" => F(g.switch_solid.knob_x()),
+            "switch_solid_track_color" => switch_track_color_value(g, &g.switch_solid),
+            "switch_solid_knob_bg" => solid_knob_bg_value(),
+            "switch_glass_on" => B(g.switch_glass.is_checked()),
+            "switch_glass_x" => F(g.switch_glass.knob_x()),
+            "switch_glass_scale_x" => F(g.switch_glass.knob_scale_x()),
+            "switch_glass_scale_y" => F(g.switch_glass.knob_scale_y()),
+            "switch_glass_track_color" => switch_track_color_value(g, &g.switch_glass),
+            "switch_glass_knob_bg" => switch_knob_bg_value(&g.switch_glass),
+            "switch_glass_knob_filter" => switch_knob_filter_value(&g.switch_glass),
+            "switch_glass_knob_decoration" => switch_knob_decoration_value(&g.switch_glass),
+            "mat_solid_on" => B(g.mat_solid.is_checked()),
+            "mat_solid_x" => F(g.mat_solid.knob_x()),
+            "mat_solid_track_color" => switch_track_color_value(g, &g.mat_solid),
+            "mat_solid_knob_bg" => solid_knob_bg_value(),
+            "mat_glass_on" => B(g.mat_glass.is_checked()),
+            "mat_glass_x" => F(g.mat_glass.knob_x()),
+            "mat_glass_scale_x" => F(g.mat_glass.knob_scale_x()),
+            "mat_glass_scale_y" => F(g.mat_glass.knob_scale_y()),
+            "mat_glass_track_color" => switch_track_color_value(g, &g.mat_glass),
+            "mat_glass_knob_bg" => switch_knob_bg_value(&g.mat_glass),
+            "mat_glass_knob_filter" => switch_knob_filter_value(&g.mat_glass),
+            "mat_glass_knob_decoration" => switch_knob_decoration_value(&g.mat_glass),
             // 装饰本体：`glass` ↔ `none`。走 `Val::Raw`（结构值）——
             // 与控件把手 `knob_decoration` 的 Raw 通道同一条路；`none` 是恒等，
             // 关时三块玻璃不进离屏 pass。

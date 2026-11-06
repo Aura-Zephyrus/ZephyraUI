@@ -22,12 +22,12 @@
 
 Container.section {
     direction: vertical;
-    spacing: 12px;
+    spacing: 6px;
 }
 
 Container.section-body {
     direction: vertical;
-    spacing: 12px;
+    spacing: 6px;
 }
 
 Container.demo-row {
@@ -112,7 +112,7 @@ Container.page-layout {
 /* 材质页（材质专区 + 液态玻璃合并在一页）的根容器分类名。 */
 Container.page-materials {
     direction: vertical;
-    spacing: 24px;
+    spacing: 8px;
     cross-align: stretch;
 }
 /* ⚠ 这里**没有**旧 `home` 页的样式（`Container.hero` / `Text.hero-*` /

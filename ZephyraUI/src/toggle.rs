@@ -51,6 +51,8 @@ pub const CLASS_CHECKED: &str = "checked";
 /// 两处同改时这条常量会被 `knob_travel_matches_the_stylesheet_geometry` 钉住。
 pub const KNOB_TRAVEL: f32 = 20.0;
 
+use zephyra_core::filter::Material;
+
 /// 按压时把手的目标缩放（原版 `pressedScale = 1.5`）。
 pub const KNOB_PRESSED_SCALE: f32 = 1.5;
 
@@ -121,6 +123,12 @@ const MAX_SPRING_STEPS: f32 = 256.0;
 /// 的 2.5% 以内，再让 pressProgress/scale 回去。本仓用 `release_pending`
 /// 表达这一段保持期；把手到位后，按压弹簧才开始回落。
 ///
+/// # 材质（Solid 默认 / Glass 液态玻璃）
+///
+/// `material` 决定**行为**，不只是外观：`Solid`（默认）全部瞬变——无 fraction
+/// tween、无 press 弹簧、无缩放弹簧（"零动画"）；`Glass` 维持复刻的
+/// iOS LiquidToggle 行为。外观（颜色 / 白罩 / 透镜 / 装饰）全部由绑定 / .zstyle
+/// 驱动——见 [`Self::with_material`] 与 `controls.zypui` 的注释。
 /// # 把手动画（对照 `DampedDragAnimation.kt` / `LiquidToggle.kt`，一处特性 + 一处偏离）
 ///
 /// 原版用五根弹簧驱动把手与指示器，本仓的映射（`advance` 在每帧的时钟回调里
@@ -188,6 +196,16 @@ pub struct ToggleSwitch {
     /// 翻译它。字段名与 `label_key()` 方法名一起改，是为了让**编译器**把
     /// 所有旧调用点指出来。
     label_key: &'static str,
+    /// 材质选型（默认 [`Material::Solid`]，与按钮一致：未声明 = 纯色）。
+    ///
+    /// - `Solid`：**零动画**——`fraction` / `knob_x` / `press` / 缩放全部瞬变；
+    ///   轨道色按 `fraction` 的端点判定，同样无过渡。`.zypui` 未传
+    ///   `material` 时就是它；
+    /// - `Glass`（液态玻璃）：维持复刻的 iOS LiquidToggle 行为（fraction tween /
+    ///   press 缩放 / 白罩 / 透镜 / 装饰，外观由绑定驱动）。
+    ///
+    /// `<ToggleSwitch material="glass"/>` —— 与按钮同一个枚举、同一个词汇表。
+    material: Material,
     /// 开（`true`）还是关（`false`）。
     checked: bool,
     disabled: bool,
@@ -274,6 +292,7 @@ impl ToggleSwitch {
             fraction_target: 0.0,
             fraction_elapsed_ms: 0.0,
             fraction_tweening: false,
+            material: Material::Solid,
             scale_x: 1.0,
             scale_x_vel: 0.0,
             scale_y: 1.0,
@@ -308,6 +327,19 @@ impl ToggleSwitch {
         self.disabled = disabled;
     }
 
+    /// 指定材质（默认 [`Material::Solid`]，与按钮一致：未声明 = 纯色）。
+    ///
+    /// `Glass` 维持 iOS LiquidToggle 复刻行为；`Solid` 零动画——见类型文档。
+    pub fn with_material(mut self, material: Material) -> Self {
+        self.material = material;
+        self
+    }
+
+    /// 当前材质。
+    pub fn material(&self) -> Material {
+        self.material
+    }
+
     /// 事件路由身份。
     pub fn key(&self) -> &'static str {
         self.key
@@ -338,6 +370,13 @@ impl ToggleSwitch {
         }
         self.checked = checked;
         self.release_pending = true;
+        if self.material == Material::Solid {
+            // 零动画：状态即画面（宿主可能根本不泵帧）。
+            self.fraction = if checked { 1.0 } else { 0.0 };
+            self.fraction_tweening = false;
+            self.fraction_elapsed_ms = 0.0;
+            self.release_pending = false;
+        }
     }
 
     /// 翻转一次。
@@ -382,6 +421,11 @@ impl ToggleSwitch {
         self.pressed = pressed;
         // 按下就取消待释放；松开则进入「等把手到位再回落」的保持期。
         self.release_pending = !pressed;
+        if self.material == Material::Solid {
+            // 零动画：press 直接落位。
+            self.press = if pressed { 1.0 } else { 0.0 };
+            self.release_pending = false;
+        }
     }
 
     /// 当前按压进度（0..1）。玻璃装饰的强度按它缩放 —— 见类型文档。
@@ -465,6 +509,22 @@ impl ToggleSwitch {
         }
 
         let fraction_target = if self.checked { 1.0 } else { 0.0 };
+        // ⚠ Solid（默认）：**零动画**——所有量瞬变到端点。拖拽期间 fraction
+        // 仍由 Move 直接写（手势不是动画），这里只补齐其余字段。
+        if self.material == Material::Solid {
+            if !self.dragging {
+                self.fraction = fraction_target;
+            }
+            self.fraction_tweening = false;
+            self.fraction_elapsed_ms = 0.0;
+            self.release_pending = false;
+            self.press = if self.pressed { 1.0 } else { 0.0 };
+            self.scale_x = 1.0;
+            self.scale_y = 1.0;
+            self.scale_x_vel = 0.0;
+            self.scale_y_vel = 0.0;
+            return;
+        }
         // ⚠ 拖拽期间 fraction 由用户直接设（见 process_pointer_events），tween
         // 必须让位；松手后若未到端点，下面重新从当前位置走完整的一趟。
         if self.dragging {

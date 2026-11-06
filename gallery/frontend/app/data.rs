@@ -179,6 +179,17 @@ pub(crate) fn switch_knob_bg_value(model: &zephyra_ui::ToggleSwitch) -> zypui::V
     )))
 }
 
+/// 实色（solid）变体的把手 = 纯白不透明、不随 press 变化 ——「零动画」。
+///
+/// 模板上 `background` 必须求值为结构值（见 zypui instantiate.rs：绑错类型直接
+/// 报错），所以实色实例也要显式绑一个 Raw 颜色——就是"纯白"这一个常量。
+pub(crate) fn solid_knob_bg_value() -> zypui::Val {
+    use zephyra_core::core::Color;
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::color(Color::rgb(
+        1.0, 1.0, 1.0,
+    )))
+}
+
 /// 把手滤镜 = `[BackdropBlur(8dp · (1−press)), Lens(5dp · press, 10dp · press)]`
 /// —— 原版 `effects` 的 `blur(8.dp * (1 - progress))` 与
 /// `lens(5.dp * progress, 10.dp * progress, chromaticAberration = true)`。

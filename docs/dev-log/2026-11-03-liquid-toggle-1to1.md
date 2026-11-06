@@ -1012,6 +1012,85 @@ D3D11 则与 D3D12 同病（`on_cursor_moved` 返回值控制置脏，拖拽中�
   `cargo test -p zephyra-gallery` 全绿（含 56 gates）✓；
   `cargo doc --no-deps -p zephyra-ui` exit 0 ✓。
 
+---
+
+## 追加（2026-11-06 续五）：开关材质切换——`material` 属性（solid 零动画 / glass 维持现状）
+
+### 现象
+
+用户要求：「开关控件同样支持材质切换，和按钮一样」。按钮的材质是
+`.zstyle` 一行选（`material: frosted|glass`，未声明 = 纯色）；开关的
+外观全是绑定驱动，`.zstyle` 里没有对应通道。
+
+### 用户裁定（问卷结果）
+
+- **作用层级**：轨道 + 把手都套（不止轨道）；
+- **不要半透明**：只支持「液态玻璃」与「默认」，**磨砂（frosted）弃用**
+  （磨砂需要半透明填充才能糊住背后，用户不接受）；
+- **液态玻璃 = 维持现状**（白罩 White@(1−press)、按压透镜 blur(8(1−p)) +
+  lens(5p,10p)、装饰 control_with_progress、fraction 快入 250 ms）；
+- **默认 = 零动画**：无 fraction tween、无 press 弹簧、无缩放弹簧——
+  状态即画面（翻转瞬间到位）；
+- **轨道颜色两变体都可改**（维持 `lerp(track→accent, fraction)` 绑定通道；
+  默认变体的 fraction 跳变，无过渡）；
+- **gallery 两个页都显示**：reference 页（PageSwitches 材质行）+ 材质页
+  （PageMaterials 底部 DemoRow），各放 solid / glass 两个可点击开关。
+
+### 方案
+
+- `zephyra-ui::ToggleSwitch` 新增 `material` 字段，类型复用
+  `zephyra_core::filter::Material`（`Solid`（#[default]）/ `Glass`；与按钮
+  同一枚举、同一词汇表）。`.zypui` 的 ToggleSwitch 加 `material` 参数、
+  落类 `.switch.solid` / `.switch.glass`（纯标记，无样式差异）。
+- **默认 = Solid**：与按钮「未声明 = 纯色」一致；`ToggleSwitch::new` 的
+  行为从"玻璃复刻"变为"纯色"——**既有调用方必须显式 `material="glass"`**
+  （gallery 的 airplane / glass:decor 已补）。
+- Solid 的零动画实现：
+  `set_checked` / `set_pressed` 里直接落位（`fraction = 0|1`、
+  `press = 0|1`），`advance()` 兜底同样瞬变；拖拽（手势非动画）仍由
+  Move 直接写 fraction，`advance` 不回拉。`is_animating()` 恒 false →
+  宿主不必泵帧。
+- 外观：**不改 .zstyle 的静态把手**（`.switch-knob` 静态 `#ffffff` 就是
+  solid 的外观）；solid 走"宿主不绑玻璃值"路径——白罩/透镜/装饰绑定缺
+  失时 zypui 按「没设」降级（`filter`/`decoration`/`scale-*` 静默跳过）。
+- `background` 例外：zypui 对它绑错类型**直接报错**（静态色属于 .zstyle），
+  所以 solid 也必须绑 `knob_bg` —— 绑常量纯白（`solid_knob_bg_value()`）。
+- `.switch.solid { opacity: 1 }`：让分类词进「已知类名」门禁
+  （`every_class_name_the_source_emits_exists_in_the_stylesheet`）。
+
+### 排除的假设
+
+- **「把 material 做成纯 .zstyle 开关（像 Button）」**：开关的玻璃外观全在
+  运行期绑定里（knob_x/scale/filter/decoration/background），`.zstyle` 只
+  能管静态外观——轨道色 lerp、白罩透明度、装饰强度都不在它的能力范围。
+  分流：`.zstyle` 只负责落分类词（供门禁/主题用），行为由 `material` 字段控。
+- **「默认保持玻璃、solid 显式声明」**：按钮先例（未声明 = 纯色）被用户认可；
+  且"液态玻璃 = 维持现状"意味着玻璃变体开箱即用比自建更常见，默认给玻璃
+  反而让纯色用户多写一个参数——与按钮不一致。
+- **「solid 也 animate 一下但用 0ms」**："零动画"是用户原话，就纯瞬变。
+- **「materiale 参数沿用按钮的 frosted/glass」**：frosted 依赖半透明+背景
+  模糊，用户明确不接受；且开关轨道只有 28px 高，frosted 糊背后的收益不
+  成比例。
+
+### 结论 + 门禁
+
+- `ToggleSwitch::material()` / `with_material()`；
+  `solid_toggle_snaps_instantly_and_never_animates` /
+  `solid_press_progress_is_instant` /
+  `solid_drag_fraction_is_not_snapped_back` 三条新单测钉住。
+- gallery：reference 页「材质」行 + 材质页底部「材质」DemoRow（solid /
+  glass 各一枚，`mat:solid` / `mat:glass`）；既有两个演示开关显式
+  `material="glass"`。材质页 DemoRow 放在 `.section`（无定高）而不是
+  732×480 的 `.material-board`（image-texture 定高板，塞行会撑破）——
+  `hit_test_agrees_with_the_painted_rects` 抓出（y=796 掉出客户区），
+  收紧 `.page-materials` / `.section` / `.section-body` 的间距后通过。
+- 实测（CLI 内置 MCP，`zephyra mcp --port 7456`）：两个页的 solid / glass
+  开关分别点击 → 轨道色瞬时/过渡切换正确；参考页「材质」行 x=436/550
+  两枚开关往返点击，关↔开互切正确；材质页底部「材质」行完整落在窗口内。
+- 门禁：`cargo fmt --check` ✓；ui+gallery clippy `-D warnings` 0 ✓；
+  `cargo test -p zephyra-ui --lib` **70 passed** ✓；
+  `cargo test -p zephyra-gallery` 全绿（含 56 gates）✓。
+
 
 
 

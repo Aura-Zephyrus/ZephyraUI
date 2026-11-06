@@ -67,7 +67,7 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 以下组件也不会自行切换业务状态，但这是控件层的声明式边界，不应单独据此判为无效：
 
 - `ToolButton`、`PillButton`、`RoundButton`、`Hyperlink`
-- `RadioButton` / `ToggleSwitch`（2026-11-02 已补齐状态模型、键盘与无障碍，见下）
+- `RadioButton` / `ToggleSwitch`（2026-11-02 已补齐状态模型、键盘与无障碍；2026-11-06 起 ToggleSwitch 支持 `material` 属性：`solid`（默认，零动画）/ `glass`（液态玻璃，维持复刻），轨道与把手都支持，见 dev-log 2026-11-03-liquid-toggle-1to1.md 续五）
 - `Segmented`、`NavItem`、`NavSubItem`、`SelectorBar`
 - `CheckBox` / `CheckBoxGroup`（2026-11-01 已补齐三态与键盘，见下）
 - `Slider`、`Expander`、`SettingExpander`、`InfoBar` 的关闭项

@@ -133,6 +133,13 @@ Container.switch-track.on.animated {
     main-align: start;
 }
 
+/* solid 材质（默认）：零动画——无白罩/透镜/装饰（宿主不绑），轨道纯色。
+ * 分类词本身不携带额外外观；这条声明只为让 `.switch.solid` 是已知分类词
+ * （与按钮一致，分类词不一定有样式差异）。 */
+Control.switch.solid {
+    opacity: 1;
+}
+
 /* 焦点环画在**轨道**上（与单选钮同理：只框控件本身，不框标签）。 */
 Container.switch-track.focused {
     border-color: @focus_ring;

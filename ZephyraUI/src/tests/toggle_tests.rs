@@ -13,7 +13,7 @@ fn the_switch_class_words_match_the_stylesheet_vocabulary() {
     assert_eq!(CLASS_ON, "on");
     assert_eq!(CLASS_CHECKED, "checked");
 
-    let off = ToggleSwitch::new("k", "ui.label");
+    let off = glass("k", "ui.label");
     assert_eq!(off.class_word(), "");
     let on = off.with_checked(true);
     assert_eq!(on.class_word(), "on");
@@ -38,7 +38,7 @@ fn class_words_exist_in_the_toggle_stylesheet() {
 
 #[test]
 fn a_switch_toggles_between_two_states() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     assert!(!sw.is_checked());
     sw.toggle();
     assert!(sw.is_checked());
@@ -49,7 +49,7 @@ fn a_switch_toggles_between_two_states() {
 /// 禁用的开关点了没反应 —— 否则「禁用」只是画成灰的，点下去还会变。
 #[test]
 fn a_disabled_switch_does_not_toggle() {
-    let mut sw = ToggleSwitch::new("k", "ui.label").with_disabled(true);
+    let mut sw = glass("k", "ui.label").with_disabled(true);
     sw.toggle();
     assert!(!sw.is_checked());
     assert!(sw.is_disabled());
@@ -65,7 +65,7 @@ fn a_disabled_switch_does_not_toggle() {
 /// （画面看不出来，但整棵树每帧重排）。
 #[test]
 fn press_progress_advances_toward_the_target_and_lands_on_it() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     assert_eq!(sw.press_progress(), 0.0);
 
     sw.set_pressed(true);
@@ -91,7 +91,7 @@ fn press_progress_advances_toward_the_target_and_lands_on_it() {
 /// 没有延迟。
 #[test]
 fn press_progress_is_animated_not_instant() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     // 按下即开始动画：第一帧后进度已在 (0,1)
     sw.advance(16.0);
@@ -105,7 +105,7 @@ fn press_progress_is_animated_not_instant() {
 /// 禁用的开关不进动画 —— 进度恒 0。
 #[test]
 fn a_disabled_switch_never_animates() {
-    let mut sw = ToggleSwitch::new("k", "ui.label").with_disabled(true);
+    let mut sw = glass("k", "ui.label").with_disabled(true);
     sw.set_pressed(true);
     sw.advance(16.0);
     assert_eq!(sw.press_progress(), 0.0);
@@ -116,7 +116,7 @@ fn a_disabled_switch_never_animates() {
 /// `with_checked(true)` 必须把把手**直接**钉在开端 —— 启动时不该看到它滑过来。
 #[test]
 fn with_checked_places_the_knob_immediately() {
-    let sw = ToggleSwitch::new("k", "ui.label").with_checked(true);
+    let sw = glass("k", "ui.label").with_checked(true);
     assert_eq!(sw.fraction(), 1.0);
     assert_eq!(sw.knob_x(), crate::KNOB_TRAVEL);
 }
@@ -124,7 +124,7 @@ fn with_checked_places_the_knob_immediately() {
 /// 翻转后 `fraction` 向 1 推进，收敛后**钉死**在端点。
 #[test]
 fn fraction_advances_toward_the_target_and_lands_on_it() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle();
     assert_eq!(sw.fraction(), 0.0, "toggle 本身不瞬移把手");
 
@@ -145,7 +145,7 @@ fn fraction_advances_toward_the_target_and_lands_on_it() {
 /// 把手位移 = fraction × 行程（不是别的换算）。
 #[test]
 fn knob_x_tracks_fraction_linearly() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle();
     sw.advance(16.0);
     let p = sw.fraction();
@@ -155,7 +155,7 @@ fn knob_x_tracks_fraction_linearly() {
 /// 按压时把手 X/Y 缩放分别趋向 1.5×（松开回 1），且与 fraction 是独立的轴。
 #[test]
 fn knob_scale_follows_press_progress() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     assert_eq!(sw.knob_scale_x(), 1.0);
     assert_eq!(sw.knob_scale_y(), 1.0);
 
@@ -185,7 +185,7 @@ fn knob_scale_follows_press_progress() {
 /// `spring_step` 改回欠阻尼或误删钉死规则。
 #[test]
 fn knob_scale_never_overshoots_while_pressing() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     let mut max_x = 1.0f32;
     let mut max_y = 1.0f32;
@@ -220,7 +220,7 @@ fn knob_scale_never_overshoots_while_pressing() {
 /// 这条钉住两个轴在任何帧都相等，直到两轴弹簧自行收敛到 1.0。
 #[test]
 fn programmatic_checked_flip_does_not_stretch_the_knob() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle(); // fraction 0 → 1（自主临界弹簧）
     for i in 0..600 {
         sw.advance(16.0);
@@ -253,7 +253,7 @@ fn knob_travel_matches_the_stylesheet_geometry() {
 /// 所以动画结束后这里必然为 false，宿主才能回到零帧静止（否则空转烧 GPU）。
 #[test]
 fn is_animating_tracks_the_springs() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     assert!(!sw.is_animating(), "新造的开关不该声称在动画");
 
     sw.toggle();
@@ -290,7 +290,7 @@ fn is_animating_tracks_the_springs() {
 fn drag_toggles_checked_via_pointer_events() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     assert_eq!(sw.fraction(), 0.0);
     assert!(!sw.is_checked());
 
@@ -380,7 +380,7 @@ fn drag_toggles_checked_via_pointer_events() {
 fn drag_does_not_start_without_pressed() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     // pressed=false 时 Down
     sw.process_pointer_events(
         &[PointerInput {
@@ -416,7 +416,7 @@ fn drag_does_not_start_without_pressed() {
 fn a_tap_does_not_undo_the_host_toggle() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -453,7 +453,7 @@ fn a_tap_does_not_undo_the_host_toggle() {
 fn a_round_trip_drag_still_commits_by_threshold() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -588,7 +588,7 @@ fn only_the_selected_option_gets_the_checked_class() {
 fn drag_overshoot_is_not_banked_when_dragging_back() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_checked(true); // fraction = 1
     sw.set_pressed(true);
     sw.process_pointer_events(
@@ -629,7 +629,7 @@ fn drag_overshoot_is_not_banked_when_dragging_back() {
 /// press 保持期：状态变化时，按压弹簧不会立刻回落。
 #[test]
 fn programmatic_toggle_holds_press_until_fraction_settles() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle();
     sw.advance(16.0);
     assert!(sw.is_animating(), "外部切换也要泵帧");
@@ -648,7 +648,7 @@ fn programmatic_toggle_holds_press_until_fraction_settles() {
 /// 点一下（无拖拽）时，release 保持期同样等 fraction 到位后才回落。
 #[test]
 fn tap_holds_press_until_knob_reaches_the_target() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     for _ in 0..120 {
         sw.advance(16.0);
@@ -672,7 +672,7 @@ fn tap_holds_press_until_knob_reaches_the_target() {
 /// set_checked(同一个值) 不触发按压保持期。
 #[test]
 fn set_checked_with_the_same_value_is_a_no_op_for_animation() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_checked(false);
     sw.advance(16.0);
     assert_eq!(sw.press_progress(), 0.0);
@@ -696,7 +696,7 @@ fn a_jittery_click_still_toggles() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
     for jitter in [1.0_f32, 2.0, KNOB_DRAG_SLOP - 0.5] {
-        let mut sw = ToggleSwitch::new("k", "ui.label");
+        let mut sw = glass("k", "ui.label");
         sw.set_pressed(true);
         sw.process_pointer_events(
             &[PointerInput {
@@ -746,7 +746,7 @@ fn a_drag_past_the_slop_follows_the_pointer_one_to_one() {
     use crate::toggle::{KNOB_DRAG_SLOP, KNOB_TRAVEL};
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -800,7 +800,7 @@ fn a_drag_past_the_slop_follows_the_pointer_one_to_one() {
 fn a_large_dt_does_not_snap_a_live_drag_back_to_the_origin() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -850,7 +850,7 @@ fn a_large_dt_does_not_snap_a_live_drag_back_to_the_origin() {
 fn a_stale_drag_target_is_dropped_when_the_next_press_starts() {
     use zephyra_fx::{PointerInput, PointerInputPhase};
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -936,7 +936,7 @@ fn a_stale_drag_target_is_dropped_when_the_next_press_starts() {
 #[test]
 fn a_long_frame_gap_never_makes_the_scale_spring_explode() {
     for gap_ms in [130.0_f32, 200.0, 300.0, 381.6, 480.0] {
-        let mut sw = ToggleSwitch::new("k", "ui.label");
+        let mut sw = glass("k", "ui.label");
         sw.set_pressed(true);
         for _ in 0..120 {
             sw.advance(16.0);
@@ -991,7 +991,7 @@ fn sliding_back_and_forth_in_the_middle_keeps_the_knob_alive() {
         );
     }
 
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.set_pressed(true);
     sw.process_pointer_events(
         &[PointerInput {
@@ -1065,6 +1065,11 @@ fn sliding_back_and_forth_in_the_middle_keeps_the_knob_alive() {
     assert_eq!(sw.knob_scale_y(), 1.0);
 }
 
+/// 动画相关的测试默认走液态玻璃（Solid 是默认材质，零动画）。
+fn glass(key: &'static str, label: &'static str) -> ToggleSwitch {
+    ToggleSwitch::new(key, label).with_material(zephyra_core::filter::Material::Glass)
+}
+
 // ───────────────────── 快入 tween（Direct） ─────────────────────
 
 /// `cubic-bezier(0,0,0,1)` 的退化形状（x = t³，y = 3t² − 2t³），以 t = 直接 elapsed
@@ -1099,7 +1104,7 @@ fn direct_ease_shape_is_monotonic_and_pinned_to_endpoints() {
 /// 完整走完 250 ms 之后 fraction 必须**精确**落在目标上、动画熄火。
 #[test]
 fn fraction_tween_lands_exactly_on_the_target_and_stops() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle(); // fraction 0 → 1
     for _ in 0..20 {
         sw.advance(16.0);
@@ -1115,7 +1120,7 @@ fn fraction_tween_lands_exactly_on_the_target_and_stops() {
 /// 位移必须从**当前**位置重启满 250 ms，不回弹、不瞬移。
 #[test]
 fn reversing_mid_tween_restarts_from_current_fraction() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle(); // 0 → 1
                  // 推进 ~128 ms（8 × 16 ms），fraction 应已经明显向 1 走。
     for _ in 0..8 {
@@ -1148,7 +1153,7 @@ fn reversing_mid_tween_restarts_from_current_fraction() {
 /// fraction 未到端点时动画必须被视为“进行中”（宿主才肯泵帧）。
 #[test]
 fn an_unfinished_tween_is_animating() {
-    let mut sw = ToggleSwitch::new("k", "ui.label");
+    let mut sw = glass("k", "ui.label");
     sw.toggle();
     sw.advance(16.0);
     assert!(sw.is_animating(), "tween 刚起步就必须判定为动画中");
@@ -1156,4 +1161,74 @@ fn an_unfinished_tween_is_animating() {
         sw.advance(16.0);
     }
     assert!(!sw.is_animating());
+}
+
+// ───────────────────── Solid 材质（默认）零动画 ─────────────────────
+
+/// 默认（未指定材质）= Solid：toggle 后 fraction 必须**立刻**精确落位，
+/// 没有任何动画进行中。
+#[test]
+fn solid_toggle_snaps_instantly_and_never_animates() {
+    let mut sw = ToggleSwitch::new("k", "ui.label");
+    assert_eq!(sw.material(), zephyra_core::filter::Material::Solid);
+    sw.toggle();
+    assert_eq!(sw.fraction(), 1.0, "Solid：fraction 必须立刻到位");
+    assert!(!sw.is_animating(), "Solid：不存在动画中状态");
+    assert_eq!(sw.knob_x(), 20.0);
+    sw.advance(16.0);
+    assert_eq!(sw.fraction(), 1.0);
+    sw.toggle();
+    assert_eq!(sw.fraction(), 0.0);
+    assert!(!sw.is_animating());
+}
+
+/// Solid 下按压也瞬变：`set_pressed(true)` → press 立刻 = 1.0（无弹簧爬升）。
+#[test]
+fn solid_press_progress_is_instant() {
+    let mut sw = ToggleSwitch::new("k", "ui.label");
+    sw.set_pressed(true);
+    sw.advance(16.0);
+    assert_eq!(sw.press_progress(), 1.0);
+    sw.set_pressed(false);
+    sw.advance(16.0);
+    assert_eq!(sw.press_progress(), 0.0);
+    assert!(!sw.is_animating());
+}
+
+/// Solid 拖拽期间 fraction 仍由手势直接写，`advance` 不把它拉回端点
+/// （手势不是动画；与玻璃模式同一保护）。
+#[test]
+fn solid_drag_fraction_is_not_snapped_back() {
+    use zephyra_fx::{PointerInput, PointerInputPhase};
+
+    let mut sw = ToggleSwitch::new("k", "ui.label");
+    sw.set_pressed(true);
+    sw.process_pointer_events(
+        &[PointerInput {
+            x: 100.0,
+            y: 200.0,
+            phase: PointerInputPhase::Down,
+        }],
+        1.0,
+    );
+    // 越过 slop 后的拖拽增量直接落到 fraction 上。
+    sw.process_pointer_events(
+        &[PointerInput {
+            x: 112.0,
+            y: 200.0,
+            phase: PointerInputPhase::Move,
+        }],
+        1.0,
+    );
+    let mid = sw.fraction();
+    assert!(
+        mid > 0.0 && mid < 1.0,
+        "拖拽后 fraction 应处于中间值，实际 {mid}"
+    );
+    sw.advance(16.0);
+    assert_eq!(
+        sw.fraction(),
+        mid,
+        "Solid：advance 不允许回拉拖拽中的 fraction"
+    );
 }

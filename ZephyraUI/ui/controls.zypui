@@ -240,9 +240,13 @@
      - 不传这些 `knob_*` / `track_bg` / `knob_*` 值时两个属性不实例化
        （`as_f32` 失败或 Raw 类型不匹配 → 按「没设」降级），把手退回静态
        `main-align` 布局、轨道色退回样式表的 `.switch-track` / `.on` 静态色
-       —— 与静态演示的观感一致。 -->
-<component name="ToggleSwitch" params="label label_key checked disabled knob_x knob_scale_x knob_scale_y track_bg knob_bg knob_filter knob_decoration animated">
-  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="switch {checked ? 'on'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+       —— 与静态演示的观感一致。
+     `material`：`solid`（**默认**，与按钮一致）= **零动画**——不绑任何玻璃动
+       态值、状态即画面；`glass` = 维持上述复刻（白罩 / 透镜 / 装饰，全由宿主
+       绑定驱动）。`material` 只是分类词（落类 `.switch.solid` / `.switch.glass`）；
+       玻璃效果不写在样式里——写在宿主绑定里。 -->
+<component name="ToggleSwitch" params="label label_key checked disabled knob_x knob_scale_x knob_scale_y track_bg knob_bg knob_filter knob_decoration animated material">
+  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="switch {checked ? 'on'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'} {material}">
     <container key="track" background="{track_bg}" class="switch-track {checked ? 'on'} {focused ? 'focused'} {disabled ? 'disabled'} {animated}">
       <container key="knob" translate-x="{knob_x}" scale-x="{knob_scale_x}" scale-y="{knob_scale_y}" background="{knob_bg}" filter="{knob_filter}" decoration="{knob_decoration}" class="switch-knob"/>
     </container>
