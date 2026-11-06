@@ -3,7 +3,9 @@
 > 按轨道分组。✅ 表示已完成（保留最近几条做上下文），其余按优先级排序。
 > 每项做完后在 dev-log（`docs/dev-log/`）记账，这里的条目只留结论与指针。
 
-## 进行中：外部渲染源拓展接口（收尾）
+## 进行中（收尾与待验收）
+
+### important：调整base与core架构，组件化管理
 
 ### 1. Vulkan：渲染源钩子与命令校验（实现完成，待物理 GPU 复核）
 
@@ -22,8 +24,30 @@
   `0xC0000005` 崩溃，尚不能据此声称 Vulkan 驱动验收通过。该项仅是驱动覆盖
   待办，不阻塞代码与 WSLg 门禁完成。
 
+### 2. 多窗口 + Vulkan `Backend`（实现完成，待 Linux 运行验收）
+
+- 已落地 `WindowSet` / `Backend` / `WindowHost`（`zephyra-window`），D3D12、
+  D3D11、Vulkan 三个后端全部接入；Vulkan 完成「进程级 `Device` + 每窗口
+  `Surface`」拆分，`VulkanBackend` 与 gallery `--multi-window` 已接
+  （`linux-vk` 与 Windows d3d12 两条路共用同一套自举代码）。
+- 门禁：`zephyra-window` 单测、`zephyra-vulkan/tests/backend_contract.rs`
+  2 条（`Backend` 上界、`Arc<Mutex<Device>>: Send+Sync`）、全 workspace
+  `1206 passed / 0 failed / 53 ignored`、clippy 0 警告。
+- **仍待 Linux 运行验收**：本机只装了 `x86_64-pc-windows-msvc`，Wayland
+  surface / swapchain、共享设备多窗口、`--multi-window` 只做了编译期与
+  人工核对，没有实跑。在 WSL2 上跑：
+  `cargo run -p zephyra-gallery --no-default-features --features linux-vk -- --multi-window`
+  以及 `cargo run -p zephyra-foundation --bin demo --no-default-features --features linux-vk`。
+  验收点：两个窗口各自 present、主窗口关闭时 Inspector 级联关闭、resize
+  后交换链重建、`ZEPHYRA_FRAME_DUMP` 仍能读回。
+
 ## 后续（已排期未动工）
 
+- **gallery Inspector 换成真正的 `.zypui` 设置页**：现在的 Inspector 是
+  `Gallery` 视图的第二个实例（共享主题意图格），只验证了动态建窗 / owned
+  级联 / 共享纹理表，视觉与交互上都不是一个「设置面板」。目标是写一份独立的
+  `.zypui` 设置页（主题、frameless / transparent 等运行期可改的窗口选项），
+  由自己的 `View` 驱动，而不是复用 Gallery。
 - **离屏自绘支持（v2）**：带非恒等滤镜的 Custom 进离屏段时，几何展开层
   画不出宿主内容（现在诚实计数 `unhandled_custom`）。v2 让离屏 pass
   也能调钩子画进 RT。依赖：三个后端钩子先全部落地。
@@ -33,6 +57,12 @@
 
 ## 已完成（近期，详见 dev-log）
 
+- ✅ 2026-11 多窗口与三后端 `Backend`：`WindowSet` 按 `WindowId` 分发、owned
+  窗口级联关闭、`ShutdownMode` 决定最后窗口退出；D3D12 拆「共享 `Renderer`
+  + 每窗口 `WindowTargets`」，D3D11 只共享设备，Vulkan 拆「进程级 `Device`
+  + 每窗口 `Surface`」并补上 `VulkanBackend`。gallery `--multi-window` 在
+  Windows d3d12 与 Linux Vulkan 两条路上共用自举代码。细节见
+  [多窗口](docs/dev-log/2026-11-multi-window.md)。
 - ✅ 2026-10-26 MCP 输入/文本布局/D3D12 截图与 `.zypui` 渲染源：D3D11 /
   D3D12 真机 MCP 闭环（键盘、滚动、点击后布局变化、截图）；TCP 大截图
   非阻塞续传；`get_layout` 提供文本布局树；`.zypui` 只声明 kind，payload

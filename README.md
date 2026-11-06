@@ -25,12 +25,16 @@
 
 
 ## 鸣谢
-| 项目 | 地址 |
-|---|---|
-|**Rinui** |[项目地址](https://github.com/RinLit-233-shiroko/Rin-UI)|
-|**WinUI3**|[项目地址](https://github.com/microsoft/microsoft-ui-xaml)
-|**skia**|[项目地址](https://skia.org/)
-|**liquid-glass**|[项目地址](https://github.com/archisvaze/liquid-glass)
+| 项目 | 地址 | 开源协议 |
+|---|---|---|
+|组件参考|
+|**Rinui** |[项目地址](https://github.com/RinLit-233-shiroko/Rin-UI)|MIT License|
+|**WinUI3**|[项目地址](https://github.com/microsoft/microsoft-ui-xaml)|MIT License|
+|源码借鉴|
+|**skia**|[项目地址](https://skia.org/)|BSD-3-Clause license|
+|**AndroidLiquidGlass**|[项目地址](https://github.com/Kyant0/AndroidLiquidGlass)|Apache-2.0 license|
+|**liquid-glass**|[项目地址](https://github.com/archisvaze/liquid-glass)|MIT License|
+
 
 ## 许可证
 此项目采用Apache-2.0 license。
