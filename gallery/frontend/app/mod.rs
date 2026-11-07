@@ -1820,13 +1820,15 @@ impl zypui::Host for Gallery {
             // 关时三块玻璃不进离屏 pass。
             // ---- slider（LiquidSlider 原版，实色/玻璃对比）----
             "slider_solid_fill_w" => F(g.slider_solid.fill_width()),
-            "slider_solid_thumb_x" => F(g.slider_solid.thumb_x()),
+            // 拇指在水平流中排在 fill 后面：translate-x 从布局位置起算，
+            // 需减去 fill 宽度才能对齐到轨道原点（thumb_x() 是相对轨道左缘的绝对偏移）。
+            "slider_solid_thumb_x" => F(g.slider_solid.thumb_x() - g.slider_solid.fill_width()),
             "slider_solid_thumb_sx" => F(g.slider_solid.thumb_scale_x()),
             "slider_solid_thumb_sy" => F(g.slider_solid.thumb_scale_y()),
             "slider_solid_thumb_bg" => solid_thumb_bg_value(),
             "slider_solid_value" => S(slider_value_text(g.slider_solid.value())),
             "slider_glass_fill_w" => F(g.slider_glass.fill_width()),
-            "slider_glass_thumb_x" => F(g.slider_glass.thumb_x()),
+            "slider_glass_thumb_x" => F(g.slider_glass.thumb_x() - g.slider_glass.fill_width()),
             "slider_glass_thumb_sx" => F(g.slider_glass.thumb_scale_x()),
             "slider_glass_thumb_sy" => F(g.slider_glass.thumb_scale_y()),
             "slider_glass_thumb_bg" => slider_thumb_bg_value(&g.slider_glass),
