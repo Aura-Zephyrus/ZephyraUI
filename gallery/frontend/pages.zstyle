@@ -434,3 +434,13 @@ Container.page-slider {
     spacing: 24px;
     cross-align: stretch;
 }
+
+Container.dd-demo-wrap {
+    direction: vertical;
+}
+
+Container.dd-menu-popup {
+    position: absolute;
+    left: 0px;
+    top: 40px;
+}

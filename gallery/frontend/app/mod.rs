@@ -223,6 +223,9 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.with-icon-round", "With icon / round"),
     ("en", "ui.liquid-button", "Liquid button"),
     ("en", "ui.options", "Options"),
+    ("en", "ui.option.alpha", "Alpha"),
+    ("en", "ui.option.beta", "Beta"),
+    ("en", "ui.option.gamma", "Gamma"),
     ("en", "ui.dropdown-button", "Dropdown button"),
     ("en", "ui.liquid.demo", "LiquidButton — press & drag, solid / glass (LiquidButton.kt 1:1)"),
     ("en", "ui.send", "Send"),
@@ -354,6 +357,9 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.with-icon-round", "带图标 / 圆形"),
     ("zh-Hans", "ui.liquid-button", "液态胶囊按钮"),
     ("zh-Hans", "ui.options", "选项"),
+    ("zh-Hans", "ui.option.alpha", "选项一"),
+    ("zh-Hans", "ui.option.beta", "选项二"),
+    ("zh-Hans", "ui.option.gamma", "选项三"),
     ("zh-Hans", "ui.dropdown-button", "下拉按钮"),
     ("zh-Hans", "ui.liquid.demo", "LiquidButton — 按压并拖拽，实色 / 玻璃（LiquidButton.kt 1:1）"),
     ("zh-Hans", "ui.send", "发送"),
@@ -485,6 +491,9 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.with-icon-round", "アイコン付き / 丸"),
     ("ja", "ui.liquid-button", "リキッドボタン"),
     ("ja", "ui.options", "オプション"),
+    ("ja", "ui.option.alpha", "アルファ"),
+    ("ja", "ui.option.beta", "ベータ"),
+    ("ja", "ui.option.gamma", "ガンマ"),
     ("ja", "ui.dropdown-button", "ドロップダウンボタン"),
     ("ja", "ui.liquid.demo", "LiquidButton — 押下/ドラッグ、ソリッド/グラス（LiquidButton.kt 1:1）"),
     ("ja", "ui.send", "送信"),
@@ -1482,6 +1491,14 @@ impl Gallery {
             LIQUID_DD_GLASS_KEY => {
                 self.liquid_dd_glass_open = !self.liquid_dd_glass_open;
             }
+            _ if key.starts_with("liquid:dd:solid:opt") => {
+                self.liquid_dd_solid_open = false;
+                self.last_action = "liquid-dd-solid";
+            }
+            _ if key.starts_with("liquid:dd:glass:opt") => {
+                self.liquid_dd_glass_open = false;
+                self.last_action = "liquid-dd-glass";
+            }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
             }
@@ -1931,11 +1948,39 @@ impl zypui::Host for Gallery {
             "ldd_s_tx" => F(g.liquid_dd_solid.translation().0),
             "ldd_s_ty" => F(g.liquid_dd_solid.translation().1),
             "ldd_s_open" => B(g.liquid_dd_solid_open),
+            "ldd_s_entries" => L(vec![
+                rec(vec![
+                    ("key", S("liquid:dd:solid:opt1")),
+                    ("label", S(g.tr("ui.option.alpha"))),
+                ]),
+                rec(vec![
+                    ("key", S("liquid:dd:solid:opt2")),
+                    ("label", S(g.tr("ui.option.beta"))),
+                ]),
+                rec(vec![
+                    ("key", S("liquid:dd:solid:opt3")),
+                    ("label", S(g.tr("ui.option.gamma"))),
+                ]),
+            ]),
             "ldd_g_sx" => F(g.liquid_dd_glass.scale().0),
             "ldd_g_sy" => F(g.liquid_dd_glass.scale().1),
             "ldd_g_tx" => F(g.liquid_dd_glass.translation().0),
             "ldd_g_ty" => F(g.liquid_dd_glass.translation().1),
             "ldd_g_open" => B(g.liquid_dd_glass_open),
+            "ldd_g_entries" => L(vec![
+                rec(vec![
+                    ("key", S("liquid:dd:glass:opt1")),
+                    ("label", S(g.tr("ui.option.alpha"))),
+                ]),
+                rec(vec![
+                    ("key", S("liquid:dd:glass:opt2")),
+                    ("label", S(g.tr("ui.option.beta"))),
+                ]),
+                rec(vec![
+                    ("key", S("liquid:dd:glass:opt3")),
+                    ("label", S(g.tr("ui.option.gamma"))),
+                ]),
+            ]),
             "ldd_g_bg" => {
                 let a = if g.liquid_dd_glass_open { 0.30 } else { 0.18 };
                 zypui::Val::Raw(zephyra_core::property::PropertyValue::color(
