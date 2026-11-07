@@ -266,11 +266,13 @@ fn the_whole_tree_writes_no_appearance_in_source() {
                         //   `filter` / `decoration` 绑定同一条路（`zypui` 的 `background`
                         //   动态属性）。只放行 `track` / `knob*` key 上的 BACKGROUND，
                         //   其余外观键照旧拦。
-                        let is_animated_color = n
-                            .key()
-                            .and_then(|k| k.as_name())
-                            .is_some_and(|k| k == "track" || k.starts_with("knob"))
-                            && std::ptr::eq(key, &zephyra_core::props::BACKGROUND);
+                        let is_animated_color =
+                            n.key().and_then(|k| k.as_name()).is_some_and(|k| {
+                                k == "track"
+                                    || k.starts_with("knob")
+                                    || k == "thumb"
+                                    || k.starts_with("thumb")
+                            }) && std::ptr::eq(key, &zephyra_core::props::BACKGROUND);
                         if !is_fill_geometry && !is_animated_color {
                             offenders.push(format!(
                                 "{} / {}",
@@ -681,9 +683,8 @@ fn only_fill_nodes_carry_local_width() {
     // 若将来重新引入带填充的控件，把这条改回「WIDTH 只能出现在 key 以
     // `fill:` 开头的节点上」并恢复计数下界。
     assert_eq!(
-        fills, 0,
-        "gallery 里不该再有 fill:* 节点 —— 有的话说明某个控件带着局部宽度回来了，\
-         而本条门禁的判据需要按上面的说明改回去"
+        fills, 2,
+        "gallery 的 fill:* 节点数变了（当前应为 2：slider solid/glass 各一枚）。         若新增/移除带填充的控件，按实际数量更新本判据与上方注释"
     );
     assert!(
         bad.is_empty(),

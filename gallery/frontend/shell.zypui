@@ -312,6 +312,20 @@
     </PageRoot>
   </PageRoot>
 </component>
+
+<component name="PageSlider" params="">
+  <PageRoot key="slider" cls="page-slider">
+    <TextLabel key="slider-blurb" text="{tr('ui.slider.demo')}" level="text-body"/>
+    <Section key="sec-slider" title="{tr('ui.slider')}">
+      <DemoRow label="{tr('ui.solid')}">
+        <Slider key="slider:solid" label="{@slider_solid_value}" label_key="ui.slider.volume" fill_w="{@slider_solid_fill_w}" thumb_x="{@slider_solid_thumb_x}" thumb_scale_x="{@slider_solid_thumb_sx}" thumb_scale_y="{@slider_solid_thumb_sy}" thumb_bg="{@slider_solid_thumb_bg}" animated="animated" material="solid"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.glass')}">
+        <Slider key="slider:glass" label="{@slider_glass_value}" label_key="ui.slider.brightness" fill_w="{@slider_glass_fill_w}" thumb_x="{@slider_glass_thumb_x}" thumb_scale_x="{@slider_glass_thumb_sx}" thumb_scale_y="{@slider_glass_thumb_sy}" thumb_bg="{@slider_glass_thumb_bg}" thumb_filter="{@slider_glass_thumb_filter}" thumb_decoration="{@slider_glass_thumb_decoration}" animated="animated" material="glass"/>
+      </DemoRow>
+    </Section>
+  </PageRoot>
+</component>
 <page name="Window">
   <container key="window" class="window">
     <container key="titlebar" class="titlebar">
@@ -370,6 +384,9 @@
           </if>
           <if cond="(@route == 'materials')">
             <PageMaterials/>
+          </if>
+          <if cond="(@route == 'slider')">
+            <PageSlider/>
           </if>
         </container>
       </container>

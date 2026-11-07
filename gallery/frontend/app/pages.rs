@@ -30,4 +30,6 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     // 材质专区（与液态玻璃合并）：三个 `[−]/[+]` 步进器调折射参数，
     // 背景是一张真实照片。
     ("materials", "Materials", "image"),
+    // 滑块（LiquidSlider 1:1：实色/玻璃对比）。
+    ("slider", "Slider", "sliders"),
 ];

@@ -428,3 +428,9 @@ Container.fx-grow {
     height: 56px;
     flex-grow: 1;
 }
+
+Container.page-slider {
+    direction: vertical;
+    spacing: 24px;
+    cross-align: stretch;
+}

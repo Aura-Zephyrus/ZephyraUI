@@ -79,6 +79,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     // 合并之后这一页的核心是「材质在真实照片上是什么样」，所以图标取 `image`
     // （照片板就是这一页的背景）；四个 `[−]/[+]` 步进器仍在页内。
     ("materials", "Materials", "image"),
+    ("slider", "Slider", "sliders"),
 ];
 
 /// 控件参考页的**族**（顺序即 segmented 的段顺序）。
@@ -181,6 +182,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "route.testing", "Testing"),
     ("en", "route.reference", "Controls"),
     ("en", "route.materials", "Materials"),
+    ("en", "route.slider", "Slider"),
     (
         "en",
         "ui.small-nav-collapsed-to-icons",
@@ -302,6 +304,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.radio.off", "Off"),
     ("en", "ui.radio.on", "On"),
     ("en", "ui.radio.auto", "Auto"),
+    ("en", "ui.slider", "Slider"),
+    ("en", "ui.slider.volume", "Volume"),
+    ("en", "ui.slider.brightness", "Brightness"),
+    ("en", "ui.slider.demo", "Liquid slider — drag or tap, solid / glass"),
     // ---- zh-Hans ----
     ("zh-Hans", "route.guide", "快速开始"),
     ("zh-Hans", "route.state", "状态"),
@@ -311,6 +317,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "route.testing", "测试"),
     ("zh-Hans", "route.reference", "控件参考"),
     ("zh-Hans", "route.materials", "材质与玻璃"),
+    ("zh-Hans", "route.slider", "滑块"),
     (
         "zh-Hans",
         "ui.small-nav-collapsed-to-icons",
@@ -424,6 +431,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.radio.off", "关"),
     ("zh-Hans", "ui.radio.on", "开"),
     ("zh-Hans", "ui.radio.auto", "自动"),
+    ("zh-Hans", "ui.slider", "滑块"),
+    ("zh-Hans", "ui.slider.volume", "音量"),
+    ("zh-Hans", "ui.slider.brightness", "亮度"),
+    ("zh-Hans", "ui.slider.demo", "液态滑块 — 拖拽或点按，实色 / 玻璃"),
     // ---- ja ----
     ("ja", "route.guide", "クイックスタート"),
     ("ja", "route.state", "状態"),
@@ -433,6 +444,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "route.testing", "テスト"),
     ("ja", "route.reference", "コントロール"),
     ("ja", "route.materials", "マテリアルとガラス"),
+    ("ja", "route.slider", "スライダー"),
     (
         "ja",
         "ui.small-nav-collapsed-to-icons",
@@ -550,6 +562,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.radio.off", "オフ"),
     ("ja", "ui.radio.on", "オン"),
     ("ja", "ui.radio.auto", "自動"),
+    ("ja", "ui.slider", "スライダー"),
+    ("ja", "ui.slider.volume", "音量"),
+    ("ja", "ui.slider.brightness", "明るさ"),
+    ("ja", "ui.slider.demo", "リキッドスライダー — ドラッグ/タップ、ソリッド/グラス"),
 ];
 
 /// 本表里出现过的**全部**键（按首次出现去重）。
@@ -750,6 +766,9 @@ pub const SWITCH_SOLID_KEY: &str = "switch:solid";
 pub const SWITCH_GLASS_KEY: &str = "switch:glass";
 pub const MAT_SOLID_KEY: &str = "mat:solid";
 pub const MAT_GLASS_KEY: &str = "mat:glass";
+/// 滑块（LiquidSlider 1:1）演示：实色 / 玻璃各一枚。
+pub const SLIDER_SOLID_KEY: &str = "slider:solid";
+pub const SLIDER_GLASS_KEY: &str = "slider:glass";
 /// 装饰开关的标签语义 key。
 pub const GLASS_DECOR_LABEL_KEY: &str = "ui.decorations";
 /// 开关的标签语义 key（译文由控件模板内部 `tr()` 取）。
@@ -817,6 +836,9 @@ pub struct Gallery {
     pub switch_glass: zephyra_ui::ToggleSwitch,
     pub mat_solid: zephyra_ui::ToggleSwitch,
     pub mat_glass: zephyra_ui::ToggleSwitch,
+    /// 滑块演示（LiquidSlider 原版语义）：实色 / 玻璃各一枚。
+    pub slider_solid: zephyra_ui::Slider,
+    pub slider_glass: zephyra_ui::Slider,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1159,6 +1181,24 @@ impl Default for Gallery {
             mat_solid: zephyra_ui::ToggleSwitch::new(MAT_SOLID_KEY, "ui.solid"),
             mat_glass: zephyra_ui::ToggleSwitch::new(MAT_GLASS_KEY, "ui.glass")
                 .with_material(zephyra_core::filter::Material::Glass),
+            // 滑块：0..100，visibilityThreshold 0.01（原版 SliderContent）；初值 50。
+            slider_solid: zephyra_ui::Slider::new(
+                SLIDER_SOLID_KEY,
+                "ui.slider.volume",
+                0.0,
+                100.0,
+                0.01,
+            )
+            .with_value(50.0),
+            slider_glass: zephyra_ui::Slider::new(
+                SLIDER_GLASS_KEY,
+                "ui.slider.brightness",
+                0.0,
+                100.0,
+                0.01,
+            )
+            .with_value(50.0)
+            .with_material(zephyra_core::filter::Material::Glass),
             radio_group: {
                 let mut g = zephyra_ui::RadioGroup::new();
                 for (key, label_key) in RADIO_KEYS.iter().zip(RADIO_LABEL_KEYS) {
@@ -1378,6 +1418,22 @@ impl Gallery {
                     self.mat_glass.toggle();
                 }
             }
+            // 滑块：拖拽提交由 take_committed_value 体现；点按跳转在 process_pointer_events
+            // （track_left 已知时）。无位置/拖拽上下文的激活（click/键盘）做步进回退，保证可见反馈。
+            SLIDER_SOLID_KEY => {
+                if self.slider_solid.take_committed_value().is_none() {
+                    let v = self.slider_solid.value();
+                    let next = if v >= 95.0 { 0.0 } else { v + 5.0 };
+                    self.slider_solid.set_value_immediate(next);
+                }
+            }
+            SLIDER_GLASS_KEY => {
+                if self.slider_glass.take_committed_value().is_none() {
+                    let v = self.slider_glass.value();
+                    let next = if v >= 95.0 { 0.0 } else { v + 5.0 };
+                    self.slider_glass.set_value_immediate(next);
+                }
+            }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
             }
@@ -1477,6 +1533,17 @@ impl View for Gallery {
         self.mat_glass
             .process_pointer_events(&state.pointer_events, state.scale);
 
+        let slider_solid_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(SLIDER_SOLID_KEY);
+        self.slider_solid.set_pressed(slider_solid_pressed);
+        self.slider_solid
+            .process_pointer_events(&state.pointer_events, state.scale);
+        let slider_glass_pressed =
+            self.pressed.as_ref().and_then(|k| k.as_name()) == Some(SLIDER_GLASS_KEY);
+        self.slider_glass.set_pressed(slider_glass_pressed);
+        self.slider_glass
+            .process_pointer_events(&state.pointer_events, state.scale);
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         let click_key = match (&self.last_pressed, &state.pressed) {
@@ -1494,6 +1561,8 @@ impl View for Gallery {
         self.switch_glass.advance(dt);
         self.mat_solid.advance(dt);
         self.mat_glass.advance(dt);
+        self.slider_solid.advance(dt);
+        self.slider_glass.advance(dt);
 
         // 入场动画时钟。
         //
@@ -1564,6 +1633,8 @@ impl View for Gallery {
             || self.switch_glass.is_animating()
             || self.mat_solid.is_animating()
             || self.mat_glass.is_animating()
+            || self.slider_solid.is_animating()
+            || self.slider_glass.is_animating()
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
@@ -1747,6 +1818,21 @@ impl zypui::Host for Gallery {
             // 装饰本体：`glass` ↔ `none`。走 `Val::Raw`（结构值）——
             // 与控件把手 `knob_decoration` 的 Raw 通道同一条路；`none` 是恒等，
             // 关时三块玻璃不进离屏 pass。
+            // ---- slider（LiquidSlider 原版，实色/玻璃对比）----
+            "slider_solid_fill_w" => F(g.slider_solid.fill_width()),
+            "slider_solid_thumb_x" => F(g.slider_solid.thumb_x()),
+            "slider_solid_thumb_sx" => F(g.slider_solid.thumb_scale_x()),
+            "slider_solid_thumb_sy" => F(g.slider_solid.thumb_scale_y()),
+            "slider_solid_thumb_bg" => solid_thumb_bg_value(),
+            "slider_solid_value" => S(slider_value_text(g.slider_solid.value())),
+            "slider_glass_fill_w" => F(g.slider_glass.fill_width()),
+            "slider_glass_thumb_x" => F(g.slider_glass.thumb_x()),
+            "slider_glass_thumb_sx" => F(g.slider_glass.thumb_scale_x()),
+            "slider_glass_thumb_sy" => F(g.slider_glass.thumb_scale_y()),
+            "slider_glass_thumb_bg" => slider_thumb_bg_value(&g.slider_glass),
+            "slider_glass_thumb_filter" => slider_thumb_filter_value(&g.slider_glass),
+            "slider_glass_thumb_decoration" => slider_thumb_decoration_value(&g.slider_glass),
+            "slider_glass_value" => S(slider_value_text(g.slider_glass.value())),
             "glass_decorations" => zypui::Val::Raw(
                 zephyra_core::property::PropertyValue::decorations(if g.glass_decor.is_checked() {
                     zephyra_core::decoration::Decorations::glass()

@@ -178,13 +178,22 @@ Text.switch-label.hovered {
     text-color: @content;
 }
 
-/* ---- Slider ---- */
+/* ---- Slider（LiquidSlider 1:1，原版语义）---- */
+/*
+ * 轨道 240×6 Capsule；填充 6h @accent_fill；拇指 40×24 Capsule（与开关把手同）。
+ * 拇指位置/玻璃/scale（含 layerBlock 速度形变）由宿主逐帧绑定驱动，原版参数：
+ *   blur(8*(1-p)) + lens(10*p,14*p)；White@(1-p)；scaleX/Y 欠阻尼 0.6/0.7 ω=√250 pressed=1.5。
+ * material=solid 时宿主不绑玻璃动态，退回静态外观。 */
 
 Control.slider {
     direction: horizontal;
     cross-align: center;
     spacing: 14px;
     height: 36px;
+}
+
+Control.slider.solid {
+    opacity: 1;
 }
 
 Container.slider-track {
@@ -204,12 +213,19 @@ Container.slider-fill {
 }
 
 Container.slider-thumb {
-    width: 24px;
+    width: 40px;
     height: 24px;
     corner-radius: 99px;
-    background: @content;
+    background: #ffffff;
+}
+
+Control.slider.focused {
+    border-color: @focus_ring;
     border-width: 2px;
-    border-color: @accent_fill;
+}
+
+Control.slider.disabled {
+    opacity: 0.45;
 }
 
 Text.slider-value {

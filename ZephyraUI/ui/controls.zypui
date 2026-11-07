@@ -251,12 +251,33 @@
   </control>
 </component>
 
-<!-- 填充宽是内容几何（fill: 键例外）；轨道宽常量与样式表门禁对齐。 -->
-<component name="Slider" params="value01 label">
-  <control interactive="true" class="slider {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <container key="track" class="slider-track">
-      <container key="fill:slider" width="{min(max(value01, 0.0), 1.0) * 220.0}" class="slider-fill"/>
-      <container key="thumb" class="slider-thumb"/>
+<!-- 滑块：一比一复刻 iOS/AndroidLiquidGlass `LiquidSlider`（Apache-2.0，
+     `E:\AndroidLiquidGlass` 的 `LiquidSlider.kt` + `DampedDragAnimation.kt`；
+     本仓模型 `ZephyraUI/src/slider.rs`）。
+
+     轨道 240×6（capsule）、填充 6h 强调色、拇指 40×24（capsule），
+     行程 = 轨道宽 × progress，拇指 translate-x 含原版 clamp（允许各超出 1/4 拇指宽）。
+
+     原版语义（严格移植）：
+     - value: `spring(1,1000,visibilityThreshold)` 逼近 targetValue；progress 派生填充/位移
+     - 拖拽：delta = span*(dragAmount.x/trackWidth)，累加到 targetValue（coerce），
+       `onDragStopped` 仅 didDrag 时提交 targetValue（宿主取 `take_committed_value`）
+     - 点按轨道：`animateToValue(target)` = press→value 动画→等 2.5% 收敛→release
+     - press: `spring(1,1000,0.001)`；scaleX/Y: 欠阻尼 `spring(0.6/0.7,250,0.001)`，pressedScale=1.5
+     - `layerBlock` 速度形变：`scaleX /= 1-clamp(v/10*0.75,-0.2,0.2)`，`scaleY *= 1-clamp(v/10*0.25,-0.2,0.2)`
+       （`velocity` 由 value 运动派生，`spring(0.5,300,vis*10)`）
+     - 玻璃拇指：`blur(8*(1-press)) + lens(10*press,14*press)`、白罩 `White@(1-press)`、
+       高光/投影/内阴影/装饰按 press（同 control_with_progress 形态），落在拇指上
+
+     绑定均为结构/数值（`Val::Raw`/f32），与 ToggleSwitch 同路；不传则降级为静态。
+     `material`：`solid`（默认）= 值/位移动画 + 按压瞬变、无玻璃动态；`glass` = 全套。
+     已知缺口：原版 `CombinedBackdrop` 的轨道离屏采样进拇指（scale(lerp(2/3,1,p),lerp(0,1,p))）
+     需第二条 slot 管线，本次不伪造。 -->
+<component name="Slider" params="label label_key fill_w thumb_x thumb_scale_x thumb_scale_y thumb_bg thumb_filter thumb_decoration animated material disabled">
+  <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" class="slider {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'} {material}">
+    <container key="track" class="slider-track {animated}">
+      <container key="fill:slider" width="{fill_w}" class="slider-fill"/>
+      <container key="thumb" translate-x="{thumb_x}" scale-x="{thumb_scale_x}" scale-y="{thumb_scale_y}" background="{thumb_bg}" filter="{thumb_filter}" decoration="{thumb_decoration}" class="slider-thumb"/>
     </container>
     <if cond="label">
       <text key="value" text="{label}" class="slider-value"/>

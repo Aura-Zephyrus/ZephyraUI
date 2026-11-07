@@ -212,3 +212,65 @@ pub(crate) fn glass_filter_value(
             .filter_with_thickness_offset(super::glass::PANE_THICKNESS_OFFSETS[pane]),
     ))
 }
+
+// ---- ����Ĵָ��LiquidSlider ԭ����֡�󶨣� ----
+
+/// Ĵָ���� = `White @ (1 ? press)`��ԭ�� onDrawSurface����
+pub(crate) fn slider_thumb_bg_value(model: &zephyra_ui::Slider) -> zypui::Val {
+    use zephyra_core::core::Color;
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::color(Color::rgba(
+        1.0,
+        1.0,
+        1.0,
+        1.0 - model.press_progress(),
+    )))
+}
+
+pub(crate) fn solid_thumb_bg_value() -> zypui::Val {
+    solid_knob_bg_value()
+}
+
+/// Ĵָ�˾���ԭ�� `blur(8.dp*(1-p)) + lens(10.dp*p, 14.dp*p, chromaticAberration=true)`��
+pub(crate) fn slider_thumb_filter_value(model: &zephyra_ui::Slider) -> zypui::Val {
+    use zephyra_core::filter::{Filter, FilterChain};
+    let p = model.press_progress();
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::filter(
+        FilterChain::new(vec![
+            Filter::BackdropBlur {
+                sigma: 8.0 * (1.0 - p),
+            },
+            Filter::Lens {
+                refraction_height: 10.0 * p,
+                refraction_amount: 14.0 * p,
+            },
+        ]),
+    ))
+}
+
+/// Ĵָװ�Σ��߹�/ͶӰ/����Ӱ�� press����ԭ�� highlight/shadow/innerShadow ͬ�Σ���
+pub(crate) fn slider_thumb_decoration_value(model: &zephyra_ui::Slider) -> zypui::Val {
+    zypui::Val::Raw(zephyra_core::property::PropertyValue::decorations(
+        zephyra_core::decoration::Decorations::control_with_progress(model.press_progress()),
+    ))
+}
+
+/// ����ֵ����ʾ�ı������ + ��Ƶй©���ף�������·�� format!����
+pub(crate) fn slider_value_text(v: f32) -> &'static str {
+    let n = v.round().clamp(0.0, 100.0) as i32;
+    match n {
+        0 => "0",
+        10 => "10",
+        20 => "20",
+        25 => "25",
+        30 => "30",
+        40 => "40",
+        50 => "50",
+        60 => "60",
+        70 => "70",
+        75 => "75",
+        80 => "80",
+        90 => "90",
+        100 => "100",
+        _ => Box::leak(n.to_string().into_boxed_str()),
+    }
+}

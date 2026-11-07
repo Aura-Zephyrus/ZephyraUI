@@ -8,7 +8,7 @@
 //! | 控件的 `.zstyle` 样式表（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
 //! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
 //! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
-//! | 控件的**状态模型**（[`checkbox`] / [`toggle`]） | 状态**存哪**（那是宿主的事） |
+//! | 控件的**状态模型**（[`checkbox`] / [`toggle`] / [`slider`]） | 状态**存哪**（那是宿主的事） |
 //! | 控件**自身语义**的文案（[`i18n`]） | 应用自己的文案表 |
 //!
 //! # 结构的真相只有一份：`.zypui`
@@ -17,10 +17,6 @@
 //! 由**应用**在自己的 `build.rs` 里与页面模板一起编译成二进制 —— 见
 //! `gallery/build.rs`：它直接读本目录下的这份文件，所以结构真相全仓只有
 //! 一份，gallery 不复制它。
-//!
-//! ⚠ 本 crate 曾同时导出 59 个同名 Rust 构造器，与 `.zypui` 逐字节 parity。
-//! 那一层已经完成使命（证明翻译无误）并删除：全仓除 parity 测试外**无人消费**，
-//! 却让每个控件改一次要改两处。
 //!
 //! # 两条不能碰的规矩
 //!
@@ -42,6 +38,7 @@
 
 pub mod checkbox;
 pub mod i18n;
+pub mod slider;
 pub mod styles;
 pub mod toggle;
 pub mod tokens;
@@ -51,6 +48,7 @@ pub use i18n::{
     builtin_messages, is_key_param, merge_builtin, resolve, BUILTIN_KEYS, CHECKBOX_SELECT_ALL,
     KEY_PARAMS, NAMESPACE,
 };
+pub use slider::{Slider, DRAG_SLOP, THUMB_H, THUMB_PRESSED_SCALE, THUMB_W, TRACK_H};
 pub use styles::{stylesheet, STYLESHEETS};
 pub use toggle::{RadioGroup, RadioOption, ToggleSwitch, KNOB_PRESSED_SCALE, KNOB_TRAVEL};
 pub use tokens as token_names;
