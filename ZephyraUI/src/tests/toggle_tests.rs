@@ -1163,26 +1163,47 @@ fn an_unfinished_tween_is_animating() {
     assert!(!sw.is_animating());
 }
 
-// ───────────────────── Solid 材质（默认）零动画 ─────────────────────
+// ───────────────────── Solid 材质（默认）：位移动画、按压瞬变 ─────────────────────
 
-/// 默认（未指定材质）= Solid：toggle 后 fraction 必须**立刻**精确落位，
-/// 没有任何动画进行中。
+/// 默认（未指定材质）= Solid：toggle 后 fraction **不立刻落位**，而是走
+/// 250 ms「快入」tween（与玻璃相同的位移曲线）；动画进行中。
 #[test]
-fn solid_toggle_snaps_instantly_and_never_animates() {
+fn solid_toggle_animates_fraction_with_fast_in_tween() {
     let mut sw = ToggleSwitch::new("k", "ui.label");
     assert_eq!(sw.material(), zephyra_core::filter::Material::Solid);
     sw.toggle();
-    assert_eq!(sw.fraction(), 1.0, "Solid：fraction 必须立刻到位");
-    assert!(!sw.is_animating(), "Solid：不存在动画中状态");
-    assert_eq!(sw.knob_x(), 20.0);
+    let f = sw.fraction();
+    let c = sw.is_checked();
+    let a = sw.is_animating();
+    assert!(
+        f < 1.0,
+        "Solid：fraction 走 tween，不应立刻到位（实际 {f}，checked={c} animating={a}）"
+    );
+    assert!(sw.is_animating(), "Solid：位移 tween 进行中");
     sw.advance(16.0);
-    assert_eq!(sw.fraction(), 1.0);
-    sw.toggle();
-    assert_eq!(sw.fraction(), 0.0);
+    assert!(
+        sw.fraction() > 0.0 && sw.fraction() < 1.0,
+        "16 ms 后应在中间值，实际 {}",
+        sw.fraction()
+    );
+    sw.advance(300.0);
+    assert_eq!(sw.fraction(), 1.0, "250 ms 后应精确落位");
     assert!(!sw.is_animating());
+    assert_eq!(sw.knob_x(), 20.0);
+    // 反向切换：从当前位置（1.0）重走完整 tween。
+    sw.toggle();
+    assert!(sw.is_animating(), "反向切换应开始 tween");
+    sw.advance(16.0);
+    assert!(
+        sw.fraction() < 1.0,
+        "推进后 fraction 应向 0 移动，实际 {}",
+        sw.fraction()
+    );
+    sw.advance(300.0);
+    assert_eq!(sw.fraction(), 0.0);
 }
 
-/// Solid 下按压也瞬变：`set_pressed(true)` → press 立刻 = 1.0（无弹簧爬升）。
+/// Solid 下按压瞬变（无弹簧、无缩放），但按压不影响「只有位移动画」这条规则。
 #[test]
 fn solid_press_progress_is_instant() {
     let mut sw = ToggleSwitch::new("k", "ui.label");

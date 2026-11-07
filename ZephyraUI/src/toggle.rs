@@ -125,10 +125,14 @@ const MAX_SPRING_STEPS: f32 = 256.0;
 ///
 /// # 材质（Solid 默认 / Glass 液态玻璃）
 ///
-/// `material` 决定**行为**，不只是外观：`Solid`（默认）全部瞬变——无 fraction
-/// tween、无 press 弹簧、无缩放弹簧（"零动画"）；`Glass` 维持复刻的
-/// iOS LiquidToggle 行为。外观（颜色 / 白罩 / 透镜 / 装饰）全部由绑定 / .zstyle
-/// 驱动——见 [`Self::with_material`] 与 `controls.zypui` 的注释。
+/// `material` 决定**行为**，不只是外观：
+/// - `Solid`（默认）：把手位移走 250 ms「快入」tween（与玻璃同一条非线性曲线），
+///   `press` / 缩放瞬变；轨道色由 `.zstyle` 静态双类（`.switch-track` /
+///   `.switch-track.on`）定义，切换瞬变；
+/// - `Glass`：维持复刻的 iOS LiquidToggle 行为（fraction tween / press 缩放 /
+///   白罩 / 透镜 / 装饰，外观由绑定驱动）。
+///
+/// 见 [`Self::with_material`] 与 `controls.zypui` 的注释。
 /// # 把手动画（对照 `DampedDragAnimation.kt` / `LiquidToggle.kt`，一处特性 + 一处偏离）
 ///
 /// 原版用五根弹簧驱动把手与指示器，本仓的映射（`advance` 在每帧的时钟回调里
@@ -198,9 +202,10 @@ pub struct ToggleSwitch {
     label_key: &'static str,
     /// 材质选型（默认 [`Material::Solid`]，与按钮一致：未声明 = 纯色）。
     ///
-    /// - `Solid`：**零动画**——`fraction` / `knob_x` / `press` / 缩放全部瞬变；
-    ///   轨道色按 `fraction` 的端点判定，同样无过渡。`.zypui` 未传
-    ///   `material` 时就是它；
+    /// - `Solid`：把手位移走 **250 ms「快入」tween**（与玻璃同一条非线性曲线），
+    ///   但 `press` / 缩放瞬变，且不使用白罩 / 透镜 / 装饰。轨道色由
+    ///   `.zstyle` 的 `.switch-track` / `.switch-track.on` 静态双类定义
+    ///   （切换即瞬变，无颜色过渡）。`.zypui` 未传 `material` 时就是它；
     /// - `Glass`（液态玻璃）：维持复刻的 iOS LiquidToggle 行为（fraction tween /
     ///   press 缩放 / 白罩 / 透镜 / 装饰，外观由绑定驱动）。
     ///
@@ -329,7 +334,8 @@ impl ToggleSwitch {
 
     /// 指定材质（默认 [`Material::Solid`]，与按钮一致：未声明 = 纯色）。
     ///
-    /// `Glass` 维持 iOS LiquidToggle 复刻行为；`Solid` 零动画——见类型文档。
+    /// `Glass` 维持 iOS LiquidToggle 复刻行为；`Solid` 保留位移 tween、按压瞬变
+    /// ——见类型文档。
     pub fn with_material(mut self, material: Material) -> Self {
         self.material = material;
         self
@@ -371,10 +377,8 @@ impl ToggleSwitch {
         self.checked = checked;
         self.release_pending = true;
         if self.material == Material::Solid {
-            // 零动画：状态即画面（宿主可能根本不泵帧）。
-            self.fraction = if checked { 1.0 } else { 0.0 };
-            self.fraction_tweening = false;
-            self.fraction_elapsed_ms = 0.0;
+            // solid 的 press 瞬变（见 set_pressed），位移则走与 glass 相同的
+            // 250 ms 快入 tween（由 advance 推进，宿主按 is_animating 泵帧）。
             self.release_pending = false;
         }
     }
@@ -422,7 +426,7 @@ impl ToggleSwitch {
         // 按下就取消待释放；松开则进入「等把手到位再回落」的保持期。
         self.release_pending = !pressed;
         if self.material == Material::Solid {
-            // 零动画：press 直接落位。
+            // solid：press 瞬变（按压不触发缩放/白罩等玻璃反馈）。
             self.press = if pressed { 1.0 } else { 0.0 };
             self.release_pending = false;
         }
@@ -494,6 +498,30 @@ impl ToggleSwitch {
             || self.scale_y_vel != 0.0
     }
 
+    /// fraction 的 250 ms「快入」tween——玻璃与实色共用的唯一位移通道。
+    ///
+    /// 打断规则与玻璃一致：中途反向切换时从**当前** fraction 重走完整 250 ms。
+    fn advance_fraction(&mut self, dt_ms: f32) {
+        let fraction_target = if self.checked { 1.0 } else { 0.0 };
+        if !self.fraction_tweening && self.fraction == fraction_target {
+            return;
+        }
+        if !self.fraction_tweening || self.fraction_target != fraction_target {
+            self.fraction_from = self.fraction;
+            self.fraction_elapsed_ms = 0.0;
+            self.fraction_tweening = true;
+            self.fraction_target = fraction_target;
+        }
+        self.fraction_elapsed_ms += dt_ms;
+        let u = (self.fraction_elapsed_ms / FRACTION_TWEEN_MS).clamp(0.0, 1.0);
+        let eased = direct_ease(u);
+        self.fraction = self.fraction_from + (self.fraction_target - self.fraction_from) * eased;
+        if u >= 1.0 {
+            self.fraction = self.fraction_target;
+            self.fraction_tweening = false;
+        }
+    }
+
     /// 每帧推进按压与把手动画（宿主的时钟回调里调；`dt_ms` 是距上一帧的毫秒数）。
     ///
     /// 四根弹簧/tween各自推进（见类型文档的表）：`fraction` 走 250 ms 的官方
@@ -509,14 +537,15 @@ impl ToggleSwitch {
         }
 
         let fraction_target = if self.checked { 1.0 } else { 0.0 };
-        // ⚠ Solid（默认）：**零动画**——所有量瞬变到端点。拖拽期间 fraction
-        // 仍由 Move 直接写（手势不是动画），这里只补齐其余字段。
+        // ⚠ Solid（默认）：位移走与玻璃相同的 250 ms 快入 tween；press 与
+        // 缩放瞬变（按压不移动，只是状态）。
         if self.material == Material::Solid {
-            if !self.dragging {
-                self.fraction = fraction_target;
+            if self.dragging {
+                self.fraction_tweening = false;
+                self.fraction_elapsed_ms = 0.0;
+            } else {
+                self.advance_fraction(dt_ms);
             }
-            self.fraction_tweening = false;
-            self.fraction_elapsed_ms = 0.0;
             self.release_pending = false;
             self.press = if self.pressed { 1.0 } else { 0.0 };
             self.scale_x = 1.0;
@@ -530,24 +559,8 @@ impl ToggleSwitch {
         if self.dragging {
             self.fraction_tweening = false;
             self.fraction_elapsed_ms = 0.0;
-        } else if self.fraction != fraction_target || self.fraction_tweening {
-            if !self.fraction_tweening || self.fraction_target != fraction_target {
-                // 快速来回切：从**当前** fraction 重启，完整 250 ms；
-                // 否则每一帧都会向另一端滑半途而废（旧答案错了也不补救）。
-                self.fraction_from = self.fraction;
-                self.fraction_elapsed_ms = 0.0;
-                self.fraction_tweening = true;
-                self.fraction_target = fraction_target;
-            }
-            self.fraction_elapsed_ms += dt_ms;
-            let u = (self.fraction_elapsed_ms / FRACTION_TWEEN_MS).clamp(0.0, 1.0);
-            let eased = direct_ease(u);
-            self.fraction =
-                self.fraction_from + (self.fraction_target - self.fraction_from) * eased;
-            if u >= 1.0 {
-                self.fraction = self.fraction_target;
-                self.fraction_tweening = false;
-            }
+        } else {
+            self.advance_fraction(dt_ms);
         }
         // 原版 `release()`：先等 value 收敛到 valueRange 的 2.5% 以内，
         // 再让 pressProgress/scale 回落。

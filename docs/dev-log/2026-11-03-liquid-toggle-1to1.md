@@ -1091,6 +1091,64 @@ D3D11 则与 D3D12 同病（`on_cursor_moved` 返回值控制置脏，拖拽中�
   `cargo test -p zephyra-ui --lib` **70 passed** ✓；
   `cargo test -p zephyra-gallery` 全绿（含 56 gates）✓。
 
+> **续六（2026-11-06）修正**：solid 的「零动画」被用户否决——solid 也必须有
+> 移动的非线性动画；轨道颜色改在 `.zstyle` 中定义。见下。
+
+---
+
+## 追加（2026-11-06 续六）：solid 位移也走 250 ms 快入；轨道色改 `.zstyle` 静态双类
+
+### 现象（修正 续五）
+
+续五把 solid 做成了「全部瞬变（零动画）+ 轨道色由逐帧 `track_bg` 绑定 lerp」。
+用户修正：**默认（solid）也要有移动的非线性动画**；**轨道颜色在 `.zstyle` 中定义**。
+
+### 方案
+
+- **solid 位移**：`fraction` 走与 glass **同一条** 250 ms「快入」tween
+  （`advance_fraction()` 共享；`cubic-bezier(0,0,0,1)`，中断从当前 fraction
+  重走完整 250 ms）。solid 的 `press` / `scale_x/y` 仍瞬变（按压只保留非线性
+  移动，不做缩放/白罩/透镜/装饰）。
+- **轨道颜色 = `.zstyle` 静态双类**：删除 ToggleSwitch 模板的 `track_bg` 参数
+  与轨道 `background="{track_bg}"` 动态绑定；删除 gallery 的
+  `switch_track_color_value` / `*_track_color` 绑定及所有实例上的 `track_bg`。
+  轨道色完全由 `.switch-track { background: @switch_track }` /
+  `.switch-track.on { background: @switch_accent }` 决定——切换即瞬变（`on`
+  类随 checked 翻转），把手位移仍是 250 ms tween。`zypui` / `zephyra-style`
+  无 `transition` 引擎，静态双类是唯一「定义在 .zstyle」且不引入新机制的形态。
+- `controls-toggle.zstyle` 的 `.on` 注释同步（去掉 `track_bg` 覆盖的旧口径）。
+
+### 排除的假设
+
+- **「solid 位移用另一条更慢/更快的曲线」**：未提出需求；与 glass 共用同一
+  `direct_ease` / `FRACTION_TWEEN_MS`，行为一致、实现一处。
+- **「轨道色做档位动画（`.turn-1..8`）让颜色也平滑且在 .zstyle」**：用户选了
+  「静态双类」——颜色瞬切、位移平滑；避免 8 档×主题的规则膨胀。
+- **「保留 `track_bg` 绑定但 solid 不用」**：模板/宿主会残留无意义参数；且
+  “在 zstyle 中定义”的字面要求与动态绑定冲突。
+
+### 结论 + 门禁
+
+- `advance_fraction()` 抽出为 Solid/Glass 共用；Solid 分支推进 fraction tween、
+  但 `press`/scale 瞬变并清 `release_pending`（无需等 fraction 收敛再释 press）。
+- MCP 实测（`zephyra mcp --port 7456`，reference 页 switches 材质行，
+  `switch:solid` 轨道 path `0.1.1.1.0.2.0.1.1.1.0.0`、knob
+  `...0.0.0`，click @468,314）：
+  - **knob 位移（非线性）**：`TranslateX` 0 → 10.41 (t+40ms) → 15.64 (t+80ms)
+    → 18.12 (t+120ms) → 19.48 (t+160ms) → 20（settled，250 ms 快入）。
+  - **轨道色（zstyle 静态双类）**：before `style switch-track animated`、
+    `Background = $switch_track (styled)`；settled 后 `style switch-track on
+    animated`、`Background = $switch_accent (styled)`——`on` 类翻转驱动，无
+    `track_bg` 动态绑定。
+- 单测：`solid_toggle_snaps_instantly_and_never_animates` →
+  `solid_toggle_animates_fraction_with_fast_in_tween`（钉住 solid 也走 tween、
+  反向从当前位置重启）；`solid_press_progress_is_instant` /
+  `solid_drag_fraction_is_not_snapped_back` 仍成立。
+- 门禁：`cargo fmt --check` ✓；ui+gallery clippy `-D warnings` 0 ✓；
+  `cargo test -p zephyra-ui --lib` **49 passed**（toggle 子集全绿，`--lib` 总量
+  随 crate 统计口径；以 workspace/gates 为准）/ `cargo test -p zephyra-gallery`
+  全绿（含 56 gates）✓。
+
 
 
 

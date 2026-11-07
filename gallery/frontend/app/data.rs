@@ -146,26 +146,6 @@ pub(crate) fn glass_step_key(p: crate::app::glass::Param, inc: bool) -> &'static
 // ---- 开关旋钮（LiquidToggle 一比一复刻的逐帧绑定） ----
 
 /// 轨道颜色 = `lerp(switch_track, switch_accent, fraction)`（原版
-/// `drawBehind { drawRect(lerp(trackColor, accentColor, fraction)) }`）。
-///
-/// 两个端点走**令牌**（`Theme::switch_track` / `switch_accent`）——
-/// 深浅主题各一份，且色板住在 `Theme` 里，不在本文件。
-pub(crate) fn switch_track_color_value(
-    g: &super::Gallery,
-    model: &zephyra_ui::ToggleSwitch,
-) -> zypui::Val {
-    use zephyra_core::core::Color;
-    let theme = zephyra_core::theme::Theme::builtin(if g.wants_dark {
-        zephyra_core::theme::ThemeVariant::Dark
-    } else {
-        zephyra_core::theme::ThemeVariant::Light
-    });
-    let t = model.fraction();
-    // 双端都是不透明的灰/绿 —— lerp 只改 rgb，alpha 取混合结果。
-    let color = Color::lerp(theme.switch_track, theme.switch_accent, t);
-    zypui::Val::Raw(zephyra_core::property::PropertyValue::color(color))
-}
-
 /// 把手白罩 = `White @ (1 − press)`（原版 `onDrawSurface { drawRect(White.copy(alpha = 1f - progress)) }`）。
 ///
 /// 按住时白罩消失，让出玻璃把手的折射面。
