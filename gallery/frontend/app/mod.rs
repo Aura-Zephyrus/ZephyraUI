@@ -1936,9 +1936,12 @@ impl zypui::Host for Gallery {
             "ldd_g_tx" => F(g.liquid_dd_glass.translation().0),
             "ldd_g_ty" => F(g.liquid_dd_glass.translation().1),
             "ldd_g_open" => B(g.liquid_dd_glass_open),
-            "ldd_g_bg" => zypui::Val::Raw(zephyra_core::property::PropertyValue::color(
-                zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 0.18),
-            )),
+            "ldd_g_bg" => {
+                let a = if g.liquid_dd_glass_open { 0.30 } else { 0.18 };
+                zypui::Val::Raw(zephyra_core::property::PropertyValue::color(
+                    zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, a),
+                ))
+            }
             "ldd_g_filter" => zypui::Val::Raw(zephyra_ui::liquid_button::glass_filter_value()),
             "ldd_g_decoration" => {
                 zypui::Val::Raw(zephyra_ui::liquid_button::glass_decoration_value(

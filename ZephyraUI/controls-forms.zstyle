@@ -306,3 +306,7 @@ Control.drop-down.focused {
 Control.drop-down.disabled {
     opacity: 0.45;
 }
+
+Container.dd-chevron.open {
+    icon-color: @content;
+}

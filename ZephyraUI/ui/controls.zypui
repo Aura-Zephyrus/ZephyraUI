@@ -490,7 +490,7 @@
         <container key="icon" icon="{icon}" class="dd-icon {material}"/>
       </if>
       <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
-      <container key="chevron" icon="chevron-down" class="dd-chevron {open ? 'open'}"/>
+      <container key="chevron" icon="{open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {open ? 'open'}"/>
     </control>
     <else>
       <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" class="drop-down drop-down {open ? 'open'} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
@@ -498,7 +498,7 @@
           <container key="icon" icon="{icon}" class="dd-icon {material}"/>
         </if>
         <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
-        <container key="chevron" icon="chevron-down" class="dd-chevron {open ? 'open'}"/>
+        <container key="chevron" icon="{open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {open ? 'open'}"/>
       </control>
     </else>
   </if>
