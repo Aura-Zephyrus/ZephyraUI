@@ -380,10 +380,7 @@ impl FrameCache {
 ///
 /// 不提前返回：与 [`scan`] 同理，早退会漏掉兄弟子树里的布局脏节点。
 fn tree_needs_layout(node: &Node) -> bool {
-    if node.dirty().needs_layout() {
-        return true;
-    }
-    node.children().iter().any(tree_needs_layout)
+    node.subtree_needs_layout()
 }
 
 fn scan(

@@ -129,24 +129,32 @@ fn descend(node: &Node, request: HitTestRequest, ctx: Context<'_>, out: &mut Hit
         return false;
     }
     let rect = node.rect();
-    if !rect_contains(rect, request.point) {
-        return false;
-    }
+    let inside = rect_contains(rect, request.point);
 
-    let depth = out.path.len();
-    if depth >= MAX_DEPTH {
-        // 命中与否已经确定（矩形含点），只是路径记不下更深的部分。
-        // 返回 true 而非 false：调用方要的是"点到了东西吗"，答案是肯定的。
-        out.truncated = true;
-        return true;
+    // 本节点不在点下时**仍然要往下走**：`position:absolute` 的子项按窗口坐标摆位，
+    // 可以完全画在父容器之外（更别说父容器可能因为子项脱离正常流而塌成 0×0）。
+    // 早退会让「画得出来、点不到」成为默认行为——弹出菜单正是这种形状。
+    //
+    // 画布没有裁剪，绘制也确实会把越界子项画出来，所以命中判定必须与实际可见
+    // 区域一致，而不能把「父矩形不含点」当成「整棵子树都不用看」。
+    let mut pushed = false;
+    if inside {
+        let depth = out.path.len();
+        if depth >= MAX_DEPTH {
+            // 命中与否已经确定（矩形含点），只是路径记不下更深的部分。
+            // 返回 true 而非 false：调用方要的是"点到了东西吗"，答案是肯定的。
+            out.truncated = true;
+            return true;
+        }
+        out.path.push(HitNode {
+            // 没有稳定 key 的节点用路径深度兜底：它无法被事件路由可靠寻址，
+            // 但仍参与"是否命中"的判定。
+            id: node.key().cloned().unwrap_or(ElementKey::Id(depth as u64)),
+            rect,
+            interactive: node.is_interactive(ctx),
+        });
+        pushed = true;
     }
-    out.path.push(HitNode {
-        // 没有稳定 key 的节点用路径深度兜底：它无法被事件路由可靠寻址，
-        // 但仍参与"是否命中"的判定。
-        id: node.key().cloned().unwrap_or(ElementKey::Id(depth as u64)),
-        rect,
-        interactive: node.is_interactive(ctx),
-    });
 
     // 反向遍历子节点：后声明的在上层，先命中它。
     for child in node.children().iter().rev() {
@@ -158,11 +166,15 @@ fn descend(node: &Node, request: HitTestRequest, ctx: Context<'_>, out: &mut Hit
         out.path.truncate(mark);
     }
 
-    // 本节点的矩形含点，所以它**自己**就是一次命中——即使没有子节点命中。
-    //
-    // 这里是"命中"与"命中了某个可交互控件"的区分点：本层返回 true（命中的是我或我的
-    // 子树），而具体该由谁处理由调用方用 [`HitResult::target`] 从路径里挑。
-    // 若这里返回 false，一个叶子控件就会把自己弹出并报告未命中——于是没有任何控件
-    // 能被点到，而现象只是"点了没反应"，不会有任何报错。
-    true
+    if pushed {
+        // 本节点的矩形含点，所以它**自己**就是一次命中——即使没有子节点命中。
+        //
+        // 这里是"命中"与"命中了某个可交互控件"的区分点：本层返回 true（命中的是我或我的
+        // 子树），而具体该由谁处理由调用方用 [`HitResult::target`] 从路径里挑。
+        // 若这里返回 false，一个叶子控件就会把自己弹出并报告未命中——于是没有任何控件
+        // 能被点到，而现象只是"点了没反应"，不会有任何报错。
+        return true;
+    }
+    // 自己不在点下，且没有任何子项命中：本子树整体未命中。
+    false
 }

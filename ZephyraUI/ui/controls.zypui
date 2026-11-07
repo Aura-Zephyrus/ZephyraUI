@@ -483,22 +483,43 @@
   </if>
 </component>
 
-<component name="DropDownButton" params="label label_key icon open material disabled scale_x scale_y translate_x translate_y background filter decoration">
+<!-- 下拉按钮：**同一个控件**直接变形为菜单（不额外加弹层元素）。
+     `open` 控制形态/类；`show_items` 控制菜单项显隐（形变到位再揭示，避免文字溢出）；
+     `extra_class` 供调用方定位。 -->
+<component name="DropDownButton" params="label label_key icon open show_items logical_open material disabled entries extra_class scale_x scale_y translate_x translate_y background filter decoration">
   <if cond="material == 'glass'">
-    <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" background="{background}" filter="{filter}" decoration="{decoration}" class="drop-down drop-down {open ? 'open'} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
-      <if cond="icon">
-        <container key="icon" icon="{icon}" class="dd-icon {material}"/>
-      </if>
-      <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
-      <container key="chevron" icon="{open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {open ? 'open'}"/>
-    </control>
-    <else>
-      <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" class="drop-down drop-down {open ? 'open'} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+    <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" background="{background}" filter="{filter}" decoration="{decoration}" class="drop-down drop-down {open ? 'open'} {open ? 'morph-menu'} {material} dd-morph {material == 'glass' ? 'dd-morph-glass' : 'dd-morph-solid'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+      <container key="head" class="dd-head {open ? 'morphed'}">
         <if cond="icon">
           <container key="icon" icon="{icon}" class="dd-icon {material}"/>
         </if>
         <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
-        <container key="chevron" icon="{open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {open ? 'open'}"/>
+        <container key="chevron" icon="{logical_open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {logical_open ? 'open'}"/>
+      </container>
+      <if cond="show_items">
+        <container key="menu-body" class="dd-menu-body">
+          <for var="e" index="i" list="entries">
+            <MenuItem key="{e.key}" label="{e.label}"/>
+          </for>
+        </container>
+      </if>
+    </control>
+    <else>
+      <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" class="drop-down drop-down {open ? 'open'} {open ? 'morph-menu'} {material} dd-morph {material == 'glass' ? 'dd-morph-glass' : 'dd-morph-solid'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+        <container key="head" class="dd-head {open ? 'morphed'}">
+          <if cond="icon">
+            <container key="icon" icon="{icon}" class="dd-icon {material}"/>
+          </if>
+          <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
+          <container key="chevron" icon="{logical_open ? 'chevron-up' : 'chevron-down'}" class="dd-chevron {logical_open ? 'open'}"/>
+        </container>
+        <if cond="show_items">
+          <container key="menu-body" class="dd-menu-body">
+            <for var="e" index="i" list="entries">
+              <MenuItem key="{e.key}" label="{e.label}"/>
+            </for>
+          </container>
+        </if>
       </control>
     </else>
   </if>

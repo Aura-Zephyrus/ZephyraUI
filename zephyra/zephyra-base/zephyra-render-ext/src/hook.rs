@@ -26,21 +26,35 @@ mod tests {
     use super::*;
     struct TestCtx;
     impl HookContext for TestCtx {
-        fn size(&self) -> (f32, f32) { (100.0, 100.0) }
-        fn damage(&self) -> Option<Rect> { None }
-        fn is_offscreen(&self) -> bool { false }
-        fn offscreen_pass_index(&self) -> Option<usize> { None }
+        fn size(&self) -> (f32, f32) {
+            (100.0, 100.0)
+        }
+        fn damage(&self) -> Option<Rect> {
+            None
+        }
+        fn is_offscreen(&self) -> bool {
+            false
+        }
+        fn offscreen_pass_index(&self) -> Option<usize> {
+            None
+        }
     }
     impl HookContextDowncast for TestCtx {
-        fn downcast_ref<T: 'static>(&self) -> Option<&T> { None }
-        fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> { None }
+        fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+            None
+        }
+        fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+            None
+        }
     }
-    #[test] fn hook_context_basic() {
+    #[test]
+    fn hook_context_basic() {
         let ctx = TestCtx;
         assert_eq!(ctx.size(), (100.0, 100.0));
         assert!(!ctx.is_offscreen());
     }
-    #[test] fn hook_context_downcast() {
+    #[test]
+    fn hook_context_downcast() {
         let ctx = TestCtx;
         let result: Option<&i32> = ctx.downcast_ref();
         assert!(result.is_none());

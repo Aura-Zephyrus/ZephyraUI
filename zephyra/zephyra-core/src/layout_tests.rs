@@ -1277,3 +1277,34 @@ fn absolute_in_nested_container_is_window_coords() {
     assert!((r.x - 5.0).abs() < 1e-3, "实得 {}", r.x);
     assert!((r.y - 5.0).abs() < 1e-3, "实得 {}", r.y);
 }
+
+/// 后代的布局属性变化必须让**祖先**的测量缓存失效。
+///
+/// 缓存键只有 `Constraints`，祖先不知道自己脚下某个后代被改了尺寸。若只清被改
+/// 节点自己的缓存，父级仍会命中旧尺寸；`arrange` 随后从 `cached_size_or_zero`
+/// 拿到 0，把节点摆成 0×0，且此后没有新的布局脏标记，于是一直停在那里 ——
+/// 这正是「下拉菜单收起后按钮塌成 0×0，只有 resize 才自愈」的成因。
+#[test]
+fn nested_size_change_invalidates_ancestor_measure_cache() {
+    let root_el =
+        Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
+            .with_key("outer")
+            .with_children([Element::new(NodeTag::Control)
+                .with_key("inner")
+                .with(&props::WIDTH, PropertyValue::float(30.0))
+                .with(&props::HEIGHT, PropertyValue::float(10.0))])]);
+    let mut node = Node::from_element(&root_el);
+    layout(&mut node, Rect::new(0.0, 0.0, 200.0, 200.0), ctx());
+    assert!(
+        (node.children()[0].children()[0].rect().width - 30.0).abs() < 1e-3,
+        "初始宽度应为 30"
+    );
+
+    node.children_mut()[0].children_mut()[0].set_prop(&props::WIDTH, PropertyValue::float(70.0));
+    layout(&mut node, Rect::new(0.0, 0.0, 200.0, 200.0), ctx());
+    let w = node.children()[0].children()[0].rect().width;
+    assert!(
+        (w - 70.0).abs() < 1e-3,
+        "后代改宽后祖先缓存必须失效，实得 {w}（0 说明父级命中了旧测量）"
+    );
+}

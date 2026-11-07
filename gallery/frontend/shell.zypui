@@ -216,20 +216,10 @@
     </Section>
     <Section key="sec-liquid-dd" title="{tr('ui.dropdown-button')}">
       <DemoRow label="{tr('ui.solid')}">
-        <container key="dd-s-wrap" class="dd-demo-wrap">
-          <DropDownButton key="liquid:dd:solid" label_key="ui.options" open="{@ldd_s_open}" material="solid" scale_x="{@ldd_s_sx}" scale_y="{@ldd_s_sy}" translate_x="{@ldd_s_tx}" translate_y="{@ldd_s_ty}"/>
-          <container key="liquid:dd:solid:popup" collapsed="{!@ldd_s_open}" class="dd-menu-popup">
-            <Menu key="liquid:dd:solid:menu" entries="{@ldd_s_entries}"/>
-          </container>
-        </container>
+        <DropDownButton key="liquid:dd:solid" label_key="ui.options" open="{@ldd_s_visible}" logical_open="{@ldd_s_open}" show_items="{@ldd_s_reveal}" entries="{@ldd_s_entries}" material="solid" scale_x="{@ldd_s_menu_sx}" scale_y="{@ldd_s_menu_sy}" translate_x="{@ldd_s_menu_tx}" translate_y="{@ldd_s_menu_ty}"/>
       </DemoRow>
       <DemoRow label="{tr('ui.glass')}">
-        <container key="dd-g-wrap" class="dd-demo-wrap">
-          <DropDownButton key="liquid:dd:glass" label_key="ui.options" open="{@ldd_g_open}" material="glass" scale_x="{@ldd_g_sx}" scale_y="{@ldd_g_sy}" translate_x="{@ldd_g_tx}" translate_y="{@ldd_g_ty}" background="{@ldd_g_bg}" filter="{@ldd_g_filter}" decoration="{@ldd_g_decoration}"/>
-          <container key="liquid:dd:glass:popup" collapsed="{!@ldd_g_open}" class="dd-menu-popup">
-            <Menu key="liquid:dd:glass:menu" entries="{@ldd_g_entries}"/>
-          </container>
-        </container>
+        <DropDownButton key="liquid:dd:glass" label_key="ui.options" open="{@ldd_g_visible}" logical_open="{@ldd_g_open}" show_items="{@ldd_g_reveal}" entries="{@ldd_g_entries}" material="glass" scale_x="{@ldd_g_menu_sx}" scale_y="{@ldd_g_menu_sy}" translate_x="{@ldd_g_menu_tx}" translate_y="{@ldd_g_menu_ty}" background="{@ldd_g_bg}" filter="{@ldd_g_filter}" decoration="{@ldd_g_decoration}"/>
       </DemoRow>
     </Section>
   </PageRoot>

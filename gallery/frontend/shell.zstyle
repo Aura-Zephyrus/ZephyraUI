@@ -192,3 +192,13 @@ Container.page.enter-8 {
     opacity: 0.91;
     translate-y: 1px;
 }
+
+Control.dd-morph {
+    opacity: 1;
+}
+Control.dd-morph-solid {
+    opacity: 1;
+}
+Control.dd-morph-glass {
+    opacity: 1;
+}

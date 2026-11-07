@@ -310,3 +310,78 @@ Control.drop-down.disabled {
 Container.dd-chevron.open {
     icon-color: @content;
 }
+
+/* ---- DropDown morph（按钮直接变形为菜单，同一控件） ---- */
+
+Container.dd-head {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 8px;
+    height: 36px;
+}
+
+Container.dd-head.morphed {
+    height: 36px;
+}
+
+Container.dd-menu-body {
+    direction: vertical;
+    spacing: 0px;
+    cross-align: stretch;
+}
+
+/* 形变态：纵向菜单布局。 */
+Control.drop-down.morph-menu {
+    direction: vertical;
+    main-align: start;
+    cross-align: stretch;
+}
+
+/* 画廊 morph（open 时）：同一控件变为绝对定位菜单，无额外元素。 */
+Control.drop-down.morph-menu.dd-morph {
+    position: absolute;
+    left: 546px;
+    width: 220px;
+    height: 114px;
+    spacing: 0px;
+    padding: 6px;
+    corner-radius: 10px;
+    background: @surface_alt;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Control.drop-down.morph-menu.dd-morph-solid {
+    top: 711px;
+}
+
+Control.drop-down.morph-menu.dd-morph-glass {
+    top: 595px;
+}
+
+Control.drop-down.dd-morph {
+    direction: vertical;
+}
+
+Control.drop-down.dd-morph-solid {
+    direction: vertical;
+}
+
+Control.drop-down.dd-morph-glass {
+    direction: vertical;
+}
+
+Control.dd-morph {
+    direction: vertical;
+}
+
+Control.dd-morph-solid {
+    opacity: 1;
+}
+
+Control.dd-morph-glass {
+    opacity: 1;
+}
+
+/* 画廊 morph 定位（open 时）：按钮变为绝对定位菜单，同一控件无额外元素。 */

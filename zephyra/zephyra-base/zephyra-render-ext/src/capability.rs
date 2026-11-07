@@ -37,10 +37,18 @@ pub struct BackendCapabilities {
 }
 
 impl BackendCapabilities {
-    pub fn none() -> Self { Self::default() }
+    pub fn none() -> Self {
+        Self::default()
+    }
     pub fn all() -> Self {
-        Self { custom_basic: true, custom_offscreen: true, attachment_switch: true,
-               readback: true, device_rebuild: true, screenshot: true }
+        Self {
+            custom_basic: true,
+            custom_offscreen: true,
+            attachment_switch: true,
+            readback: true,
+            device_rebuild: true,
+            screenshot: true,
+        }
     }
     pub fn has(&self, cap: Capability) -> bool {
         match cap {
@@ -65,22 +73,46 @@ impl BackendCapabilities {
     }
     pub fn enabled_list(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
-        if self.custom_basic { v.push("custom-basic"); }
-        if self.custom_offscreen { v.push("custom-offscreen"); }
-        if self.attachment_switch { v.push("attachment-switch"); }
-        if self.readback { v.push("readback"); }
-        if self.device_rebuild { v.push("device-rebuild"); }
-        if self.screenshot { v.push("screenshot"); }
+        if self.custom_basic {
+            v.push("custom-basic");
+        }
+        if self.custom_offscreen {
+            v.push("custom-offscreen");
+        }
+        if self.attachment_switch {
+            v.push("attachment-switch");
+        }
+        if self.readback {
+            v.push("readback");
+        }
+        if self.device_rebuild {
+            v.push("device-rebuild");
+        }
+        if self.screenshot {
+            v.push("screenshot");
+        }
         v
     }
     pub fn disabled_list(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
-        if !self.custom_basic { v.push("custom-basic"); }
-        if !self.custom_offscreen { v.push("custom-offscreen"); }
-        if !self.attachment_switch { v.push("attachment-switch"); }
-        if !self.readback { v.push("readback"); }
-        if !self.device_rebuild { v.push("device-rebuild"); }
-        if !self.screenshot { v.push("screenshot"); }
+        if !self.custom_basic {
+            v.push("custom-basic");
+        }
+        if !self.custom_offscreen {
+            v.push("custom-offscreen");
+        }
+        if !self.attachment_switch {
+            v.push("attachment-switch");
+        }
+        if !self.readback {
+            v.push("readback");
+        }
+        if !self.device_rebuild {
+            v.push("device-rebuild");
+        }
+        if !self.screenshot {
+            v.push("screenshot");
+        }
         v
     }
 }
@@ -92,11 +124,13 @@ pub trait CapabilityProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn capability_display() {
+    #[test]
+    fn capability_display() {
         assert_eq!(Capability::CustomBasic.to_string(), "custom-basic");
         assert_eq!(Capability::Screenshot.to_string(), "screenshot");
     }
-    #[test] fn capabilities_builder() {
+    #[test]
+    fn capabilities_builder() {
         let caps = BackendCapabilities::none()
             .with(Capability::CustomBasic, true)
             .with(Capability::Readback, true);
@@ -106,7 +140,8 @@ mod tests {
         assert_eq!(caps.enabled_list(), vec!["custom-basic", "readback"]);
         assert_eq!(caps.disabled_list().len(), 4);
     }
-    #[test] fn capabilities_all_none() {
+    #[test]
+    fn capabilities_all_none() {
         let all = BackendCapabilities::all();
         let none = BackendCapabilities::none();
         for cap in [

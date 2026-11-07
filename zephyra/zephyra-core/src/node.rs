@@ -220,6 +220,22 @@ impl Node {
         self.dirty
     }
 
+    /// 本子树里有没有节点需要重排（含自己）。
+    ///
+    /// # 为什么测量缓存需要它
+    ///
+    /// 测量缓存只按 `Constraints` 做键，而**祖先的缓存不会自动知道后代被改了**：
+    /// 子节点换尺寸时只有它自己的缓存被清，父级仍会命中旧值，`arrange` 于是拿
+    /// 旧尺寸（或缺失时的 0）摆它。症状是样式驱动的尺寸变化把节点压成 0×0，
+    /// 只有 resize 这类整树失效才会自愈。
+    pub fn subtree_needs_layout(&self) -> bool {
+        self.dirty.needs_layout()
+            || self
+                .children
+                .iter()
+                .any(|child| child.subtree_needs_layout())
+    }
+
     /// 把该子树标脏（向下传播）。
     pub fn mark_dirty(&mut self, level: Dirty) {
         self.dirty = self.dirty.merged(level);

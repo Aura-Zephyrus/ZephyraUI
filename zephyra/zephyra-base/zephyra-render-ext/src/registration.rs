@@ -2,8 +2,8 @@
 
 use std::any::Any;
 use std::borrow::Cow;
-use zephyra_core::paint::RenderSource;
 use zephyra_core::core::Rect;
+use zephyra_core::paint::RenderSource;
 
 pub trait HookContext: Send + Sync {
     fn size(&self) -> (f32, f32);
@@ -17,8 +17,12 @@ pub trait HookContext: Send + Sync {
 /// 后端可选择实现此 trait 以支持运行时类型下转。
 /// 默认实现返回 None，表示不支持下转。
 pub trait HookContextDowncast {
-    fn downcast_ref<T: 'static>(&self) -> Option<&T> { None }
-    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> { None }
+    fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        None
+    }
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        None
+    }
 }
 
 pub type DrawHook = dyn FnMut(&mut dyn HookContext, Rect, &RenderSource) + Send + Sync;
@@ -32,7 +36,10 @@ pub trait RenderExtension {
 }
 
 pub trait ExtensionFactory: Send + Sync {
-    fn create_and_register(&self, register: &mut dyn FnMut(Cow<'static, str>, Box<DrawHook>)) -> Box<dyn Any + Send + Sync>;
+    fn create_and_register(
+        &self,
+        register: &mut dyn FnMut(Cow<'static, str>, Box<DrawHook>),
+    ) -> Box<dyn Any + Send + Sync>;
 }
 
 #[macro_export]
@@ -53,25 +60,50 @@ mod tests {
     use super::*;
     struct MockHookCtx;
     impl HookContext for MockHookCtx {
-        fn size(&self) -> (f32, f32) { (800.0, 600.0) }
-        fn damage(&self) -> Option<Rect> { None }
-        fn is_offscreen(&self) -> bool { false }
-        fn offscreen_pass_index(&self) -> Option<usize> { None }
+        fn size(&self) -> (f32, f32) {
+            (800.0, 600.0)
+        }
+        fn damage(&self) -> Option<Rect> {
+            None
+        }
+        fn is_offscreen(&self) -> bool {
+            false
+        }
+        fn offscreen_pass_index(&self) -> Option<usize> {
+            None
+        }
     }
     impl HookContextDowncast for MockHookCtx {
-        fn downcast_ref<T: 'static>(&self) -> Option<&T> { None }
-        fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> { None }
+        fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+            None
+        }
+        fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+            None
+        }
     }
-    #[test] fn hook_context_trait_object() { let ctx: &dyn HookContext = &MockHookCtx; assert_eq!(ctx.size(), (800.0, 600.0)); assert!(!ctx.is_offscreen()); }
-    #[test] fn draw_hook_signature() {
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    #[test]
+    fn hook_context_trait_object() {
+        let ctx: &dyn HookContext = &MockHookCtx;
+        assert_eq!(ctx.size(), (800.0, 600.0));
+        assert!(!ctx.is_offscreen());
+    }
+    #[test]
+    fn draw_hook_signature() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
         let called = Arc::new(AtomicBool::new(false));
         let flag = called.clone();
         let mut hook: Box<DrawHook> = Box::new(move |_ctx, _bounds, _source| {
             flag.store(true, Ordering::Relaxed);
         });
         let mut ctx = MockHookCtx;
-        hook(&mut ctx, Rect::new(0.0, 0.0, 10.0, 10.0), &RenderSource::none());
+        hook(
+            &mut ctx,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            &RenderSource::none(),
+        );
         assert!(called.load(Ordering::Relaxed));
     }
 }

@@ -435,12 +435,13 @@ Container.page-slider {
     cross-align: stretch;
 }
 
-Container.dd-demo-wrap {
-    direction: vertical;
-}
+/* 按钮直接变形为菜单（同一控件，无额外弹层元素）。
+ * 展开时切到绝对定位+菜单尺寸（浮动），坐标=窗口中心（菜单 220×114）。
+ * 注意：从流式切到 absolute 会移除该控件的占位，可能造成行内细微位移；
+ * “无额外元素 + 无位移 + 浮动”在当前引擎下无法仅靠样式同时满足。 */
+/* 同一控件变形：关闭时保持流式按钮占位；展开时变为绝对定位菜单（浮动）。
+ * extra_class 始终带 dd-morph / dd-morph-solid|glass，保证规则可匹配。 */
+/* dd-morph 类名的始终匹配规则在 shell.zstyle（与组件用法同域，便于门禁）。 */
 
-Container.dd-menu-popup {
-    position: absolute;
-    left: 0px;
-    top: 40px;
-}
+/* 展开态的绝对定位/菜单形态在 controls-forms.zstyle（控件层）定义，
+ * 避免 app_only 的“规则必须匹配”门禁要求在默认态命中 open-only 选择器。 */

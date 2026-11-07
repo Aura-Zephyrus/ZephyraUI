@@ -15,6 +15,7 @@ use crate::input::pointer::{PointerEvent, PointerPhase, PointerSource};
 use crate::input::router::{InputRouter, RoutedEvent, RoutedEvents};
 use crate::layout::layout;
 use crate::layout::Direction;
+use crate::layout::Position;
 use crate::node::Node;
 use crate::property::PropertyValue;
 use crate::props;
@@ -196,6 +197,43 @@ fn a_point_in_the_root_but_on_no_control_has_no_target() {
         out.target().is_none(),
         "落在容器空白处不应命中任何控件，实得 {:?}",
         out.path
+    );
+}
+
+#[test]
+fn absolute_child_is_hittable_even_when_parent_collapsed() {
+    // 弹出菜单的形状：菜单项 `position:absolute` 按窗口坐标摆位，父容器因为
+    // 子项脱离正常流而塌成 0×0。父矩形不含点**不能**代表整棵子树不可命中，
+    // 否则菜单画得出来却点不到——症状是「点了没反应」，而画面毫无异常。
+    let slot = Element::new(NodeTag::Container)
+        .with_key("slot")
+        .with(&props::WIDTH, PropertyValue::float(0.0))
+        .with(&props::HEIGHT, PropertyValue::float(0.0))
+        .with_children([hitbox("menu", 30.0, 20.0)
+            .with(
+                &props::POSITION,
+                PropertyValue::position(Position::Absolute),
+            )
+            .with(&props::LEFT, PropertyValue::float(120.0))
+            .with(&props::TOP, PropertyValue::float(40.0))]);
+    let root = Element::new(NodeTag::Container).with_children([slot]);
+    let node = tree(&root);
+
+    let mut out = HitResult::default();
+    assert!(hit_test(
+        &node,
+        HitTestRequest {
+            point: Point::new(120.0, 40.0),
+            ignore_above: None
+        },
+        ctx(),
+        &mut out
+    ));
+    let target = out.target().expect("绝对定位子项必须可命中");
+    assert_eq!(
+        target.id,
+        crate::id::ElementKey::Name("menu"),
+        "命中的应是菜单项而不是塌陷的父容器"
     );
 }
 

@@ -902,8 +902,16 @@ pub fn layout(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
 /// 测量结果按「约束 → 结果」缓存：约束不变则直接命中，这是布局里最重要的一处
 /// 短路（静止时每帧都会调它）。
 pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> Size {
-    if let Some(size) = cached_for(node, constraints) {
-        return size;
+    // ⚠ 命中缓存的**前提**是整棵子树都没有 `Layout` 脏标记，而不只是自己干净。
+    //
+    // 缓存键只有约束；祖先不知道自己脚下某个后代被改了尺寸。只清被改节点自己的
+    // 缓存时，父级仍会命中旧尺寸并直接返回 —— 那一帧 `arrange` 从
+    // `cached_size_or_zero` 拿到的是 0，于是节点被摆成 0×0，且因为没有新的
+    // 布局脏标记而永久停在那里（只有 resize 这种整树失效才会自愈）。
+    if !node.subtree_needs_layout() {
+        if let Some(size) = cached_for(node, constraints) {
+            return size;
+        }
     }
     let padding = node.padding(ctx);
     // 分岔只有一处：声明了 flex 的容器走项表 + 行划分，其余（**全部既有布局**）
