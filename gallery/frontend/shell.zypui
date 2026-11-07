@@ -205,6 +205,23 @@
         <Button key="act:glass" label_key="ui.glass" variant="subtle" material="glass"/>
       </DemoRow>
     </Section>
+    <Section key="sec-liquid-btn" title="{tr('ui.liquid-button')}">
+      <TextLabel key="liquid-blurb" text="{tr('ui.liquid.demo')}" level="text-caption"/>
+      <DemoRow label="{tr('ui.solid')}">
+        <LiquidButton key="liquid:btn:solid" label_key="ui.solid" material="solid" scale_x="{@lbtn_s_sx}" scale_y="{@lbtn_s_sy}" translate_x="{@lbtn_s_tx}" translate_y="{@lbtn_s_ty}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.glass')}">
+        <LiquidButton key="liquid:btn:glass" label_key="ui.glass" material="glass" scale_x="{@lbtn_g_sx}" scale_y="{@lbtn_g_sy}" translate_x="{@lbtn_g_tx}" translate_y="{@lbtn_g_ty}" background="{@lbtn_g_bg}" filter="{@lbtn_g_filter}" decoration="{@lbtn_g_decoration}"/>
+      </DemoRow>
+    </Section>
+    <Section key="sec-liquid-dd" title="{tr('ui.dropdown-button')}">
+      <DemoRow label="{tr('ui.solid')}">
+        <DropDownButton key="liquid:dd:solid" label_key="ui.options" open="{@ldd_s_open}" material="solid" scale_x="{@ldd_s_sx}" scale_y="{@ldd_s_sy}" translate_x="{@ldd_s_tx}" translate_y="{@ldd_s_ty}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.glass')}">
+        <DropDownButton key="liquid:dd:glass" label_key="ui.options" open="{@ldd_g_open}" material="glass" scale_x="{@ldd_g_sx}" scale_y="{@ldd_g_sy}" translate_x="{@ldd_g_tx}" translate_y="{@ldd_g_ty}" background="{@ldd_g_bg}" filter="{@ldd_g_filter}" decoration="{@ldd_g_decoration}"/>
+      </DemoRow>
+    </Section>
   </PageRoot>
 </component>
 <component name="PageCheckbox" params="">

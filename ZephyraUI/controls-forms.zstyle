@@ -287,3 +287,22 @@ Container.sw-14 {
 Container.sw-15 {
     background: #5c2e91;
 }
+
+/* Liquid/材质变体：玻璃时背景/滤镜由宿主绑定驱动（blur+lens），静态背景置透明。 */
+Control.drop-down.glass {
+    background: transparent;
+    border-color: #ffffff66;
+}
+
+Control.drop-down.solid {
+    opacity: 1;
+}
+
+Control.drop-down.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
+Control.drop-down.disabled {
+    opacity: 0.45;
+}

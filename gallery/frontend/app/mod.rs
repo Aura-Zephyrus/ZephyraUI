@@ -221,6 +221,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.primary", "Primary"),
     ("en", "ui.pill", "Pill"),
     ("en", "ui.with-icon-round", "With icon / round"),
+    ("en", "ui.liquid-button", "Liquid button"),
+    ("en", "ui.options", "Options"),
+    ("en", "ui.dropdown-button", "Dropdown button"),
+    ("en", "ui.liquid.demo", "LiquidButton — press & drag, solid / glass (LiquidButton.kt 1:1)"),
     ("en", "ui.send", "Send"),
     ("en", "ui.click-me", "Click me"),
     ("en", "ui.counter", "Counter"),
@@ -348,6 +352,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.primary", "主要"),
     ("zh-Hans", "ui.pill", "胶囊"),
     ("zh-Hans", "ui.with-icon-round", "带图标 / 圆形"),
+    ("zh-Hans", "ui.liquid-button", "液态胶囊按钮"),
+    ("zh-Hans", "ui.options", "选项"),
+    ("zh-Hans", "ui.dropdown-button", "下拉按钮"),
+    ("zh-Hans", "ui.liquid.demo", "LiquidButton — 按压并拖拽，实色 / 玻璃（LiquidButton.kt 1:1）"),
     ("zh-Hans", "ui.send", "发送"),
     ("zh-Hans", "ui.click-me", "点我"),
     ("zh-Hans", "ui.counter", "计数器"),
@@ -475,6 +483,10 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.primary", "プライマリ"),
     ("ja", "ui.pill", "ピル"),
     ("ja", "ui.with-icon-round", "アイコン付き / 丸"),
+    ("ja", "ui.liquid-button", "リキッドボタン"),
+    ("ja", "ui.options", "オプション"),
+    ("ja", "ui.dropdown-button", "ドロップダウンボタン"),
+    ("ja", "ui.liquid.demo", "LiquidButton — 押下/ドラッグ、ソリッド/グラス（LiquidButton.kt 1:1）"),
     ("ja", "ui.send", "送信"),
     ("ja", "ui.click-me", "クリックして"),
     ("ja", "ui.counter", "カウンター"),
@@ -769,6 +781,12 @@ pub const MAT_GLASS_KEY: &str = "mat:glass";
 /// 滑块（LiquidSlider 1:1）演示：实色 / 玻璃各一枚。
 pub const SLIDER_SOLID_KEY: &str = "slider:solid";
 pub const SLIDER_GLASS_KEY: &str = "slider:glass";
+/// 胶囊液态按钮（LiquidButton 1:1）演示：实色 / 玻璃各一枚。
+pub const LIQUID_BTN_SOLID_KEY: &str = "liquid:btn:solid";
+pub const LIQUID_BTN_GLASS_KEY: &str = "liquid:btn:glass";
+/// 下拉按钮（液态材质）演示：实色 / 玻璃各一枚。
+pub const LIQUID_DD_SOLID_KEY: &str = "liquid:dd:solid";
+pub const LIQUID_DD_GLASS_KEY: &str = "liquid:dd:glass";
 /// 装饰开关的标签语义 key。
 pub const GLASS_DECOR_LABEL_KEY: &str = "ui.decorations";
 /// 开关的标签语义 key（译文由控件模板内部 `tr()` 取）。
@@ -839,6 +857,14 @@ pub struct Gallery {
     /// 滑块演示（LiquidSlider 原版语义）：实色 / 玻璃各一枚。
     pub slider_solid: zephyra_ui::Slider,
     pub slider_glass: zephyra_ui::Slider,
+    /// 胶囊液态按钮演示（LiquidButton 原版语义）：实色 / 玻璃各一枚。
+    pub liquid_btn_solid: zephyra_ui::LiquidButton,
+    pub liquid_btn_glass: zephyra_ui::LiquidButton,
+    /// 下拉按钮（液态材质）演示：实色 / 玻璃各一枚。
+    pub liquid_dd_solid: zephyra_ui::LiquidButton,
+    pub liquid_dd_glass: zephyra_ui::LiquidButton,
+    pub liquid_dd_solid_open: bool,
+    pub liquid_dd_glass_open: bool,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1199,6 +1225,18 @@ impl Default for Gallery {
             )
             .with_value(50.0)
             .with_material(zephyra_core::filter::Material::Glass),
+            liquid_btn_solid: zephyra_ui::LiquidButton::new(LIQUID_BTN_SOLID_KEY)
+                .with_size(180.0, 48.0),
+            liquid_btn_glass: zephyra_ui::LiquidButton::new(LIQUID_BTN_GLASS_KEY)
+                .with_size(180.0, 48.0)
+                .with_material(zephyra_core::filter::Material::Glass),
+            liquid_dd_solid: zephyra_ui::LiquidButton::new(LIQUID_DD_SOLID_KEY)
+                .with_size(160.0, 36.0),
+            liquid_dd_glass: zephyra_ui::LiquidButton::new(LIQUID_DD_GLASS_KEY)
+                .with_size(160.0, 36.0)
+                .with_material(zephyra_core::filter::Material::Glass),
+            liquid_dd_solid_open: false,
+            liquid_dd_glass_open: false,
             radio_group: {
                 let mut g = zephyra_ui::RadioGroup::new();
                 for (key, label_key) in RADIO_KEYS.iter().zip(RADIO_LABEL_KEYS) {
@@ -1434,6 +1472,16 @@ impl Gallery {
                     self.slider_glass.set_value_immediate(next);
                 }
             }
+            LIQUID_BTN_SOLID_KEY | LIQUID_BTN_GLASS_KEY => {
+                // 胶囊按钮：激活即点击（原版 onClick）；切换 pill 状态给出可见反馈（满足接线门禁）。
+                self.pill_on = !self.pill_on;
+            }
+            LIQUID_DD_SOLID_KEY => {
+                self.liquid_dd_solid_open = !self.liquid_dd_solid_open;
+            }
+            LIQUID_DD_GLASS_KEY => {
+                self.liquid_dd_glass_open = !self.liquid_dd_glass_open;
+            }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
             }
@@ -1544,6 +1592,23 @@ impl View for Gallery {
         self.slider_glass
             .process_pointer_events(&state.pointer_events, state.scale);
 
+        let lb_s = self.pressed.as_ref().and_then(|k| k.as_name()) == Some(LIQUID_BTN_SOLID_KEY);
+        self.liquid_btn_solid.set_pressed(lb_s);
+        self.liquid_btn_solid
+            .process_pointer_events(&state.pointer_events, state.scale);
+        let lb_g = self.pressed.as_ref().and_then(|k| k.as_name()) == Some(LIQUID_BTN_GLASS_KEY);
+        self.liquid_btn_glass.set_pressed(lb_g);
+        self.liquid_btn_glass
+            .process_pointer_events(&state.pointer_events, state.scale);
+        let dd_s = self.pressed.as_ref().and_then(|k| k.as_name()) == Some(LIQUID_DD_SOLID_KEY);
+        self.liquid_dd_solid.set_pressed(dd_s);
+        self.liquid_dd_solid
+            .process_pointer_events(&state.pointer_events, state.scale);
+        let dd_g = self.pressed.as_ref().and_then(|k| k.as_name()) == Some(LIQUID_DD_GLASS_KEY);
+        self.liquid_dd_glass.set_pressed(dd_g);
+        self.liquid_dd_glass
+            .process_pointer_events(&state.pointer_events, state.scale);
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         let click_key = match (&self.last_pressed, &state.pressed) {
@@ -1563,6 +1628,10 @@ impl View for Gallery {
         self.mat_glass.advance(dt);
         self.slider_solid.advance(dt);
         self.slider_glass.advance(dt);
+        self.liquid_btn_solid.advance(dt);
+        self.liquid_btn_glass.advance(dt);
+        self.liquid_dd_solid.advance(dt);
+        self.liquid_dd_glass.advance(dt);
 
         // 入场动画时钟。
         //
@@ -1635,6 +1704,10 @@ impl View for Gallery {
             || self.mat_glass.is_animating()
             || self.slider_solid.is_animating()
             || self.slider_glass.is_animating()
+            || self.liquid_btn_solid.is_animating()
+            || self.liquid_btn_glass.is_animating()
+            || self.liquid_dd_solid.is_animating()
+            || self.liquid_dd_glass.is_animating()
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
@@ -1835,6 +1908,43 @@ impl zypui::Host for Gallery {
             "slider_glass_thumb_filter" => slider_thumb_filter_value(&g.slider_glass),
             "slider_glass_thumb_decoration" => slider_thumb_decoration_value(&g.slider_glass),
             "slider_glass_value" => S(slider_value_text(g.slider_glass.value())),
+            // ---- liquid button / dropdown（LiquidButton.kt 1:1，实色/玻璃对比）----
+            "lbtn_s_sx" => F(g.liquid_btn_solid.scale().0),
+            "lbtn_s_sy" => F(g.liquid_btn_solid.scale().1),
+            "lbtn_s_tx" => F(g.liquid_btn_solid.translation().0),
+            "lbtn_s_ty" => F(g.liquid_btn_solid.translation().1),
+            "lbtn_g_sx" => F(g.liquid_btn_glass.scale().0),
+            "lbtn_g_sy" => F(g.liquid_btn_glass.scale().1),
+            "lbtn_g_tx" => F(g.liquid_btn_glass.translation().0),
+            "lbtn_g_ty" => F(g.liquid_btn_glass.translation().1),
+            "lbtn_g_bg" => zypui::Val::Raw(zephyra_core::property::PropertyValue::color(
+                zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 0.18),
+            )),
+            "lbtn_g_filter" => zypui::Val::Raw(zephyra_ui::liquid_button::glass_filter_value()),
+            "lbtn_g_decoration" => {
+                zypui::Val::Raw(zephyra_ui::liquid_button::glass_decoration_value(
+                    g.liquid_btn_glass.press_progress(),
+                ))
+            }
+            "ldd_s_sx" => F(g.liquid_dd_solid.scale().0),
+            "ldd_s_sy" => F(g.liquid_dd_solid.scale().1),
+            "ldd_s_tx" => F(g.liquid_dd_solid.translation().0),
+            "ldd_s_ty" => F(g.liquid_dd_solid.translation().1),
+            "ldd_s_open" => B(g.liquid_dd_solid_open),
+            "ldd_g_sx" => F(g.liquid_dd_glass.scale().0),
+            "ldd_g_sy" => F(g.liquid_dd_glass.scale().1),
+            "ldd_g_tx" => F(g.liquid_dd_glass.translation().0),
+            "ldd_g_ty" => F(g.liquid_dd_glass.translation().1),
+            "ldd_g_open" => B(g.liquid_dd_glass_open),
+            "ldd_g_bg" => zypui::Val::Raw(zephyra_core::property::PropertyValue::color(
+                zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 0.18),
+            )),
+            "ldd_g_filter" => zypui::Val::Raw(zephyra_ui::liquid_button::glass_filter_value()),
+            "ldd_g_decoration" => {
+                zypui::Val::Raw(zephyra_ui::liquid_button::glass_decoration_value(
+                    g.liquid_dd_glass.press_progress(),
+                ))
+            }
             "glass_decorations" => zypui::Val::Raw(
                 zephyra_core::property::PropertyValue::decorations(if g.glass_decor.is_checked() {
                     zephyra_core::decoration::Decorations::glass()

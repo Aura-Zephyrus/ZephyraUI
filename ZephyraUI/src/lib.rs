@@ -38,6 +38,7 @@
 
 pub mod checkbox;
 pub mod i18n;
+pub mod liquid_button;
 pub mod slider;
 pub mod styles;
 pub mod toggle;
@@ -48,6 +49,7 @@ pub use i18n::{
     builtin_messages, is_key_param, merge_builtin, resolve, BUILTIN_KEYS, CHECKBOX_SELECT_ALL,
     KEY_PARAMS, NAMESPACE,
 };
+pub use liquid_button::{LiquidButton, LIQUID_BUTTON_H, LIQUID_BUTTON_W};
 pub use slider::{Slider, DRAG_SLOP, THUMB_H, THUMB_PRESSED_SCALE, THUMB_W, TRACK_H};
 pub use styles::{stylesheet, STYLESHEETS};
 pub use toggle::{RadioGroup, RadioOption, ToggleSwitch, KNOB_PRESSED_SCALE, KNOB_TRAVEL};

@@ -455,14 +455,53 @@
   </control>
 </component>
 
-<component name="DropDownButton" params="label icon open">
-  <control interactive="true" class="drop-down drop-down {open ? 'open'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <if cond="icon">
-      <container key="icon" icon="{icon}" class="dd-icon"/>
-    </if>
-    <text key="label" text="{label}" class="dd-label"/>
-    <container key="chevron" icon="chevron-down" class="dd-chevron"/>
-  </control>
+<!-- 胶囊/液态按钮：一比一复刻 AndroidLiquidGlass `LiquidButton` + `InteractiveHighlight`
+     （Apache-2.0，`E:\AndroidLiquidGlass`；模型 `ZephyraUI/src/liquid_button.rs`）。
+
+     原版：Capsule 48h, padding-x 16, gap 8；
+     `vibrancy()+blur(2dp)+lens(12dp,24dp)`；tint/surface 走 background；
+     interactive layerBlock = press spring(0.5,300,.001) -> baseScale(1+4/h*p) +
+     tanh 拖拽位移(maxOffset=min(w,h),k=0.05) + 方向性 scale；InteractiveHighlight
+     径向着色器高光无直接等价（用 decoration 近似），vibrancy 无独立 filter（省略）。
+     material=solid 时瞬变/无拖拽形变；glass=全套。 -->
+<component name="LiquidButton" params="label label_key icon material disabled scale_x scale_y translate_x translate_y background filter decoration">
+  <if cond="material == 'glass'">
+    <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" background="{background}" filter="{filter}" decoration="{decoration}" class="liquid-button {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+      <if cond="icon">
+        <container key="icon" icon="{icon}" class="liquid-btn-icon {material}"/>
+      </if>
+      <text key="label" text="{label_key ? tr(label_key) : label}" class="liquid-btn-label {material}"/>
+    </control>
+    <else>
+      <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" class="liquid-button {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+        <if cond="icon">
+          <container key="icon" icon="{icon}" class="liquid-btn-icon {material}"/>
+        </if>
+        <text key="label" text="{label_key ? tr(label_key) : label}" class="liquid-btn-label {material}"/>
+      </control>
+    </else>
+  </if>
+</component>
+
+<component name="DropDownButton" params="label label_key icon open material disabled scale_x scale_y translate_x translate_y background filter decoration">
+  <if cond="material == 'glass'">
+    <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" background="{background}" filter="{filter}" decoration="{decoration}" class="drop-down drop-down {open ? 'open'} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+      <if cond="icon">
+        <container key="icon" icon="{icon}" class="dd-icon {material}"/>
+      </if>
+      <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
+      <container key="chevron" icon="chevron-down" class="dd-chevron {open ? 'open'}"/>
+    </control>
+    <else>
+      <control interactive="true" focusable="true" activatable="true" disabled="{disabled}" scale-x="{scale_x}" scale-y="{scale_y}" translate-x="{translate_x}" translate-y="{translate_y}" class="drop-down drop-down {open ? 'open'} {material} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused'} {disabled ? 'disabled'}">
+        <if cond="icon">
+          <container key="icon" icon="{icon}" class="dd-icon {material}"/>
+        </if>
+        <text key="label" text="{label_key ? tr(label_key) : label}" class="dd-label {material}"/>
+        <container key="chevron" icon="chevron-down" class="dd-chevron {open ? 'open'}"/>
+      </control>
+    </else>
+  </if>
 </component>
 
 <component name="ComboBox" params="value">

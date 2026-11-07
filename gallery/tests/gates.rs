@@ -272,6 +272,8 @@ fn the_whole_tree_writes_no_appearance_in_source() {
                                     || k.starts_with("knob")
                                     || k == "thumb"
                                     || k.starts_with("thumb")
+                                    || k.starts_with("liquid:btn:")
+                                    || k.starts_with("liquid:dd:")
                             }) && std::ptr::eq(key, &zephyra_core::props::BACKGROUND);
                         if !is_fill_geometry && !is_animated_color {
                             offenders.push(format!(
