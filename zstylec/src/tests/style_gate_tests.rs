@@ -4,8 +4,8 @@
 //!
 //! 排版规范里唯一「机器能判、人一定会忘」的部分是：已经统一过的写法不许再漂回去。
 //! 实测 2026-10-31 存量漂移：19 份文件里 2 份是 CRLF、44 处单行规则
-//! （`Container.page-guide { direction: vertical; … }`）、选择器与 `{` 之间
-//! 有对齐空格（`Container.page-guide    {`）。这些都是纯排版差异，语义零变化，
+//! （`box.page-guide { direction: vertical; … }`）、选择器与 `{` 之间
+//! 有对齐空格（`box.page-guide    {`）。这些都是纯排版差异，语义零变化，
 //! 但 diff 里全是噪音。
 //!
 //! # 门的形状
@@ -103,6 +103,43 @@ fn repo_zstyle_files_are_formatted() {
     );
 }
 
+/// 全仓 `.zstyle` 必须**零诊断**：类型选择器或定位值一旦用了旧词汇
+/// （`Container` / `Text` / `position: absolute` …），这里立刻红。
+///
+/// 与排版门禁互补：排版器只动空白，**不**跑语义校验；这条才是词汇/枚举值的门禁。
+#[test]
+fn every_repo_zstyle_parses_without_diagnostics() {
+    let files = all_repo_zstyle();
+    assert!(
+        !files.is_empty(),
+        "一个 .zstyle 都没找到 —— 工作区根算错了？（{}）",
+        workspace_root().display()
+    );
+
+    let mut bad: Vec<String> = Vec::new();
+    for f in &files {
+        let src =
+            std::fs::read_to_string(f).unwrap_or_else(|e| panic!("读不了 {}: {e}", f.display()));
+        let report = crate::parse(&f.display().to_string(), &src);
+        for e in &report.errors {
+            bad.push(format!(
+                "{}:{}: {}",
+                f.strip_prefix(workspace_root()).unwrap_or(f).display(),
+                e.at.line,
+                e.headline
+            ));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} 份 .zstyle 里有 {} 条诊断 —— 旧词汇/旧枚举值必须清零：\n{}",
+        files.len(),
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
 #[test]
 fn formatting_is_idempotent_on_every_repo_file() {
     for f in all_repo_zstyle() {
@@ -150,19 +187,19 @@ fn formatting_does_not_change_the_ir_on_any_repo_file() {
 /// 门禁本身要能抓到违规 —— 拿一份故意写烂的源码验判据，防止门禁形同虚设。
 #[test]
 fn the_gate_actually_catches_drift() {
-    let bad = "Control { width:1px; height:2px }\n";
+    let bad = "control { width:1px; height:2px }\n";
     assert!(
         !crate::fmt::is_formatted(bad),
         "未排版的源码必须被判脏 —— 门禁形同虚设"
     );
     // 单行规则也是违规。
-    let one_line = "Container.x { width: 1px; }\n";
+    let one_line = "box.x { width: 1px; }\n";
     assert!(
         !crate::fmt::is_formatted(one_line),
         "单行规则必须被判脏 —— 门禁漏掉了一整类漂移"
     );
     // 干净的必须判干净（否则 `zephyra fmt` 之后 CI 仍然红）。
-    let clean = "Control {\n    width: 1px;\n    height: 2px;\n}\n";
+    let clean = "control {\n    width: 1px;\n    height: 2px;\n}\n";
     assert!(
         crate::fmt::is_formatted(clean),
         "clean source must pass the gate"

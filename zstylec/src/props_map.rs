@@ -63,6 +63,10 @@ pub(crate) const PROPS: &[Prop] = &[
         key: &props::POSITION,
     },
     Prop {
+        css: "anchor",
+        key: &props::ANCHOR,
+    },
+    Prop {
         css: "left",
         key: &props::LEFT,
     },
@@ -154,6 +158,10 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop {
         css: "corner-radius",
         key: &props::CORNER_RADIUS,
+    },
+    Prop {
+        css: "corner-shape",
+        key: &props::CORNER_SHAPE,
     },
     Prop {
         css: "border-color",

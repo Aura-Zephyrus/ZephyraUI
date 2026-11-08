@@ -583,7 +583,7 @@ fn fmt_formats_a_zstyle_file_in_place() {
     let dir = scratch("zstyle");
     let f = dir.join("app.zstyle");
     // 单行规则：排版器必须展开成多行。
-    std::fs::write(&f, "Control.x { width: 10px; height: 20px; }\n").unwrap();
+    std::fs::write(&f, "control.x { width: 10px; height: 20px; }\n").unwrap();
 
     let (code, out, _) = run_fmt(&format!("fmt {}", f.display()));
     assert_eq!(code, ExitCode::Success);
@@ -591,7 +591,7 @@ fn fmt_formats_a_zstyle_file_in_place() {
 
     let after = std::fs::read_to_string(&f).unwrap();
     assert_eq!(
-        after, "Control.x {\n    width: 10px;\n    height: 20px;\n}\n",
+        after, "control.x {\n    width: 10px;\n    height: 20px;\n}\n",
         "排版后必须是标准形态"
     );
     // 再跑一次：已经干净 ⇒ 不再报要排版。
@@ -627,7 +627,8 @@ fn fmt_formats_a_zypui_file_in_place() {
     let dir = scratch("zypui");
     let f = dir.join("shell.zypui");
     // class 在中间：排版器必须挪到行尾（位置非语义，所以这是排版不是行为变更）。
-    let bad = "<component name=\"P\">\n  <container key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n";
+    let bad =
+        "<component name=\"P\">\n  <box key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n";
     std::fs::write(&f, bad).unwrap();
 
     let (code, _, _) = run_fmt(&format!("fmt {}", f.display()));
@@ -635,7 +636,7 @@ fn fmt_formats_a_zypui_file_in_place() {
     let after = std::fs::read_to_string(&f).unwrap();
     assert_eq!(
         after,
-        "<component name=\"P\">\n  <container key=\"a\" icon=\"gear\" class=\"c\"/>\n</component>\n",
+        "<component name=\"P\">\n  <box key=\"a\" icon=\"gear\" class=\"c\"/>\n</component>\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -663,7 +664,7 @@ fn fmt_walks_a_directory_and_skips_target() {
     std::fs::write(&style, "Control{width:10px;}\n").unwrap();
     std::fs::write(
         &ui,
-        "<component name=\"P\">\n<container key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n",
+        "<component name=\"P\">\n<box key=\"a\" class=\"c\" icon=\"gear\"/>\n</component>\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("target").join("x")).unwrap();

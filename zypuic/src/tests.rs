@@ -42,7 +42,7 @@ fn xml_elements_attrs_self_closing_comments_entities() {
     let raw = parse_ok(
         "<!-- 头注释 -->\n\
          <page name=\"p\">\n\
-           <container key=\"c1\" class=\"a b\"/>\n\
+           <box key=\"c1\" class=\"a b\"/>\n\
            <text key=\"t1\" text=\"确定 &amp; 提交\"/>\n\
          </page>",
     );
@@ -52,7 +52,7 @@ fn xml_elements_attrs_self_closing_comments_entities() {
 
 #[test]
 fn render_source_kind_attribute_is_compiled_as_a_host_reference() {
-    let source = "<page name=\"p\"><container key=\"video\" render-source=\"video:main\"/></page>";
+    let source = "<page name=\"p\"><box key=\"video\" render-source=\"video:main\"/></page>";
     let raw = parse_ok(source);
     let bytes = crate::compile(&[("source.zypui", source)]).unwrap();
     let decoded = decode(&bytes).unwrap();
@@ -68,7 +68,7 @@ fn render_source_kind_attribute_is_compiled_as_a_host_reference() {
 
 #[test]
 fn xml_errors_carry_line_numbers() {
-    let diags = parse_err("<page name=\"p\">\n  <container key=\"c1\"\n</page>");
+    let diags = parse_err("<page name=\"p\">\n  <box key=\"c1\"\n</page>");
     assert!(!diags.is_empty());
     // 第二行的语法错 → 行号 2 或 3（闭合标签处理点），关键是**不是 1**。
     assert!(
@@ -80,7 +80,7 @@ fn xml_errors_carry_line_numbers() {
 
 #[test]
 fn xml_text_outside_text_element_is_an_error() {
-    let diags = parse_err("<page name=\"p\"><container>流浪文本</container></page>");
+    let diags = parse_err("<page name=\"p\"><box>流浪文本</box></page>");
     assert!(
         has_error(&diags, "不接受文本内容"),
         "诊断：{}",
@@ -129,12 +129,16 @@ fn unknown_component_and_param_are_errors() {
 #[test]
 fn unknown_element_and_attr_are_errors() {
     let diags = parse_err("<page name=\"p\"><stack/></page>");
-    assert!(has_error(&diags, "未知元素"), "诊断：{}", render(&diags));
+    assert!(
+        has_error(&diags, "unknown element"),
+        "诊断：{}",
+        render(&diags)
+    );
 
     // 外观值不进 .zypui 的白名单（样式表全归 .zstyle）—— 用一个**始终**
     // 不在白名单里的外观键做哨兵（`background` 2026-11 受限开放为宿主逐帧
     // 颜色绑定，判据移到 zypui 的 instantiate 层，见那里的单测）。
-    let diags = parse_err("<page name=\"p\"><container corner-radius=\"99px\"/></page>");
+    let diags = parse_err("<page name=\"p\"><box corner-radius=\"99px\"/></page>");
     assert!(
         has_error(&diags, "不认识属性 `corner-radius`"),
         "外观值混进 .zypui 必须被拦。诊断：{}",
@@ -144,8 +148,7 @@ fn unknown_element_and_attr_are_errors() {
 
 #[test]
 fn unknown_identifier_in_expression_is_an_error() {
-    let diags =
-        parse_err("<component name=\"C\"><container class=\"x {hoving ? 'a'}\"/></component>");
+    let diags = parse_err("<component name=\"C\"><box class=\"x {hoving ? 'a'}\"/></component>");
     assert!(
         has_error(&diags, "未知标识符 `hoving`"),
         "诊断：{}",
@@ -155,7 +158,7 @@ fn unknown_identifier_in_expression_is_an_error() {
 
 #[test]
 fn reserved_and_builtin_param_names_are_errors() {
-    let diags = parse_err("<component name=\"C\" params=\"hover key\"><container/></component>");
+    let diags = parse_err("<component name=\"C\" params=\"hover key\"><box/></component>");
     assert!(
         has_error(&diags, "保留字") || has_error(&diags, "撞名"),
         "诊断：{}",
@@ -165,14 +168,14 @@ fn reserved_and_builtin_param_names_are_errors() {
 
 #[test]
 fn component_names_must_be_pascal() {
-    let diags = parse_err("<component name=\"button\"><container/></component>");
+    let diags = parse_err("<component name=\"button\"><box/></component>");
     assert!(has_error(&diags, "PascalCase"), "诊断：{}", render(&diags));
 }
 
 #[test]
 fn duplicate_names_are_errors() {
-    let src = "<component name=\"C\"><container/></component>\n\
-               <component name=\"C\"><container/></component>";
+    let src = "<component name=\"C\"><box/></component>\n\
+               <component name=\"C\"><box/></component>";
     assert!(has_error(&parse_err(src), "重名"));
 }
 
@@ -186,7 +189,7 @@ fn slot_rules() {
         render(&diags)
     );
     // 两个槽位：实例化期会炸，编译期就该拦 —— 走 check 全链。
-    let src = "<component name=\"C\"><container><children/><children/></container></component>\n\
+    let src = "<component name=\"C\"><box><children/><children/></box></component>\n\
                <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"x\"/></C></page>";
     let diags = parse_err(src);
     assert!(
@@ -198,7 +201,7 @@ fn slot_rules() {
 
 #[test]
 fn use_with_children_but_no_slot_is_an_error() {
-    let src = "<component name=\"C\"><container/></component>\n\
+    let src = "<component name=\"C\"><box/></component>\n\
                <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"x\"/></C></page>";
     // 编译期查模板槽位数（当前在运行期查；这里确保至少一路拦得住）。
     let raw = parse_ok(src);
@@ -259,7 +262,7 @@ impl zypui::Host for TestHost {
 #[test]
 fn expression_precedence_and_literals() {
     let raw = parse_ok(
-        "<page name=\"p\"><container key=\"{ 'a' + 'b' }\" class=\"x {@n > 1 && @flag ? 'big'}\"/></page>",
+        "<page name=\"p\"><box key=\"{ 'a' + 'b' }\" class=\"x {@n > 1 && @flag ? 'big'}\"/></page>",
     );
     let page = &raw.pages[0];
     let zypui::ir::Node::El(el) = &page.root[0] else {
@@ -289,9 +292,9 @@ fn encode_decode_round_trips_to_the_same_tree_and_same_pixels() {
              <image key=\"{{name}}\" texture=\"atlas\" uv=\"0.5,0,0.5,1\"/>\n\
            </for>\n\
            <if cond=\"@open\">\n\
-             <container key=\"panel\" class=\"panel\"/>\n\
+             <box key=\"panel\" class=\"panel\"/>\n\
              <else>\n\
-               <container key=\"closed\" class=\"closed\"/>\n\
+               <box key=\"closed\" class=\"closed\"/>\n\
              </else>\n\
            </if>\n\
          </page>"
@@ -345,7 +348,7 @@ fn dev_text_path_and_release_binary_path_agree() {
 #[test]
 fn field_access_and_mod_roundtrip_and_eval() {
     let src = "<component name=\"C\" params=\"item n\">\
-               <container key=\"{'k' + str(item.id % 3)}\" class=\"x {n % 2 == 0 ? 'even'}\"/></component>\
+               <box key=\"{'k' + str(item.id % 3)}\" class=\"x {n % 2 == 0 ? 'even'}\"/></component>\
                <page name=\"p\"><C item=\"{@it}\" n=\"{8}\"/></page>";
     let raw = parse_ok(src);
     // round-trip：Field 与 Mod 都要活着回到解码侧。
@@ -393,9 +396,9 @@ impl zypui::Host for RecHost {
 #[test]
 fn range_and_nested_for_produce_indexed_keys() {
     let src = "<page name=\"p\">\
-               <container key=\"rows\">\
-               <for var=\"i\" list=\"range(3)\"><container key=\"{'pip:' + str(i)}\" class=\"pip {i == 1 ? 'selected'}\"/></for>\
-               </container></page>";
+               <box key=\"rows\">\
+               <for var=\"i\" list=\"range(3)\"><box key=\"{'pip:' + str(i)}\" class=\"pip {i == 1 ? 'selected'}\"/></for>\
+               </box></page>";
     let raw = parse_ok(src);
     let ui = zypui::Ui::new(raw).unwrap();
     let h = TestHost;
@@ -414,7 +417,7 @@ fn range_and_nested_for_produce_indexed_keys() {
 #[test]
 fn min_max_clamp_fill_width() {
     let src = "<page name=\"p\">\
-               <container key=\"fill:slider\" class=\"slider-fill\" width=\"{min(max(@v, 0.0), 1.0) * 220.0}\"/>\
+               <box key=\"fill:slider\" class=\"slider-fill\" width=\"{min(max(@v, 0.0), 1.0) * 220.0}\"/>\
                </page>";
     let raw = parse_ok(src);
     let ui = zypui::Ui::new(raw).unwrap();
@@ -452,8 +455,7 @@ impl zypui::Host for NumHost {
 
 #[test]
 fn width_outside_fill_key_is_an_error() {
-    let diags =
-        parse_err("<page name=\"p\"><container key=\"box\" class=\"x\" width=\"{42}\"/></page>");
+    let diags = parse_err("<page name=\"p\"><box key=\"box\" class=\"x\" width=\"{42}\"/></page>");
     assert!(
         has_error(&diags, "fill:"),
         "width 出现在非 fill 键上应报错：{}",

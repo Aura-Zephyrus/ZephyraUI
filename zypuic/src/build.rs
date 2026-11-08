@@ -4,7 +4,7 @@
 //!
 //! - 顶层只认 `component` / `page`；
 //! - 组件名必须 PascalCase（元素分派靠大小写区分「组件引用 vs 裸元素」）；
-//! - 裸标签只认 `container` / `text` / `image` / `control` / `if` / `for` /
+//! - 裸标签只认 `box` / `text` / `image` / `control` / `if` / `for` /
 //!   `children` / `else`；
 //! - 裸元素属性白名单（见 `zypui::ir::BARE_ATTRS` + `key`/`class`），
 //!   未知属性报错，绝不静默忽略（与 zstylec 的 props_map 同一条规矩）；
@@ -227,16 +227,22 @@ fn build_into(
                 "<else> 只能作为 <if> 的直接子元素出现",
             ));
         }
-        "container" | "text" | "image" | "control" => {
+        "box" | "text" | "image" | "control" => {
             build_bare(el, file, visible, in_template, signatures, out, diags)
         }
+        "container" => diags.push(Diag::error(
+            file,
+            el.line,
+            el.col,
+            "unknown element <container>; use <box> instead (clean-break migration)".to_string(),
+        )),
         name if is_pascal(name) => build_use(el, name, file, visible, signatures, out, diags),
         name => diags.push(Diag::error(
             file,
             el.line,
             el.col,
             format!(
-                "未知元素 <{name}>（裸元素是 container/text/image/control，组件名要 PascalCase）"
+                "unknown element <{name}> (bare elements: box/text/image/control; component names are PascalCase)"
             ),
         )),
     }
@@ -383,10 +389,19 @@ fn build_bare(
     diags: &mut Vec<Diag>,
 ) {
     let tag = match el.name.as_str() {
-        "container" => NodeTag::Container,
+        "box" => NodeTag::Box,
         "text" => NodeTag::Text,
         "image" => NodeTag::Image,
-        _ => NodeTag::Control,
+        "control" => NodeTag::Control,
+        other => {
+            diags.push(Diag::error(
+                file,
+                el.line,
+                el.col,
+                format!("internal: unexpected bare element <{other}>"),
+            ));
+            NodeTag::Control
+        }
     };
     let mut key: Option<Expr> = None;
     let mut classes: Vec<ClassTok> = Vec::new();

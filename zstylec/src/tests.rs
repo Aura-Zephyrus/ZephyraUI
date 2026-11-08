@@ -57,7 +57,7 @@ fn bad(css: &str) -> String {
 
 #[test]
 fn a_bare_type_selector_parses() {
-    let r = ok("Control { width: 40px; }");
+    let r = ok("control { width: 40px; }");
     assert_eq!(r.sheet.rules().len(), 1);
     assert_eq!(
         r.sheet.rules()[0].selector.specificity(),
@@ -79,7 +79,7 @@ fn a_class_selector_parses() {
 
 #[test]
 fn type_plus_classes_parses() {
-    let r = ok("Control.danger.compact { width: 10px; }");
+    let r = ok("control.danger.compact { width: 10px; }");
     let rule = &r.sheet.rules()[0];
     assert!(rule.selector.tag.is_some(), "类型要在");
     assert_eq!(rule.selector.names.len(), 2, "两个分类名");
@@ -88,7 +88,7 @@ fn type_plus_classes_parses() {
 
 #[test]
 fn a_token_value_becomes_a_resource() {
-    let r = ok("Control { background: @control_fill; }");
+    let r = ok("control { background: @control_fill; }");
     let v = &r.sheet.rules()[0].declarations[0].value;
     assert_eq!(
         v.resource_key(),
@@ -99,29 +99,29 @@ fn a_token_value_becomes_a_resource() {
 
 #[test]
 fn hex_colours_parse_at_all_widths() {
-    let r = ok("Control { background: #abc; }");
+    let r = ok("control { background: #abc; }");
     let color = r.sheet.rules()[0].declarations[0]
         .value
         .get::<zephyra_core::core::Color>();
     assert!(color.is_some());
 
-    let _ = ok("Control { background: #aabbcc; }");
-    let _ = ok("Control { background: #aabbccdd; }");
+    let _ = ok("control { background: #aabbcc; }");
+    let _ = ok("control { background: #aabbccdd; }");
 }
 
 #[test]
 fn enum_values_parse_per_property() {
     // `direction` / `main-align` / `cross-align` 收关键字，但**按属性**认。
-    let _ = ok("Control { direction: vertical; }");
-    let _ = ok("Control { main-align: center; }");
-    let _ = ok("Control { cross-align: start; }");
+    let _ = ok("control { direction: vertical; }");
+    let _ = ok("control { main-align: center; }");
+    let _ = ok("control { cross-align: start; }");
 }
 
 /// `material-params` 是空格/逗号分隔的数值列表，独立于 `material`。
 #[test]
 fn material_params_parses_a_number_list() {
     use zephyra_core::filter::MaterialParams;
-    let r = ok("Control { material: glass; material-params: 24 20 0.3 1.5; }");
+    let r = ok("control { material: glass; material-params: 24 20 0.3 1.5; }");
     let d = &r.sheet.rules()[0].declarations;
     let get = |name: &str| {
         d.iter()
@@ -147,7 +147,7 @@ fn material_params_parses_a_number_list() {
     );
 
     // 逗号分隔也行；少写的项保持 None。
-    let r = ok("Control { material-params: 12; }");
+    let r = ok("control { material-params: 12; }");
     assert_eq!(
         r.sheet.rules()[0].declarations[0]
             .value
@@ -167,7 +167,7 @@ fn material_params_parses_a_number_list() {
 fn decoration_parses_the_three_keywords_and_rejects_others() {
     use zephyra_core::decoration::Decorations;
 
-    let r = ok("Control { decoration: glass; }");
+    let r = ok("control { decoration: glass; }");
     assert_eq!(
         r.sheet.rules()[0].declarations[0]
             .value
@@ -175,7 +175,7 @@ fn decoration_parses_the_three_keywords_and_rejects_others() {
         Some(Decorations::glass())
     );
 
-    let r = ok("Control { decoration: control; }");
+    let r = ok("control { decoration: control; }");
     assert_eq!(
         r.sheet.rules()[0].declarations[0]
             .value
@@ -183,7 +183,7 @@ fn decoration_parses_the_three_keywords_and_rejects_others() {
         Some(Decorations::control())
     );
 
-    let r = ok("Control { decoration: none; }");
+    let r = ok("control { decoration: none; }");
     assert_eq!(
         r.sheet.rules()[0].declarations[0]
             .value
@@ -192,7 +192,7 @@ fn decoration_parses_the_three_keywords_and_rejects_others() {
     );
 
     // 拼错 ⇒ 带提示的报错。
-    let err = bad("Control { decoration: frosted; }");
+    let err = bad("control { decoration: frosted; }");
     assert!(
         err.contains("unknown decoration"),
         "报错要指名是哪个值错了，实际：{err}"
@@ -200,39 +200,105 @@ fn decoration_parses_the_three_keywords_and_rejects_others() {
 }
 
 #[test]
-fn position_parses_static_and_absolute_and_rejects_others() {
-    // `position` 只认 static / absolute 两个关键字（本仓的 absolute 等价于
-    // CSS 的 fixed：left/top 直接是窗口坐标）。
-    use zephyra_core::layout::Position;
-    let r = ok("Control { position: absolute; left: 120px; top: 40px; }");
+fn position_parses_flow_parent_root_and_rejects_legacy_keywords_with_migration() {
+    use zephyra_core::layout::{Anchor, Position};
+
+    let r = ok("control { position: flow; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0].value.get::<Position>(),
+        Some(Position::Flow)
+    );
+
+    let r = ok("control { position: parent; left: 12px; top: 8px; anchor: center; }");
     let d = &r.sheet.rules()[0].declarations;
     let get = |name: &str| {
         d.iter()
             .find(|x| x.key.name() == name)
-            .unwrap_or_else(|| panic!("少了 {name}"))
+            .unwrap_or_else(|| panic!("missing {name}"))
     };
     assert_eq!(
         get("Position").value.get::<Position>(),
-        Some(Position::Absolute)
+        Some(Position::Parent)
     );
-    assert_eq!(get("Left").value.get::<f32>(), Some(120.0));
-    assert_eq!(get("Top").value.get::<f32>(), Some(40.0));
+    assert_eq!(get("Anchor").value.get::<Anchor>(), Some(Anchor::Center));
+    assert_eq!(get("Left").value.get::<f32>(), Some(12.0));
+    assert_eq!(get("Top").value.get::<f32>(), Some(8.0));
 
-    // 关键字是**按属性**认的，拼错要报错而不是静默当 0。
-    let bad = parse("t.zstyle", "Control { position: sticky; }");
-    assert!(!bad.is_ok(), "`sticky` 不在本仓词汇表里，应报错");
+    let r = ok("control { position: root; }");
+    assert_eq!(
+        r.sheet.rules()[0].declarations[0].value.get::<Position>(),
+        Some(Position::Root)
+    );
+
+    for (legacy, hint) in [
+        ("static", "static -> flow"),
+        ("absolute", "absolute -> root + anchor: center"),
+        ("fixed", "fixed -> root"),
+    ] {
+        let err = bad(&format!("control {{ position: {legacy}; }}"));
+        assert!(
+            err.contains("no longer supported"),
+            "{legacy} must be rejected: {err}"
+        );
+        assert!(
+            err.contains(hint),
+            "{legacy} must include migration mapping {hint:?}: {err}"
+        );
+    }
+
+    let err = bad("control { position: sticky; }");
+    assert!(!err.is_empty(), "`sticky` is not in Zephyra vocabulary");
+}
+
+#[test]
+fn anchor_parses_all_nine_points() {
+    use zephyra_core::layout::Anchor;
+    for (css, want) in [
+        ("top-left", Anchor::TopLeft),
+        ("top-center", Anchor::TopCenter),
+        ("top-right", Anchor::TopRight),
+        ("center-left", Anchor::CenterLeft),
+        ("center", Anchor::Center),
+        ("center-right", Anchor::CenterRight),
+        ("bottom-left", Anchor::BottomLeft),
+        ("bottom-center", Anchor::BottomCenter),
+        ("bottom-right", Anchor::BottomRight),
+    ] {
+        let r = ok(&format!("control {{ anchor: {css}; }}"));
+        assert_eq!(
+            r.sheet.rules()[0].declarations[0].value.get::<Anchor>(),
+            Some(want),
+            "anchor {css}"
+        );
+    }
+}
+
+#[test]
+fn layer_parses_background_content_overlay_popup() {
+    use zephyra_core::paint::Layer;
+    for (css, want) in [
+        ("background", Layer::Background),
+        ("content", Layer::Content),
+        ("overlay", Layer::Overlay),
+        ("popup", Layer::Popup),
+    ] {
+        let r = ok(&format!("control {{ layer: {css}; }}"));
+        assert_eq!(
+            r.sheet.rules()[0].declarations[0].value.get::<Layer>(),
+            Some(want),
+            "layer {css}"
+        );
+    }
 }
 
 #[test]
 fn flexbox_properties_parse_and_map_to_the_core_keys() {
     // 关键字分支按 `key.name()` 认（见 `value::enum_value`）。漏一条分支的症状是
     // 「属性名没错、值报 unknown value」，所以整套 flex 词汇一次写全。
-    let r = ok(
-        "Container { flex-direction: column-reverse; flex-wrap: wrap; \
+    let r = ok("box { flex-direction: column-reverse; flex-wrap: wrap; \
          align-content: space-between; align-self: end; \
          flex-grow: 2; flex-shrink: 0; flex-basis: 120px; order: 3; \
-         gap: 8px; align-items: center; justify-content: space-evenly; }",
-    );
+         gap: 8px; align-items: center; justify-content: space-evenly; }");
     use zephyra_core::layout::{
         AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, MainAxisAlign,
     };
@@ -280,13 +346,13 @@ fn flexbox_properties_parse_and_map_to_the_core_keys() {
 
 #[test]
 fn comments_and_whitespace_are_ignored() {
-    let r = ok("/* a */ Control   { width :  40px ; } /* b */");
+    let r = ok("/* a */ control   { width :  40px ; } /* b */");
     assert_eq!(r.sheet.rules().len(), 1);
 }
 
 #[test]
 fn several_rules_keep_source_order() {
-    let r = ok("Control { width: 1px; } .b { width: 2px; } .c { width: 3px; }");
+    let r = ok("control { width: 1px; } .b { width: 2px; } .c { width: 3px; }");
     assert_eq!(r.sheet.rules().len(), 3);
     let widths: Vec<f32> = r
         .sheet
@@ -308,7 +374,7 @@ fn several_rules_keep_source_order() {
 fn an_unknown_type_name_is_reported_with_candidates() {
     let msg = bad("Contorl { width: 1px; }");
     assert!(msg.contains("unknown element type"), "要说是什么错:\n{msg}");
-    assert!(msg.contains("Control"), "要给出最接近的:\n{msg}");
+    assert!(msg.contains("control"), "要给出最接近的:\n{msg}");
     assert!(msg.contains("line 1, col 1"), "要有行号列号:\n{msg}");
     assert!(msg.contains("Contorl"), "要引出原文:\n{msg}");
     assert!(msg.contains('^'), "要有下划线:\n{msg}");
@@ -327,7 +393,7 @@ fn a_typo_in_the_type_name_does_not_silently_pass() {
 
 #[test]
 fn an_unknown_property_is_reported_with_candidates() {
-    let msg = bad("Control { coner-radius: 4px; }");
+    let msg = bad("control { coner-radius: 4px; }");
     assert!(msg.contains("unknown property"), "要说是什么错:\n{msg}");
     assert!(
         msg.contains("corner-radius"),
@@ -342,7 +408,7 @@ fn an_unknown_property_is_reported_with_candidates() {
 #[test]
 fn at_rules_are_rejected_not_ignored() {
     for css in [
-        "@media (min-width: 100px) { Control { width: 1px; } }",
+        "@media (min-width: 100px) { control { width: 1px; } }",
         "@layer base, ui;",
         "@keyframes spin { from { opacity: 0; } }",
         "@font-face { font-family: x; }",
@@ -362,7 +428,7 @@ fn at_rules_are_rejected_not_ignored() {
 /// 名字 + 分类 + 该怎么办。
 #[test]
 fn an_at_rule_error_names_the_rule_and_says_why() {
-    let msg = bad("@media (min-width: 100px) { Control { width: 1px; } }");
+    let msg = bad("@media (min-width: 100px) { control { width: 1px; } }");
     for want in [
         "unsupported @media (conditional rule).",
         "only Type.class { prop: value; } is supported.",
@@ -374,7 +440,7 @@ fn an_at_rule_error_names_the_rule_and_says_why() {
 #[test]
 fn a_nested_rule_is_rejected() {
     // CSS Nesting 不做。`parse_qualified()` 返回 false，所以 `{` 出现在块内即错。
-    let msg = bad("Control { .inner { width: 1px; } }");
+    let msg = bad("control { .inner { width: 1px; } }");
     assert!(
         msg.contains("nested rules are not supported"),
         "嵌套规则要报错:\n{msg}"
@@ -384,12 +450,12 @@ fn a_nested_rule_is_rejected() {
 #[test]
 fn a_line_comment_is_not_a_comment() {
     // CSS 没有 `//`。它是两个 `/` Delim，会报错 —— 不能默默放过。
-    let _ = bad("Control { width: 1px; } // hi");
+    let _ = bad("control { width: 1px; } // hi");
 }
 
 #[test]
 fn a_dangling_deliberate_declaration_is_reported() {
-    let msg = bad("Control width: 1px;");
+    let msg = bad("control width: 1px;");
     assert!(!msg.is_empty());
 }
 
@@ -400,7 +466,7 @@ fn a_dangling_deliberate_declaration_is_reported() {
 #[test]
 fn a_named_colour_is_rejected_on_purpose() {
     // 命名颜色（red / tomato…）**明确不做**：整套表 148 个，且会与 @令牌体系冲突。
-    let msg = bad("Control { background: red; }");
+    let msg = bad("control { background: red; }");
     assert!(msg.contains("unknown value"), "要给理由:\n{msg}");
     assert!(
         msg.contains("#rrggbb") || msg.contains("@"),
@@ -410,14 +476,14 @@ fn a_named_colour_is_rejected_on_purpose() {
 
 #[test]
 fn a_bad_hex_colour_is_rejected() {
-    let msg = bad("Control { background: #xyz; }");
+    let msg = bad("control { background: #xyz; }");
     assert!(msg.contains("not a valid color"), "要说颜色不合法:\n{msg}");
 }
 
 #[test]
 fn an_enum_value_for_the_wrong_property_is_rejected() {
     // `vertical` 只对 `direction` 合法。全局认词会把非法组合静默变成合法值。
-    let msg = bad("Control { width: vertical; }");
+    let msg = bad("control { width: vertical; }");
     assert!(!msg.is_empty(), "width: vertical 必须报错");
 }
 
@@ -427,7 +493,7 @@ fn an_enum_value_for_the_wrong_property_is_rejected() {
 
 #[test]
 fn an_empty_rule_is_dropped_and_does_not_error() {
-    let r = ok("Control { }");
+    let r = ok("control { }");
     assert_eq!(
         r.sheet.rules().len(),
         0,
@@ -441,7 +507,7 @@ fn an_empty_rule_is_dropped_and_does_not_error() {
 
 #[test]
 fn errors_carry_the_full_spec() {
-    let msg = bad("Control {\n  coner-radius: 4px;\n}");
+    let msg = bad("control {\n  coner-radius: 4px;\n}");
     for want in [
         "test.zstyle",
         "line 2",
@@ -474,7 +540,7 @@ fn several_errors_are_all_reported_at_once() {
 
 #[test]
 fn parsed_declarations_carry_the_right_key() {
-    let r = ok("Control { corner-radius: 4px; }");
+    let r = ok("control { corner-radius: 4px; }");
     let d = &r.sheet.rules()[0].declarations[0];
     assert_eq!(
         d.key.name(),
@@ -483,7 +549,7 @@ fn parsed_declarations_carry_the_right_key() {
     );
     assert_eq!(d.value.get::<f32>(), Some(4.0));
     // 单位 px 被吃掉 —— DIP 与 px 等价。
-    let _ = ok("Control { width: 40px; }");
+    let _ = ok("control { width: 40px; }");
 }
 
 /// 让 `ValueSource` 的导入不被判为未使用（测试里没直接用到它，

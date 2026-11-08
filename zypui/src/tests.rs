@@ -61,7 +61,7 @@ fn ui_with_render_source(kind: &'static str) -> Ui {
         pages: vec![Page {
             name: "p",
             root: vec![Node::El(ElementNode {
-                tag: NodeTag::Container,
+                tag: NodeTag::Box,
                 key: Some(Expr::LitS("video")),
                 classes: vec![],
                 attrs: vec![("render-source", Expr::LitS(kind))],
@@ -291,7 +291,7 @@ fn component_instance_shares_its_key_with_the_whole_template() {
                 ],
                 attrs: vec![("interactive", Expr::LitB(true))],
                 children: vec![Node::El(ElementNode {
-                    tag: NodeTag::Container,
+                    tag: NodeTag::Box,
                     key: Some(Expr::LitS("btn-icon")),
                     classes: vec![ClassTok::If {
                         cond: Expr::Ref("hover"),
@@ -344,7 +344,7 @@ fn slot_splices_caller_children_in_caller_scope() {
             name: "Sec",
             params: vec![],
             body: vec![Node::El(ElementNode {
-                tag: NodeTag::Container,
+                tag: NodeTag::Box,
                 key: Some(Expr::LitS("sec")),
                 classes: vec![],
                 attrs: vec![],
@@ -489,7 +489,7 @@ fn background_only_accepts_a_raw_color_binding() {
             pages: vec![Page {
                 name: "p",
                 root: vec![Node::El(ElementNode {
-                    tag: NodeTag::Container,
+                    tag: NodeTag::Box,
                     key: None,
                     classes: vec![],
                     attrs: vec![("background", v)],

@@ -8,7 +8,7 @@
 //! u32     页数   × (str 名; u32 根节点数 × node)
 //!
 //! node    u8 kind: 0=El 1=If 2=For 3=Use 4=Slot
-//!   El    u8 tag(0=Text 1=Image 2=Container 3=Control); opt(expr) key;
+//!   El    u8 tag(0=Text 1=Image 2=Box 3=Control); opt(expr) key;
 //!         u32 × classtok; u32 × (str 属性名, expr); u32 × node
 //!   If    expr; u32 × node(then); u32 × node(else)
 //!   For   str var; opt(str) index; expr list; u32 × node
@@ -79,7 +79,7 @@ fn node(r: &mut Reader) -> Result<Node, ZypuiError> {
             let tag = match r.u8()? {
                 0 => NodeTag::Text,
                 1 => NodeTag::Image,
-                2 => NodeTag::Container,
+                2 => NodeTag::Box,
                 3 => NodeTag::Control,
                 k => return crate::err(format!("非法元素标签 {k}")),
             };

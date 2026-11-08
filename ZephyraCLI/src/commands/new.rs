@@ -362,7 +362,7 @@ impl View for App {
             "Move pointer here, then click"
         };
 
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_key("root")
             .with_children([
                 Element::new(NodeTag::Text)
@@ -382,9 +382,9 @@ fn app_zstyle() -> String {
  * 列全部受支持的属性：`zephyra props`
  */
 
-Text {
-  text-color: #202020;
-  text-size: 24;
+text {
+    text-color: #202020;
+    text-size: 24;
 }
 "#
     .to_string()

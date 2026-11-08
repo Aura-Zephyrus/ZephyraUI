@@ -158,7 +158,7 @@ fn flush(toks: &mut Vec<Tok>, seg: &mut Option<usize>, src: &str, end: usize) {
 
 /// 折叠内部空白成单空格，并去掉首尾空白。
 ///
-/// 选择器/属性名/值里的对齐空格（`Container.page-guide    {` 那类）在这里收敛。
+/// 选择器/属性名/值里的对齐空格（`box.page-guide    {` 那类）在这里收敛。
 fn collapse(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut pending_space = false;

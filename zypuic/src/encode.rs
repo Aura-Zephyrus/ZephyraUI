@@ -43,7 +43,7 @@ fn node(w: &mut Writer, n: &Node) {
             w.u8(match el.tag {
                 NodeTag::Text => 0,
                 NodeTag::Image => 1,
-                NodeTag::Container => 2,
+                NodeTag::Box => 2,
                 NodeTag::Control => 3,
             });
             opt_expr(w, &el.key);

@@ -114,10 +114,10 @@ pub enum Item {
 /// ⚠️ `NodeTag` 是**封闭**的四元枚举（`id.rs`：宿主自定义元素类型「在类型层面
 /// 就是非法的」），所以这张表也是封闭的、不需要运行时注册。
 const TAG_NAMES: &[(&str, NodeTag)] = &[
-    ("Text", NodeTag::Text),
-    ("Image", NodeTag::Image),
-    ("Container", NodeTag::Container),
-    ("Control", NodeTag::Control),
+    ("text", NodeTag::Text),
+    ("image", NodeTag::Image),
+    ("box", NodeTag::Box),
+    ("control", NodeTag::Control),
 ];
 
 fn tag_by_name(name: &str) -> Option<NodeTag> {
@@ -126,6 +126,17 @@ fn tag_by_name(name: &str) -> Option<NodeTag> {
 
 fn all_tag_names() -> Vec<&'static str> {
     TAG_NAMES.iter().map(|(n, _)| *n).collect()
+}
+
+/// Legacy uppercase type name → lowercase migration hint.
+fn legacy_tag_migration(name: &str) -> Option<&'static str> {
+    match name {
+        "Container" => Some("box"),
+        "Text" => Some("text"),
+        "Image" => Some("image"),
+        "Control" => Some("control"),
+        _ => None,
+    }
 }
 
 /// 顶层解析器：实现 cssparser 的三个 trait。
@@ -444,6 +455,20 @@ fn parse_selector<'i>(
                     continue;
                 }
                 Ok(Some((word, None))) => {
+                    if let Some(new_name) = legacy_tag_migration(&word) {
+                        p.errors.push(Error {
+                            file: p.file.to_string(),
+                            line_text: p.line_text(line),
+                            at: crate::errors::Pos { line, col: 1 },
+                            underline_len: p.line_text(line).chars().count(),
+                            headline: format!("type selector '{word}' is no longer supported."),
+                            near: vec![(new_name.to_string(), line)],
+                            hint: format!(
+                                "use lowercase type selectors: {word} -> {new_name} (clean-break migration)."
+                            ),
+                        });
+                        return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
+                    }
                     let near = nearest(&word, &all_tag_names(), 3);
                     // ⚠️ 先 push 错误（那里不用 input），再 return Err。
                     // 合成一步写会同时借用 `p` 和 `input`，编译期过不去。
@@ -454,7 +479,7 @@ fn parse_selector<'i>(
                         underline_len: p.line_text(line).chars().count(),
                         headline: format!("unknown element type '{word}'."),
                         near: near.into_iter().map(|n| (n, line)).collect(),
-                        hint: "type names are case-sensitive. for a class name, prefix with `.` (e.g. `.danger`).".into(),
+                        hint: "bare type selectors are lowercase: box/text/image/control. for a class name, prefix with `.` (e.g. `.danger`).".into(),
                     });
                     return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
                 }
@@ -507,7 +532,7 @@ fn parse_selector<'i>(
             underline_len: p.line_text(line).chars().count(),
             headline: "cannot read a selector here.".into(),
             near: Vec::new(),
-            hint: "selector is either a type (`Button`) or a class (`.danger`).".into(),
+            hint: "selector is either a type (`box`) or a class (`.danger`).".into(),
         });
         return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
     }

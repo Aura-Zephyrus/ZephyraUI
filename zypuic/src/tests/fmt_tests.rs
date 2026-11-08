@@ -101,7 +101,7 @@ fn same_tree(before: &str, after: &str) {
 
 #[test]
 fn already_formatted_stays_byte_identical() {
-    let src = "<!-- 注释 -->\n<component name=\"X\">\n  <container key=\"a\" text=\"hi\" class=\"c\"/>\n</component>\n";
+    let src = "<!-- 注释 -->\n<component name=\"X\">\n  <box key=\"a\" text=\"hi\" class=\"c\"/>\n</component>\n";
     assert_eq!(format(src).as_deref(), Some(src));
     assert!(is_formatted(src));
 }
@@ -109,11 +109,11 @@ fn already_formatted_stays_byte_identical() {
 #[test]
 fn class_moves_to_the_last_position_without_touching_its_words() {
     // 位置动，词序一个字节不动（词序即匹配序，是语义）。
-    let src = "<container key=\"a\" class=\"x y {press ? 'p' : ''}\" icon=\"gear\"/>\n";
+    let src = "<box key=\"a\" class=\"x y {press ? 'p' : ''}\" icon=\"gear\"/>\n";
     let out = format(src).expect("recognized");
     assert_eq!(
         out,
-        "<container key=\"a\" icon=\"gear\" class=\"x y {press ? 'p' : ''}\"/>\n"
+        "<box key=\"a\" icon=\"gear\" class=\"x y {press ? 'p' : ''}\"/>\n"
     );
     assert!(out.contains("class=\"x y {press ? 'p' : ''}\""), "{out:?}");
     same_tree(src, &out);
@@ -169,7 +169,7 @@ fn packed_if_element_unpacks_to_three_lines() {
 fn a_gt_inside_a_value_is_not_the_tag_end() {
     // 属性值里允许裸 `>`（见 xml.rs 的「对 XML 的刻意偏离」）。排版器若拿
     // `find('>')` 定位标签尾，会把 cond 中间那个 `>` 当成结尾。
-    let src = "<container key=\"a\" cond=\"@n > 3\" class=\"c\"/>\n";
+    let src = "<box key=\"a\" cond=\"@n > 3\" class=\"c\"/>\n";
     let out = format(src).expect("recognized");
     assert!(out.contains("cond=\"@n > 3\""), "{out:?}");
     assert!(
@@ -182,31 +182,31 @@ fn a_gt_inside_a_value_is_not_the_tag_end() {
 #[test]
 fn single_quoted_values_are_reordered_too() {
     // 值允许用单引号包（属性里要放双引号时），重排不能把引号弄丢。
-    let src = "<container class='c' key='a'/>\n";
+    let src = "<box class='c' key='a'/>\n";
     let out = format(src).expect("recognized");
-    assert_eq!(out, "<container key='a' class='c'/>\n");
+    assert_eq!(out, "<box key='a' class='c'/>\n");
     same_tree(src, &out);
 }
 
 #[test]
 fn indentation_is_derived_from_nesting_depth() {
     // 一眼能看出来的坏缩进要修；深度 = 未闭合开标签数。
-    let src = "<component name=\"X\">\n<container key=\"a\">\n<container key=\"b\"/>\n</container>\n</component>\n";
+    let src = "<component name=\"X\">\n<box key=\"a\">\n<box key=\"b\"/>\n</box>\n</component>\n";
     let out = format(src).expect("recognized");
     assert_eq!(
         out,
-        "<component name=\"X\">\n  <container key=\"a\">\n    <container key=\"b\"/>\n  </container>\n</component>\n",
+        "<component name=\"X\">\n  <box key=\"a\">\n    <box key=\"b\"/>\n  </box>\n</component>\n",
     );
     same_tree(src, &out);
 }
 
 #[test]
 fn trailing_whitespace_and_tabs_are_cleaned() {
-    let src = "<component name=\"X\">   \n\t<container key=\"a\"/>  \n</component>\n";
+    let src = "<component name=\"X\">   \n\t<box key=\"a\"/>  \n</component>\n";
     let out = format(src).expect("recognized");
     assert_eq!(
         out,
-        "<component name=\"X\">\n  <container key=\"a\"/>\n</component>\n"
+        "<component name=\"X\">\n  <box key=\"a\"/>\n</component>\n"
     );
     for l in out.lines() {
         assert_eq!(l, l.trim_end(), "trailing whitespace leaked: {l:?}");
@@ -218,7 +218,7 @@ fn trailing_whitespace_and_tabs_are_cleaned() {
 #[test]
 fn multiline_comments_are_copied_verbatim() {
     // 注释逐字照抄（它可能出现 `<` / `>`），行号也因此稳定。
-    let src = "<!--\n  <not-a-tag key=\"x\">\n  a > b\n-->\n<component name=\"X\">\n  <container key=\"a\"/>\n</component>\n";
+    let src = "<!--\n  <not-a-tag key=\"x\">\n  a > b\n-->\n<component name=\"X\">\n  <box key=\"a\"/>\n</component>\n";
     let out = format(src).expect("recognized");
     assert!(
         out.contains("<!--\n  <not-a-tag key=\"x\">\n  a > b\n-->"),
@@ -229,11 +229,11 @@ fn multiline_comments_are_copied_verbatim() {
 
 #[test]
 fn crlf_is_normalized() {
-    let src = "<component name=\"X\">\r\n  <container key=\"a\"/>\r\n</component>\r\n";
+    let src = "<component name=\"X\">\r\n  <box key=\"a\"/>\r\n</component>\r\n";
     let out = format(src).expect("recognized");
     assert_eq!(
         out,
-        "<component name=\"X\">\n  <container key=\"a\"/>\n</component>\n"
+        "<component name=\"X\">\n  <box key=\"a\"/>\n</component>\n"
     );
     assert!(!out.contains('\r'));
 }
@@ -241,27 +241,27 @@ fn crlf_is_normalized() {
 #[test]
 fn broken_xml_returns_none() {
     // 语法不干净 ⇒ 不猜、不覆盖。
-    assert!(format("<container key=\"a\"\n").is_none());
+    assert!(format("<box key=\"a\"\n").is_none());
     assert!(format("</component>\n").is_none());
     assert!(format("hello\n").is_none());
     // 属性缺引号。
-    assert!(format("<container key=a/>\n").is_none());
+    assert!(format("<box key=a/>\n").is_none());
 }
 
 #[test]
 fn is_formatted_flags_unformatted_input() {
     assert!(!is_formatted(
-        "<container key=\"a\" class=\"c\" icon=\"gear\"/>\n"
+        "<box key=\"a\" class=\"c\" icon=\"gear\"/>\n"
     ));
-    assert!(!is_formatted("<container\n  key=\"a\"/>\n"));
+    assert!(!is_formatted("<box\n  key=\"a\"/>\n"));
     assert!(!is_formatted("<if cond=\"a\"><B/></if>\n"));
-    assert!(!is_formatted("<container key=\"a\"/>"));
-    assert!(is_formatted("<container key=\"a\"/>\n"));
+    assert!(!is_formatted("<box key=\"a\"/>"));
+    assert!(is_formatted("<box key=\"a\"/>\n"));
 }
 
 #[test]
 fn format_is_idempotent() {
-    let src = "<component name=\"X\">\n<container key=\"a\" class=\"c\" icon=\"gear\"/>\n  <if cond=\"@n > 1\"><PageA/></if>\n</component>\n";
+    let src = "<component name=\"X\">\n<box key=\"a\" class=\"c\" icon=\"gear\"/>\n  <if cond=\"@n > 1\"><PageA/></if>\n</component>\n";
     let once = format(src).expect("recognized");
     let twice = format(&once).expect("formatted output must still parse");
     assert_eq!(once, twice);
@@ -275,8 +275,8 @@ fn format_is_idempotent() {
 /// 同一份代码（`crate::fmt`），这里只补一条**编译产物等价**的钳制。
 #[test]
 fn fmt_fixes_exactly_what_the_gate_checks() {
-    let bad = "<container key=\"a\" class=\"c\" icon=\"gear\"/>\n";
-    let want = "<container key=\"a\" icon=\"gear\" class=\"c\"/>\n";
+    let bad = "<box key=\"a\" class=\"c\" icon=\"gear\"/>\n";
+    let want = "<box key=\"a\" icon=\"gear\" class=\"c\"/>\n";
     let got = format(bad).expect("recognized");
     assert_eq!(got, want);
     assert!(
@@ -369,6 +369,36 @@ fn repo_files_survive_a_mangle_and_reformat_roundtrip() {
     }
 }
 
+/// 全仓 `.zypui` 不得再出现已移除的 `<container>` 标签。
+///
+/// 组件名是 PascalCase、裸元素是 lowercase，所以只有小写 `<container>` 属于旧词汇；
+/// `<Container>` 若是某个合法组件名则不应被这条门禁误伤。
+#[test]
+fn repo_zypui_files_use_no_removed_container_tag() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("zypuic 在工作区根下")
+        .to_path_buf();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    collect(&root, &mut files);
+    files.sort();
+    assert!(!files.is_empty(), "一个 .zypui 都没找到");
+
+    let mut bad: Vec<String> = Vec::new();
+    for f in &files {
+        let src =
+            std::fs::read_to_string(f).unwrap_or_else(|e| panic!("读不了 {}: {e}", f.display()));
+        if src.contains("<container") {
+            bad.push(f.display().to_string());
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "旧标签 `<container>` 必须换成 `<box>`：\n{}",
+        bad.join("\n")
+    );
+}
+
 fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -429,8 +459,8 @@ fn mangle(src: &str) -> String {
                 let seg = &t[a..end];
                 let rest = format!("{}{}", &t[..a], &t[end..]);
                 // 插入点 = 标签名的结尾。**不是**「第一个空白」：class 是唯一
-                // 属性时 `rest` 直接是 `<container>`，按空白找会落到 `>` 之后，
-                // 于是标签被撕成两半（实测：`<container>class="…"`）。
+                // 属性时 `rest` 直接是 `<box>`，按空白找会落到 `>` 之后，
+                // 于是标签被撕成两半（实测：`<box>class="…"`）。
                 let name_end = tag_name_end(&rest);
                 let rebuilt = format!("{}{}{}", &rest[..name_end], seg, &rest[name_end..]);
                 out.push_str(rebuilt.trim());

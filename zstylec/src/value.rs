@@ -53,6 +53,10 @@ pub fn parse(
     if std::ptr::eq(key, &zephyra_core::props::DECORATIONS) {
         return parse_decorations(input, p, line);
     }
+    // `corner-shape`：CSS 关键字（`round`/`squircle`/…）或函数 `superellipse(K)`。
+    if std::ptr::eq(key, &zephyra_core::props::CORNER_SHAPE) {
+        return parse_corner_shape(input, p, line);
+    }
     let value = input.next().map_err(|_: cssparser::BasicParseError| ())?;
     match value {
         // ---- 数字 ----
@@ -80,6 +84,47 @@ pub fn parse(
             let w = word.as_ref();
             if w.eq_ignore_ascii_case("transparent") {
                 return Ok(PropertyValue::color(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            }
+            // D1 clean-break migration: static/absolute/fixed must error with mapping.
+            if key.name() == "Position" {
+                if w.eq_ignore_ascii_case("static") {
+                    p.errors.push(Error {
+                        file: p.file.to_string(),
+                        line_text: p.line_text(line),
+                        at: crate::errors::Pos { line, col: 1 },
+                        underline_len: p.line_text(line).chars().count(),
+                        headline: "position: static is no longer supported.".to_string(),
+                        near: Vec::new(),
+                        hint: "use `position: flow` (default). Migration: static -> flow."
+                            .to_string(),
+                    });
+                    return Err(());
+                }
+                if w.eq_ignore_ascii_case("absolute") {
+                    p.errors.push(Error {
+                        file: p.file.to_string(),
+                        line_text: p.line_text(line),
+                        at: crate::errors::Pos { line, col: 1 },
+                        underline_len: p.line_text(line).chars().count(),
+                        headline: "position: absolute is no longer supported.".to_string(),
+                        near: Vec::new(),
+                        hint: "use `position: root; anchor: center` for the old window-centered semantics, or `position: parent` for parent-content coordinates. Migration: absolute -> root + anchor: center."
+                            .to_string(),
+                    });
+                    return Err(());
+                }
+                if w.eq_ignore_ascii_case("fixed") {
+                    p.errors.push(Error {
+                        file: p.file.to_string(),
+                        line_text: p.line_text(line),
+                        at: crate::errors::Pos { line, col: 1 },
+                        underline_len: p.line_text(line).chars().count(),
+                        headline: "position: fixed is no longer supported.".to_string(),
+                        near: Vec::new(),
+                        hint: "use `position: root`. Migration: fixed -> root.".to_string(),
+                    });
+                    return Err(());
+                }
             }
             // 枚举值：按 key 认。`direction: vertical` / `main-align: center` 一类。
             if let Some(v) = enum_value(key, w) {
@@ -414,11 +459,77 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
     }
 
     if key.name() == "Position" {
-        if eq("static") {
-            return Some(PropertyValue::position(Position::Static));
+        if eq("flow") {
+            return Some(PropertyValue::position(Position::Flow));
         }
-        if eq("absolute") {
-            return Some(PropertyValue::position(Position::Absolute));
+        if eq("parent") {
+            return Some(PropertyValue::position(Position::Parent));
+        }
+        if eq("root") {
+            return Some(PropertyValue::position(Position::Root));
+        }
+        // D1 clean-break: static/absolute/fixed are rejected with migration mapping.
+        // Return None here so the caller emits a generic error; migration-specific
+        // diagnostics are handled in parse() for better messages.
+        return None;
+    }
+    if key.name() == "Anchor" {
+        if eq("top-left") {
+            return Some(PropertyValue::anchor(zephyra_core::layout::Anchor::TopLeft));
+        }
+        if eq("top-center") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::TopCenter,
+            ));
+        }
+        if eq("top-right") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::TopRight,
+            ));
+        }
+        if eq("center-left") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::CenterLeft,
+            ));
+        }
+        if eq("center") {
+            return Some(PropertyValue::anchor(zephyra_core::layout::Anchor::Center));
+        }
+        if eq("center-right") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::CenterRight,
+            ));
+        }
+        if eq("bottom-left") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::BottomLeft,
+            ));
+        }
+        if eq("bottom-center") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::BottomCenter,
+            ));
+        }
+        if eq("bottom-right") {
+            return Some(PropertyValue::anchor(
+                zephyra_core::layout::Anchor::BottomRight,
+            ));
+        }
+        return None;
+    }
+    if key.name() == "Layer" {
+        use zephyra_core::paint::Layer;
+        if eq("background") {
+            return Some(PropertyValue::layer(Layer::Background));
+        }
+        if eq("content") {
+            return Some(PropertyValue::layer(Layer::Content));
+        }
+        if eq("overlay") {
+            return Some(PropertyValue::layer(Layer::Overlay));
+        }
+        if eq("popup") {
+            return Some(PropertyValue::layer(Layer::Popup));
         }
         return None;
     }
@@ -560,6 +671,98 @@ fn unexpected(p: &ZstyleParser<'_>, line: u32, msg: &str, want: &[&str]) -> Erro
 }
 
 /// `#rgb` / `#rrggbb` / `#rrggbbaa` → `Color`。
+/// 解析 `corner-shape:`（CSS Borders Level 4 / `corner-shape`）。
+///
+/// 支持：`round` | `squircle` | `bevel` | `scoop` | `square` | `notch` | `superellipse(K)`
+/// 其中 `squircle` = `superellipse(2)`，`round` = `superellipse(1)`。
+fn parse_corner_shape(
+    input: &mut Parser,
+    p: &mut ZstyleParser<'_>,
+    line: u32,
+) -> Result<PropertyValue, ()> {
+    use zephyra_core::core::CornerShape;
+
+    let token = input
+        .next()
+        .map_err(|_: cssparser::BasicParseError| ())?
+        .clone();
+    match token {
+        Token::Ident(w) => {
+            let s = w.as_ref();
+            let eq = |t: &str| s.eq_ignore_ascii_case(t);
+            let shape = if eq("round") {
+                CornerShape::ROUND
+            } else if eq("squircle") {
+                CornerShape::SQUIRCLE
+            } else if eq("bevel") {
+                CornerShape::BEVEL
+            } else if eq("scoop") {
+                CornerShape::SCOOP
+            } else if eq("square") {
+                CornerShape::SQUARE
+            } else if eq("notch") {
+                CornerShape::NOTCH
+            } else {
+                p.errors.push(unexpected(
+                    p,
+                    line,
+                    &format!("unknown corner-shape '{s}'."),
+                    &[
+                        "round",
+                        "squircle",
+                        "bevel",
+                        "scoop",
+                        "square",
+                        "notch",
+                        "superellipse(2)",
+                    ],
+                ));
+                return Err(());
+            };
+            Ok(PropertyValue::corner_shape(shape))
+        }
+        Token::Function(name) if name.as_ref().eq_ignore_ascii_case("superellipse") => {
+            let k = input
+                .parse_nested_block(|args| {
+                    // 读一个数值参数 K（CSS `superellipse(K)`）
+                    let mut v: Option<f32> = None;
+                    loop {
+                        match args.next() {
+                            Ok(Token::Number { value, .. }) => {
+                                v = Some(*value as f64 as f32);
+                                break;
+                            }
+                            Ok(Token::Comma) => continue,
+                            Ok(_) | Err(_) => break,
+                        }
+                    }
+                    while args.next().is_ok() {}
+                    Ok::<_, cssparser::ParseError<()>>(v)
+                })
+                .map_err(|_| ())?;
+            let Some(k) = k else {
+                p.errors.push(unexpected(
+                    p,
+                    line,
+                    "superellipse(...) expects a number, e.g. superellipse(2).",
+                    &["superellipse(2)", "round", "squircle"],
+                ));
+                return Err(());
+            };
+            Ok(PropertyValue::corner_shape(CornerShape::superellipse(k)))
+        }
+        _ => {
+            p.errors.push(unexpected(
+                p,
+                line,
+                "expected a corner-shape value here.",
+                &["round", "squircle", "superellipse(2)"],
+            ));
+            Err(())
+        }
+    }
+}
+
 fn parse_hex_color(hex: &str) -> Option<Color> {
     let h = hex.trim_start_matches('#');
     let byte = |s: &str| u8::from_str_radix(s, 16).ok();

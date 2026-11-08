@@ -110,13 +110,13 @@ fn fmt_fixes_exactly_what_the_gate_checks() {
     let cases: &[(&str, &str)] = &[
         // 规则 1：缩进不是 2 的倍数 / 行尾空白 / tab
         (
-            "<component name=\"X\"> <container key=\"a\"/> </component>\n",
-            "<component name=\"X\">\n  <container key=\"a\"/>\n</component>\n",
+            "<component name=\"X\"> <box key=\"a\"/> </component>\n",
+            "<component name=\"X\">\n  <box key=\"a\"/>\n</component>\n",
         ),
         // 规则 2+3：开始标签跨行
         (
-            "<container key=\"a\"\n  class=\"c\"/>\n",
-            "<container key=\"a\" class=\"c\"/>\n",
+            "<box key=\"a\"\n  class=\"c\"/>\n",
+            "<box key=\"a\" class=\"c\"/>\n",
         ),
         // 规则 3：一行两个开始标签
         (
@@ -125,19 +125,16 @@ fn fmt_fixes_exactly_what_the_gate_checks() {
         ),
         // 规则 4：key 不在第一位
         (
-            "<container class=\"c\" key=\"a\"/>\n",
-            "<container key=\"a\" class=\"c\"/>\n",
+            "<box class=\"c\" key=\"a\"/>\n",
+            "<box key=\"a\" class=\"c\"/>\n",
         ),
         // 规则 5：class 不在最后
         (
-            "<container key=\"a\" class=\"c\" icon=\"gear\"/>\n",
-            "<container key=\"a\" icon=\"gear\" class=\"c\"/>\n",
+            "<box key=\"a\" class=\"c\" icon=\"gear\"/>\n",
+            "<box key=\"a\" icon=\"gear\" class=\"c\"/>\n",
         ),
         // 单引号属性同样要被看见（上一轮的判据只认 `"`，漏的正是这一类）。
-        (
-            "<container class='c' key='a'/>\n",
-            "<container key='a' class='c'/>\n",
-        ),
+        ("<box class='c' key='a'/>\n", "<box key='a' class='c'/>\n"),
     ];
     for (bad, want) in cases {
         let got =
@@ -156,23 +153,23 @@ fn fmt_fixes_exactly_what_the_gate_checks() {
 fn layout_violations_are_actually_detected() {
     let cases: &[(&str, &str)] = &[
         // 规则 5：class 不在末尾（含**带缩进**的 —— 那一版判据曾被缩进卡住）
-        ("<container key=\"a\" class=\"x\" icon=\"gear\"/>", "规则5"),
+        ("<box key=\"a\" class=\"x\" icon=\"gear\"/>", "规则5"),
         (
             "  <control class=\"button\" interactive=\"true\"/>",
             "规则5",
         ),
         // 规则 4：key 不是第一个
-        ("<container class=\"x\" key=\"a\"/>", "规则4"),
+        ("<box class=\"x\" key=\"a\"/>", "规则4"),
         (
             "  <control interactive=\"true\" key=\"a\" class=\"x\"/>",
             "规则4",
         ),
         // 规则 3：标签跨行
-        ("<container key=\"a\"\n  class=\"x\"/>", "规则3"),
+        ("<box key=\"a\"\n  class=\"x\"/>", "规则3"),
         // 规则 2：裸文本
         ("hello", "规则2"),
         // 规则 1：缩进不是 2 的倍数
-        ("   <container key=\"a\"/>", "规则1"),
+        ("   <box key=\"a\"/>", "规则1"),
     ];
     for (src, want) in cases {
         let got = crate::fmt::violations(src);
@@ -183,7 +180,7 @@ fn layout_violations_are_actually_detected() {
     }
 
     // 干净写法一条不报（注释里的 `<` 也不算标签）。
-    let clean = "<!-- <not-a-tag class=\"in-comment\" key=\"x\"> -->\n<container key=\"a\" text=\"hi\" class=\"c\"/>\n";
+    let clean = "<!-- <not-a-tag class=\"in-comment\" key=\"x\"> -->\n<box key=\"a\" text=\"hi\" class=\"c\"/>\n";
     assert!(
         crate::fmt::violations(clean).is_empty(),
         "干净文件不该报，得到 {:?}",
