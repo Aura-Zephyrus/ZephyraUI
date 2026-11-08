@@ -34,9 +34,11 @@
 //! 这是本仓的一条既有约定。于是「这个控件叫什么」= 「它那个叫 label 的子节点
 //! 的文本」，不用每个控件各报一次名字。
 
+use zephyra_core::context::Context;
 use zephyra_core::core::Rect;
 use zephyra_core::node::Node;
 use zephyra_core::props;
+use zephyra_core::visual::{self, VisualState};
 
 use crate::model::{Element, Role, Snapshot, ToggleState};
 
@@ -82,8 +84,9 @@ pub struct WindowInfo {
 
 /// 从保留树派生一份无障碍树快照。
 ///
-/// `root` 是保留树的根（对应窗口客户区），`win` 是窗口层面的信息。
-pub fn build(root: &Node, win: &WindowInfo) -> Snapshot {
+/// `root` 是保留树的根（对应窗口客户区），`win` 是窗口层面的信息，`ctx` 用于
+/// 解析 R2 的视觉几何（translate/scale、D11 root 边界、D17 文本视觉外扩）。
+pub fn build(root: &Node, win: &WindowInfo, ctx: Context<'_>) -> Snapshot {
     let mut snap = Snapshot::default();
     // 根元素 = 窗口本身（id 0）。
     snap.elements.push(Element {
@@ -99,18 +102,27 @@ pub fn build(root: &Node, win: &WindowInfo) -> Snapshot {
         rect: win.client,
         children: Vec::new(),
     });
-    walk(root, 0, &mut snap, win);
+    walk(root, 0, &mut snap, win, VisualState::ROOT, ctx);
     snap
 }
 
 /// 深度优先走一遍树，把暴露的元素塞进快照。
-fn walk(node: &Node, parent: usize, snap: &mut Snapshot, win: &WindowInfo) {
+fn walk(
+    node: &Node,
+    parent: usize,
+    snap: &mut Snapshot,
+    win: &WindowInfo,
+    parent_state: VisualState,
+    ctx: Context<'_>,
+) {
+    let (state, own_translate) = visual::enter(node, ctx, parent_state);
     let role = role_of(node);
     // 暴露的元素 id = 它在快照里的下标。
     let self_id = match role {
         Some(role) => {
             let id = snap.elements.len();
-            snap.elements.push(element_of(node, id, parent, role, win));
+            snap.elements
+                .push(element_of(node, id, parent, role, win, own_translate, ctx));
             // 挂到**父**的子列表里 —— 不是挂到自己身上。
             //
             // ⚠ 这一行曾经写错过（挂到了 `child_parent`，那正是它自己）——
@@ -134,7 +146,7 @@ fn walk(node: &Node, parent: usize, snap: &mut Snapshot, win: &WindowInfo) {
         self_id
     };
     for c in node.children() {
-        walk(c, child_parent, snap, win);
+        walk(c, child_parent, snap, win, state, ctx);
     }
 }
 
@@ -148,7 +160,15 @@ fn role_of(node: &Node) -> Option<Role> {
 }
 
 /// 造一个元素。
-fn element_of(node: &Node, id: usize, parent: usize, role: Role, win: &WindowInfo) -> Element {
+fn element_of(
+    node: &Node,
+    id: usize,
+    parent: usize,
+    role: Role,
+    win: &WindowInfo,
+    translate: zephyra_core::core::Point,
+    ctx: Context<'_>,
+) -> Element {
     let toggle = match role {
         // 复选框与开关都走 TogglePattern；单选钮的「选中」在 UIA 里是
         // SelectionItem 的 IsSelected —— 同一个 `toggle` 字段装两种语义，
@@ -170,7 +190,7 @@ fn element_of(node: &Node, id: usize, parent: usize, role: Role, win: &WindowInf
         enabled: !bool_prop(node, &props::DISABLED),
         focused: bool_prop(node, &props::FOCUSED),
         offscreen: false,
-        rect: screen_rect(node, win),
+        rect: screen_rect(node, win, translate, ctx),
         children: Vec::new(),
     }
 }
@@ -222,9 +242,14 @@ fn bool_prop(node: &Node, key: &zephyra_core::property::PropertyKey) -> bool {
         .unwrap_or(false)
 }
 
-/// 布局矩形 → 屏幕坐标。
-fn screen_rect(node: &Node, win: &WindowInfo) -> Rect {
-    let r = node.arranged_rect();
+/// 视觉/布局矩形 → 屏幕坐标（R2/D8：使用 visual_rect，含 translate/scale/D17 文本外扩）。
+fn screen_rect(
+    node: &Node,
+    win: &WindowInfo,
+    translate: zephyra_core::core::Point,
+    ctx: Context<'_>,
+) -> Rect {
+    let r = visual::visual_rect(node, ctx, translate);
     Rect::new(r.x + win.client.x, r.y + win.client.y, r.width, r.height)
 }
 
@@ -290,14 +315,14 @@ mod tests {
         assert_eq!(toggle_of(&node), ToggleState::On);
 
         // 装饰子节点不许抢角色：`switch-track` 与 `switch` 是两个分类名。
-        let track = Elem::new(NodeTag::Container).style("switch-track");
+        let track = Elem::new(NodeTag::Box).style("switch-track");
         let node = Node::from_element(&track);
         assert_eq!(role_of(&node), None, "switch-track 是装饰层，不是开关本体");
     }
 
     #[test]
     fn a_plain_node_is_not_exposed() {
-        let el = Elem::new(NodeTag::Container).style("check-group-items");
+        let el = Elem::new(NodeTag::Box).style("check-group-items");
         let node = Node::from_element(&el);
         assert_eq!(role_of(&node), None);
     }
@@ -314,22 +339,27 @@ mod tests {
     /// 这类错在画面上完全看不出来，只有真拿 Inspect 看一眼才发现。
     #[test]
     fn exposed_elements_hang_off_their_parent() {
+        use zephyra_core::context::Context;
+        use zephyra_core::theme::Theme;
+
+        let ctx = Context::new(Box::leak(Box::new(Theme::dark())));
+
         // 窗口根 → 分组 → （装饰层 → 复选框）+ 复选框
         let checkbox = Elem::new(NodeTag::Control)
             .style("check-box")
             .style("checked")
             .with_key("check:alpha")
             .with_children([text_node("label", "Enable feature")]);
-        let group = Elem::new(NodeTag::Container)
+        let group = Elem::new(NodeTag::Box)
             .style("check-group")
             .with_key("grp")
-            .with_children([Elem::new(NodeTag::Container)
+            .with_children([Elem::new(NodeTag::Box)
                 .style("check-group-row")
                 .with_children([checkbox])]);
-        let root = Elem::new(NodeTag::Container).with_children([group]);
+        let root = Elem::new(NodeTag::Box).with_children([group]);
         let tree = Node::from_element(&root);
 
-        let snap = build(&tree, &WindowInfo::default());
+        let snap = build(&tree, &WindowInfo::default(), ctx);
 
         // 窗口根 + 分组 + 复选框 = 3 个暴露元素。
         assert_eq!(snap.elements.len(), 3, "暴露的元素数：{:#?}", snap.elements);

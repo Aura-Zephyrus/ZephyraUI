@@ -289,7 +289,7 @@ mod tests {
     /// 属性是**声明**在元素上的 —— `ACTIVATABLE` / `DISABLED` 与
     /// `FOCUSABLE` 一样由控件模板写，宿主与 core 都只读。
     fn tree() -> Node {
-        let root = Elem::new(NodeTag::Container).with_children([
+        let root = Elem::new(NodeTag::Box).with_children([
             checkbox(false).with_key("check:alpha"),
             checkbox(true).with_key("check:locked"),
         ]);

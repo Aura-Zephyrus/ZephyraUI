@@ -62,7 +62,7 @@ fn tree() -> Node {
         .with(&props::FOCUSABLE, PropertyValue::Bool(true))
         .with(&props::ACTIVATABLE, PropertyValue::Bool(true))
         .with_children([label]);
-    let root = Elem::new(NodeTag::Container).with_children([checkbox]);
+    let root = Elem::new(NodeTag::Box).with_children([checkbox]);
     Node::from_element(&root)
 }
 
@@ -96,6 +96,7 @@ fn a_toggle_from_a_uia_client_reaches_the_app_as_a_click() {
             name: "Test".into(),
             client: zephyra_core::core::Rect::new(0.0, 0.0, 800.0, 600.0),
         },
+        ctx(),
     ));
 
     // 2. UIA 客户端拿到那颗复选框的 Toggle 图案。
@@ -185,6 +186,7 @@ fn a_toggle_on_a_disabled_checkbox_never_reaches_the_app() {
             name: "Test".into(),
             client: zephyra_core::core::Rect::new(0.0, 0.0, 800.0, 600.0),
         },
+        ctx(),
     ));
 
     let provider = zephyra_uia::provider::element_provider(Some("check:alpha".into()));
