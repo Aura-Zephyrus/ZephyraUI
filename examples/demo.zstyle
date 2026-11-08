@@ -14,11 +14,11 @@
 
  *
 
- * 一律「类型 + 语义角色分类名」，如 `Container.toolbar` / `Text.hero-line`。
+ * 一律「类型 + 语义角色分类名」，如 `box.toolbar` / `text.hero-line`。
 
  * 源码只说「我是什么角色」，这里只说「这个角色长什么样」。
 
- * 不用裸类型选择器（`Container { }`）—— demo 里有六种长相完全不同的 Container，
+ * 不用裸类型选择器（`box { }`）—— demo 里有六种长相完全不同的 box，
 
  * 裸类型会把它们混成一类。
 
@@ -46,13 +46,13 @@
 
 /* ---- 根与工具栏 ---- */
 
-Container.root {
+box.root {
     background: @surface;
 
     direction: vertical;
 }
 
-Container.toolbar {
+box.toolbar {
     background: @surface_alt;
 
     direction: horizontal;
@@ -66,7 +66,7 @@ Container.toolbar {
 
 /* ---- 图标墙 ---- */
 
-Container.icon-row {
+box.icon-row {
     direction: horizontal;
 
     cross-align: center;
@@ -74,7 +74,7 @@ Container.icon-row {
     spacing: 16px;
 }
 
-Image.icon {
+image.icon {
     width: 56px;
 
     height: 56px;
@@ -84,7 +84,7 @@ Image.icon {
 
 /* ---- uv 裁剪样张 ---- */
 
-Container.crop-row {
+box.crop-row {
     direction: horizontal;
 
     cross-align: center;
@@ -92,7 +92,7 @@ Container.crop-row {
     spacing: 8px;
 }
 
-Image.crop {
+image.crop {
     width: 40px;
 
     height: 40px;
@@ -100,7 +100,7 @@ Image.crop {
 
 /* ---- 说明面板 ---- */
 
-Container.content {
+box.content {
     background: @surface;
 
     direction: vertical;
@@ -110,7 +110,7 @@ Container.content {
     padding: 16px;
 }
 
-Container.hero {
+box.hero {
     background: @accent_fill;
 
     direction: vertical;
@@ -124,7 +124,7 @@ Container.hero {
 
 /* 说明文字：强调底上只有一种字号。 */
 
-Text.hero-line {
+text.hero-line {
     text-size: 16px;
 
     text-color: @on_accent_fill;
@@ -132,7 +132,7 @@ Text.hero-line {
 
 /* ---- 效果样张 ---- */
 
-Container.effects {
+box.effects {
     background: @surface_alt;
 
     direction: vertical;
@@ -142,7 +142,7 @@ Container.effects {
     padding: 12px;
 }
 
-Container.effects-row {
+box.effects-row {
     direction: horizontal;
 
     spacing: 12px;
@@ -150,7 +150,7 @@ Container.effects-row {
 
 /* 一个效果样张：被测试的那块 + 说明文字。 */
 
-Container.fx {
+box.fx {
     direction: vertical;
 
     spacing: 6px;
@@ -162,7 +162,7 @@ Container.fx {
 
  * 于是「某种模式错了」看起来像「没效果」。 */
 
-Container.backdrop {
+box.backdrop {
     /* 深蓝底。写成字面量而不是 @令牌：主题里没有「演示用深蓝」这个角色，
 
      * 而为一个样张给主题加角色是反的——样张不该能改主题。 */
@@ -180,7 +180,7 @@ Container.backdrop {
 
 /* 被滤镜 / 混合模式处理的那一块。 */
 
-Container.swatch {
+box.swatch {
     corner-radius: 6px;
 
     /* 尺寸刻意写死：默认值 0 会让它塌成一条线，于是每种模式看起来
@@ -206,21 +206,21 @@ Container.swatch {
 
  * 版式与配色的取舍上，宁可要「源码里没有颜色字面量」。 */
 
-Container.swatch.accent {
+box.swatch.accent {
     background: #59c7ff8c;
 }
 
-Container.swatch.warm {
+box.swatch.warm {
     background: #ff9e478c;
 }
 
-Text.caption {
+text.caption {
     text-size: 12px;
 }
 
 /* ---- 状态栏 ---- */
 
-Container.status {
+box.status {
     background: @surface_alt;
 
     direction: horizontal;
@@ -234,7 +234,7 @@ Container.status {
 
 /* 焦点环样式的圆点：切主题时它跟着 @focus_ring 变。 */
 
-Container.dot {
+box.dot {
     background: @focus_ring;
 
     corner-radius: 8px;
@@ -244,7 +244,7 @@ Container.dot {
     height: 10px;
 }
 
-Text.status-line {
+text.status-line {
     text-size: 12px;
 
     /* 没有 hover 目标时用暗档。源码只发 `.hovered`，所以默认态必须由
@@ -258,7 +258,7 @@ Text.status-line {
 
  *
 
- * 与 controls.zstyle 的 `Control.pressed` 同一套路：源码发分类名，
+ * 与 controls.zstyle 的 `control.pressed` 同一套路：源码发分类名，
 
  * 这里决定长相。两级分类名的特异性（2）盖过一级（1），所以
 
@@ -274,7 +274,7 @@ Text.status-line {
 
 /* 按钮图标：颜色不继承（见 `ICON_COLOR` 的文档），所以必须显式给。 */
 
-Container.glyph {
+box.glyph {
     width: 20px;
 
     height: 20px;
@@ -282,11 +282,11 @@ Container.glyph {
     icon-color: @content_secondary;
 }
 
-Container.glyph.hovered {
+box.glyph.hovered {
     icon-color: @content;
 }
 
-Container.glyph.pressed {
+box.glyph.pressed {
     icon-color: @content;
 }
 
@@ -294,24 +294,24 @@ Container.glyph.pressed {
 
  * 用哪一档是这里的事。 */
 
-Text.label {
+text.label {
     text-size: 11px;
 
     text-color: @content_secondary;
 }
 
-Text.label.compact {
+text.label.compact {
     text-size: 9px;
 }
 
-Text.label.hovered {
+text.label.hovered {
     text-color: @content;
 }
 
-Text.label.pressed {
+text.label.pressed {
     text-color: @content;
 }
 
-Text.status-line.hovered {
+text.status-line.hovered {
     text-color: @content;
 }

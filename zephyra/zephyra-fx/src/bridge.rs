@@ -840,6 +840,7 @@ pub fn value_to_text(v: &zephyra_core::property::PropertyValue) -> String {
         PropertyValue::FlexWrap(v) => format!("{v:?}"),
         PropertyValue::FlexDirection(v) => format!("{v:?}"),
         PropertyValue::Position(v) => format!("{v:?}"),
+        PropertyValue::Anchor(v) => format!("{v:?}"),
         PropertyValue::Layer(v) => format!("{v:?}"),
         PropertyValue::Filter(v) => format!("{v:?}"),
         PropertyValue::BlendMode(v) => format!("{v:?}"),
@@ -849,6 +850,24 @@ pub fn value_to_text(v: &zephyra_core::property::PropertyValue) -> String {
         PropertyValue::UvRect(v) => format!("{v:?}"),
         // 类型擦除载荷没有稳定文本：只标存在性。真正要读它的宿主应该
         // 注册成字符串属性，而不是指望调试器看穿 `dyn Any`。
+        PropertyValue::CornerShape(v) => {
+            let name = if v.is_round() {
+                "round"
+            } else if v.is_squircle() {
+                "squircle"
+            } else if (v.k - 0.0).abs() < 1e-6 {
+                "bevel"
+            } else if (v.k - -1.0).abs() < 1e-6 {
+                "scoop"
+            } else if v.k.is_infinite() && v.k.is_sign_positive() {
+                "square"
+            } else if v.k.is_infinite() && v.k.is_sign_negative() {
+                "notch"
+            } else {
+                return format!("superellipse({})", v.k);
+            };
+            name.into()
+        }
         PropertyValue::Custom { .. } => "<custom>".into(),
     }
 }

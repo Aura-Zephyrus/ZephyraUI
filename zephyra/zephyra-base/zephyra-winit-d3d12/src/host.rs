@@ -378,12 +378,18 @@ impl<V: View> HostWindow<V> {
         )
     }
 
+    /// 扩展上下文句柄：外部纹理/Hook 注册（按窗口 targets）。
+    pub fn ext_context(&self) -> zephyra_ext::ExtContextHandle {
+        let shared = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+        self.targets.ext_handle(&shared.gpu.device)
+    }
+
     /// [`Self::new_lenient`] + **指定初始客户区尺寸**（**物理像素**）。
     ///
     /// # 为什么必须有这条
     ///
     /// `winit` 在不给尺寸时用系统默认值（本机是 **640×480**），而按固定画布
-    /// 布局的应用（`Container.window { width: 1400px }` 那类）会在这个窗口里
+    /// 布局的应用（`box.window { width: 1400px }` 那类）会在这个窗口里
     /// 被**裁掉一大块** —— 而且裁得毫无提示：布局是对的、绘制是对的，
     /// 只是有一多半在窗口外，看起来像「排版坏了」。
     ///
@@ -1312,7 +1318,11 @@ impl<V: View> HostWindow<V> {
         // 快照来自**保留树**（画出来的那棵），所以它不会与画面漂移。
         if let Some(root) = self.cache.node() {
             let win = zephyra_uia::window_info(hwnd_of(self.window.as_ref()).unwrap_or(0));
-            zephyra_uia::publish(zephyra_uia::rules::build(root, &win));
+            zephyra_uia::publish(zephyra_uia::rules::build(
+                root,
+                &win,
+                Context::new(self.theme),
+            ));
         }
         // 2. 施加 UIA 侧排队的动作。
         let pumped = {

@@ -25,6 +25,7 @@ fn quad(rect: Rect, fill: Color) -> Command {
     Command::Quad {
         rect,
         radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+        shape: zephyra_core::core::CornerShape::ROUND,
         fill,
         stroke: None,
         filter: zephyra_core::filter::FilterChain::none(),
@@ -48,6 +49,7 @@ fn image_rounded(name: &'static str, dst: Rect, radius: f32) -> Command {
         src: None,
         dst,
         radius: zephyra_core::core::CornerRadius { radius },
+        shape: zephyra_core::core::CornerShape::ROUND,
         tint: Color::rgb(1.0, 1.0, 1.0),
         filter: zephyra_core::filter::FilterChain::none(),
         blend: zephyra_core::filter::BlendMode::default(),
@@ -182,11 +184,10 @@ fn reused_path_byte_identical_to_one_shot_path() {
 fn vertex_field_offsets_match_the_input_layout_description() {
     assert_eq!(
         std::mem::size_of::<Vertex>(),
-        60,
-        "15 个 f32。改了字段数必须同步改 shader.rs 的输入描述符"
+        64,
+        "16 个 f32（含 corner-shape/superellipse K）。改了字段数必须同步改各后端 shader.rs / WGSL 的输入描述符"
     );
-    // 这些偏移就是 `shader.rs` 里 `D3D11_INPUT_ELEMENT_DESC::AlignedByteOffset`
-    // 的取值 —— 两处必须一起改，D3D11 不会替你发现不一致。
+    // 这些偏移就是 `shader.rs` / Vulkan attribute 里的字节偏移取值 —— 必须一起改。
     let v = Vertex {
         position: [0.0; 2],
         local: [0.0; 2],
@@ -195,6 +196,7 @@ fn vertex_field_offsets_match_the_input_layout_description() {
         corner: [0.0; 2],
         half_size: [0.0; 2],
         kind: 0.0,
+        shape: 1.0,
     };
     let base = &v as *const Vertex as usize;
     // 纯指针算术（在 `&v` 借用其存活期内），不需要 unsafe —— unsafe 只在
@@ -207,6 +209,7 @@ fn vertex_field_offsets_match_the_input_layout_description() {
     assert_eq!(off(&v.corner as *const _ as *const u8), 40);
     assert_eq!(off(&v.half_size as *const _ as *const u8), 48);
     assert_eq!(off(&v.kind as *const _ as *const u8), 56);
+    assert_eq!(off(&v.shape as *const _ as *const u8), 60);
 }
 
 /// 四个顶点的 `half_size` 必须**完全相同**，且等于矩形尺寸的一半。
@@ -271,6 +274,7 @@ fn a_stroke_adds_a_second_ring_quad() {
         Command::Quad {
             rect: Rect::new(0.0, 0.0, 10.0, 10.0),
             radius: zephyra_core::core::CornerRadius { radius: 2.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: Some((Color::rgb(0.0, 0.0, 0.0), 1.0)),
             filter: zephyra_core::filter::FilterChain::none(),
@@ -921,6 +925,7 @@ fn quad_with_blend(rect: Rect, blend: zephyra_core::filter::BlendMode) -> Comman
     Command::Quad {
         rect,
         radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+        shape: zephyra_core::core::CornerShape::ROUND,
         fill: Color::rgb(1.0, 1.0, 1.0),
         stroke: None,
         filter: zephyra_core::filter::FilterChain::none(),
@@ -939,6 +944,7 @@ fn image_with_blend(
         src: None,
         dst,
         radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+        shape: zephyra_core::core::CornerShape::ROUND,
         tint: Color::rgb(1.0, 1.0, 1.0),
         filter: zephyra_core::filter::FilterChain::none(),
         blend,
@@ -1405,6 +1411,7 @@ fn unimplemented_blends_counts_only_modes_without_coeffs() {
             &list_of(vec![Command::Quad {
                 rect: Rect::new(0.0, 0.0, 10.0, 10.0),
                 radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(1.0, 1.0, 1.0),
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),

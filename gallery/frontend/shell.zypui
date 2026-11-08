@@ -1,23 +1,23 @@
 <component name="PageRoot" params="id cls">
-  <container key="{id}" class="{cls}">
+  <box key="{id}" class="{cls}">
     <children/>
-  </container>
+  </box>
 </component>
 <component name="Section" params="id title">
-  <container key="{id}" class="section">
+  <box key="{id}" class="section">
     <TextLabel key="section-title" text="{title}" level="text-body-strong"/>
-    <container key="section-body" class="section-body">
+    <box key="section-body" class="section-body">
       <children/>
-    </container>
-  </container>
+    </box>
+  </box>
 </component>
-<component name="DemoRow" params="label">
-  <container key="{label}" class="demo-row">
+<component name="DemoRow" params="label slot_class">
+  <box key="{label}" class="demo-row">
     <text key="{label}" text="{label}" class="demo-label"/>
-    <container key="{label}" class="demo-slot">
+    <box key="{label}" class="demo-slot {slot_class}">
       <children/>
-    </container>
-  </container>
+    </box>
+  </box>
 </component>
 <component name="PageGuide" params="">
   <PageRoot key="guide" cls="page-guide">
@@ -70,20 +70,20 @@
     <Section key="layout-flex" title="{tr('ui.flexbox-rows-that-grow-and-wrap')}">
       <DemoRow label="{tr('ui.flex-grow-1-fills-the-row-and-flex-wrap-packs-items-into-lines')}">
         <PageRoot key="fx-grow-demo" cls="fx-row">
-          <container key="fx-fixed" class="fx-cell">
+          <box key="fx-fixed" class="fx-cell">
             <TextLabel key="fx-fixed-t" text="{tr('ui.fixed')}" level="text-caption"/>
-          </container>
-          <container key="fx-grow-cell" class="fx-grow">
+          </box>
+          <box key="fx-grow-cell" class="fx-grow">
             <TextLabel key="fx-grow-t" text="{tr('ui.grows')}" level="text-caption"/>
-          </container>
+          </box>
         </PageRoot>
         <PageRoot key="fx-wrap-demo" cls="fx-wrap">
-          <container key="fx-w1" class="fx-cell"/>
-          <container key="fx-w2" class="fx-cell"/>
-          <container key="fx-w3" class="fx-cell"/>
-          <container key="fx-w4" class="fx-cell"/>
-          <container key="fx-w5" class="fx-cell"/>
-          <container key="fx-w6" class="fx-cell"/>
+          <box key="fx-w1" class="fx-cell"/>
+          <box key="fx-w2" class="fx-cell"/>
+          <box key="fx-w3" class="fx-cell"/>
+          <box key="fx-w4" class="fx-cell"/>
+          <box key="fx-w5" class="fx-cell"/>
+          <box key="fx-w6" class="fx-cell"/>
         </PageRoot>
       </DemoRow>
     </Section>
@@ -215,11 +215,11 @@
       </DemoRow>
     </Section>
     <Section key="sec-liquid-dd" title="{tr('ui.dropdown-button')}">
-      <DemoRow label="{tr('ui.solid')}">
-        <DropDownButton key="liquid:dd:solid" label_key="ui.options" open="{@ldd_s_visible}" logical_open="{@ldd_s_open}" show_items="{@ldd_s_reveal}" entries="{@ldd_s_entries}" material="solid" scale_x="{@ldd_s_menu_sx}" scale_y="{@ldd_s_menu_sy}" translate_x="{@ldd_s_menu_tx}" translate_y="{@ldd_s_menu_ty}"/>
+      <DemoRow label="{tr('ui.solid')}" slot_class="dd-slot">
+        <DropDownButton key="liquid:dd:solid" label_key="ui.options" open="{@ldd_s_visible}" logical_open="{@ldd_s_open}" show_items="{@ldd_s_reveal}" entries="{@ldd_s_entries}" material="solid" extra_class="{@ldd_s_motion}" scale_x="{@ldd_s_menu_sx}" scale_y="{@ldd_s_menu_sy}" translate_x="{@ldd_s_menu_tx}" translate_y="{@ldd_s_menu_ty}"/>
       </DemoRow>
-      <DemoRow label="{tr('ui.glass')}">
-        <DropDownButton key="liquid:dd:glass" label_key="ui.options" open="{@ldd_g_visible}" logical_open="{@ldd_g_open}" show_items="{@ldd_g_reveal}" entries="{@ldd_g_entries}" material="glass" scale_x="{@ldd_g_menu_sx}" scale_y="{@ldd_g_menu_sy}" translate_x="{@ldd_g_menu_tx}" translate_y="{@ldd_g_menu_ty}" background="{@ldd_g_bg}" filter="{@ldd_g_filter}" decoration="{@ldd_g_decoration}"/>
+      <DemoRow label="{tr('ui.glass')}" slot_class="dd-slot">
+        <DropDownButton key="liquid:dd:glass" label_key="ui.options" open="{@ldd_g_visible}" logical_open="{@ldd_g_open}" show_items="{@ldd_g_reveal}" entries="{@ldd_g_entries}" material="glass" extra_class="{@ldd_g_motion}" scale_x="{@ldd_g_menu_sx}" scale_y="{@ldd_g_menu_sy}" translate_x="{@ldd_g_menu_tx}" translate_y="{@ldd_g_menu_ty}" background="{@ldd_g_bg}" filter="{@ldd_g_filter}" decoration="{@ldd_g_decoration}"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -290,42 +290,42 @@
 </component>
 <component name="MaterialSwatches" params="">
   <PageRoot key="material-swatches" cls="material-swatches">
-    <container key="swatch:solid" class="material-swatch material-solid">
-      <container key="chip:solid" class="photo-chip">
+    <box key="swatch:solid" class="material-swatch material-solid">
+      <box key="chip:solid" class="photo-chip">
         <TextLabel key="sw:solid" text="{tr('ui.solid')}" level="photo-chip-text"/>
-      </container>
-    </container>
-    <container key="swatch:frosted" class="material-swatch material-frosted">
-      <container key="chip:frosted" class="photo-chip">
+      </box>
+    </box>
+    <box key="swatch:frosted" class="material-swatch material-frosted">
+      <box key="chip:frosted" class="photo-chip">
         <TextLabel key="sw:frosted" text="{tr('ui.frosted')}" level="photo-chip-text"/>
-      </container>
-    </container>
-    <container key="swatch:glass" class="material-swatch material-glass">
-      <container key="chip:glass" class="photo-chip">
+      </box>
+    </box>
+    <box key="swatch:glass" class="material-swatch material-glass">
+      <box key="chip:glass" class="photo-chip">
         <TextLabel key="sw:glass" text="{tr('ui.glass')}" level="photo-chip-text"/>
-      </container>
-    </container>
+      </box>
+    </box>
   </PageRoot>
 </component>
 <component name="GlassPanes" params="">
   <PageRoot key="glass-panes" cls="glass-panes">
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:a" filter="{@glass_filter_0}" decoration="{@glass_decorations}" class="glass-pane"/>
-      <container key="gt:a" class="photo-chip">
+      <box key="glass:a" filter="{@glass_filter_0}" decoration="{@glass_decorations}" class="glass-pane"/>
+      <box key="gt:a" class="photo-chip">
         <TextLabel key="gt:a" text="{tr('ui.thin')}" level="glass-title"/>
-      </container>
+      </box>
     </PageRoot>
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:b" filter="{@glass_filter_1}" decoration="{@glass_decorations}" class="glass-pane"/>
-      <container key="gt:b" class="photo-chip">
+      <box key="glass:b" filter="{@glass_filter_1}" decoration="{@glass_decorations}" class="glass-pane"/>
+      <box key="gt:b" class="photo-chip">
         <TextLabel key="gt:b" text="{tr('ui.normal')}" level="glass-title"/>
-      </container>
+      </box>
     </PageRoot>
     <PageRoot key="cell" cls="glass-cell">
-      <container key="glass:c" filter="{@glass_filter_2}" decoration="{@glass_decorations}" class="glass-pane"/>
-      <container key="gt:c" class="photo-chip">
+      <box key="glass:c" filter="{@glass_filter_2}" decoration="{@glass_decorations}" class="glass-pane"/>
+      <box key="gt:c" class="photo-chip">
         <TextLabel key="gt:c" text="{tr('ui.thick')}" level="glass-title"/>
-      </container>
+      </box>
     </PageRoot>
   </PageRoot>
 </component>
@@ -344,40 +344,40 @@
   </PageRoot>
 </component>
 <page name="Window">
-  <container key="window" class="window">
-    <container key="titlebar" class="titlebar">
+  <box key="window" class="window">
+    <box key="titlebar" class="titlebar">
       <TextLabel key="app-title" text="{tr('ui.zephyraui-gallery')}" level="text-body-strong"/>
-      <container key="search" class="search">
-        <container key="search-icon" icon="search" class="search-icon"/>
+      <box key="search" class="search">
+        <box key="search-icon" icon="search" class="search-icon"/>
         <TextLabel key="search-hint" text="{tr('ui.search-controls-and-samples')}" level="text-caption"/>
-      </container>
-      <container key="caption" class="caption-bar">
+      </box>
+      <box key="caption" class="caption-bar">
         <for var="c" list="@caps">
           <control key="{c.key}" interactive="true" class="caption-btn {c.close ? 'close' : ''} {(press(c.key) ? 'pressed' : (hover(c.key) ? 'hovered' : ''))}">
-            <container key="icon" icon="{c.icon}" class="caption-icon"/>
+            <box key="icon" icon="{c.icon}" class="caption-icon"/>
           </control>
         </for>
-      </container>
-    </container>
-    <container key="body" class="body">
-      <container key="nav" class="nav-pane {@compact ? 'compact' : ''}">
+      </box>
+    </box>
+    <box key="body" class="body">
+      <box key="nav" class="nav-pane {@compact ? 'compact' : ''}">
         <for var="r" list="@routes">
           <NavItem key="{r.id}" label="{r.label}" icon="{r.icon}" selected="{(r.id == @route)}" compact="{@compact}"/>
         </for>
-      </container>
-      <container key="content" class="content-card">
-        <container key="header" class="page-header">
-          <container key="header-title" class="header-title">
+      </box>
+      <box key="content" class="content-card">
+        <box key="header" class="page-header">
+          <box key="header-title" class="header-title">
             <TextLabel key="page-title" text="{@route_title}" level="text-title"/>
             <InfoBadge key="page-badge" text="12" severity="info" solid="{true}"/>
-          </container>
-          <container key="header-tools" class="header-tools">
+          </box>
+          <box key="header-tools" class="header-tools">
             <TextLabel key="last-action" text="{@last_action}" level="text-caption"/>
             <ToolButton key="theme-toggle" icon="light"/>
             <Button key="act:feedback" label_key="action.feedback" icon="bell" variant="subtle"/>
-          </container>
-        </container>
-        <container key="page" class="page {@enter_class}">
+          </box>
+        </box>
+        <box key="page" class="page {@enter_class}">
           <if cond="(@route == 'guide')">
             <PageGuide/>
           </if>
@@ -405,8 +405,8 @@
           <if cond="(@route == 'slider')">
             <PageSlider/>
           </if>
-        </container>
-      </container>
-    </container>
-  </container>
+        </box>
+      </box>
+    </box>
+  </box>
 </page>

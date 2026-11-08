@@ -234,25 +234,16 @@ pub const PS_LENS: usize = 23;
 /// 这些偏移与 `quad::Vertex` 的字段偏移一一对应 ——
 /// `quad.rs` 里的 `vertex_field_offsets_match_the_input_layout_description`
 /// 钉住那一半，这里是另一半。**两处必须一起改。**
-/// 顶点布局表：`(HLSL 语义名, 语义索引, DXGI 格式, 字节偏移)`。
 ///
-/// 这些偏移与 `quad::Vertex` 的字段偏移一一对应 ——
-/// `quad.rs` 里的 `vertex_field_offsets_match_the_input_layout_description`
-/// 钉住那一半，这里是另一半。**两处必须一起改。**
-///
-/// # 为什么位置用的是 `TEXCOORD4` 而不是 `POSITION`
+/// # 为什么位置用的是 `TEXCOORD0` 而不是 `POSITION`
 ///
 /// 从 SM4 起 `POSITION` 在**顶点着色器输入**上是保留语义：`fxc` 把它编成系统值
 /// （ISGN 里 `SystemValueType = 3` = `D3D_SV_POSITION`），D3D11 便认为它由流水线
 /// 自己提供，**不从顶点缓冲取**。
 ///
-/// 症状安静到极点：顶点缓冲、索引缓冲、输入签名逐项读回验证全部正确，draw 也正常
-/// 提交，但每个顶点的位置都是 `(0,0)` —— 所有三角形退化到 NDC 原点，每个四边形
-/// 只剩 1 个像素。`CreateInputLayout` 成功，日志零错误。
-///
 /// 代价只是多占一个 `TEXCOORD` 索引。位置是顶点缓冲里偏移 0 的那两个 f32，
 /// 用哪个语义名都只是一段字符串。
-pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
+pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 8] = [
     ("TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0), // position
     ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8), // local
     ("TEXCOORD", 4, DXGI_FORMAT_R32G32_FLOAT, 16), // uv
@@ -260,6 +251,7 @@ pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
     ("TEXCOORD", 6, DXGI_FORMAT_R32G32_FLOAT, 40), // corner
     ("TEXCOORD", 8, DXGI_FORMAT_R32G32_FLOAT, 48), // half_size
     ("TEXCOORD", 10, DXGI_FORMAT_R32_FLOAT, 56),  // kind
+    ("TEXCOORD", 11, DXGI_FORMAT_R32_FLOAT, 60),  // shape (corner-shape / superellipse K)
 ];
 
 /// 编译期错误。

@@ -72,6 +72,64 @@ pub struct CornerRadius {
     pub radius: f32,
 }
 
+/// 角形状（CSS `corner-shape`），与 [`CornerRadius`] 配合决定圆角的几何。
+///
+/// # 语义：CSS `superellipse(K)`
+///
+/// 按 CSS Borders Level 4 / MDN：`superellipse(K)` 用指数 `2K` 定义超椭圆
+/// `|x|^(2K) + |y|^(2K) = 1`（归一化后作用于圆角区域）。关键字映射：
+/// `round` = `superellipse(1)`（圆弧，默认）、`squircle` = `superellipse(2)`
+/// （连续曲率感）、`bevel` = `superellipse(0)`、`scoop` = `superellipse(-1)`、
+/// `square` = `superellipse(+∞)`、`notch` = `superellipse(-∞)`。
+///
+/// 存储为 `f32` 的 `K` 值（`f32::INFINITY` / `f32::NEG_INFINITY` 表示极限形状），
+/// 便于属性系统 `const` 构造与按值比较。渲染侧当前对 `round` / `squircle`
+///（及一般正有限 `K`）走超椭圆 SDF；其余关键字保留精确的 CSS 语义值，
+/// 渲染按最接近的已实现形状处理（后续补全）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CornerShape {
+    /// `superellipse(K)` 的参数 `K`。
+    pub k: f32,
+}
+
+impl CornerShape {
+    /// `round`：`superellipse(1)`，普通圆弧（与历史 `corner-radius` 行为一致）。
+    pub const ROUND: Self = Self { k: 1.0 };
+    /// `squircle`：`superellipse(2)`，连续曲率观感的超椭圆圆角。
+    pub const SQUIRCLE: Self = Self { k: 2.0 };
+    /// `bevel`：`superellipse(0)`。
+    pub const BEVEL: Self = Self { k: 0.0 };
+    /// `scoop`：`superellipse(-1)`。
+    pub const SCOOP: Self = Self { k: -1.0 };
+    /// `square`：`superellipse(+∞)`。
+    pub const SQUARE: Self = Self { k: f32::INFINITY };
+    /// `notch`：`superellipse(-∞)`。
+    pub const NOTCH: Self = Self {
+        k: f32::NEG_INFINITY,
+    };
+
+    /// `superellipse(K)`。
+    pub const fn superellipse(k: f32) -> Self {
+        Self { k }
+    }
+
+    /// 是否为默认圆弧形状（`round` / `superellipse(1)`）。
+    pub fn is_round(self) -> bool {
+        (self.k - 1.0).abs() < 1e-6
+    }
+
+    /// 是否为 squircle（`superellipse(2)`）。
+    pub fn is_squircle(self) -> bool {
+        (self.k - 2.0).abs() < 1e-6
+    }
+}
+
+impl Default for CornerShape {
+    fn default() -> Self {
+        Self::ROUND
+    }
+}
+
 /// 间距标度。
 ///
 /// 4pt 栅格。刻度值来自 WinUI 的 `Spacing` 资源键，取值 0/2/4/8/12/16/20/24/28/32。

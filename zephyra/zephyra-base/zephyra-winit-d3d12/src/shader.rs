@@ -251,7 +251,7 @@ pub const PS_LENS: usize = 23;
 ///
 /// 现在两份 HLSL 是逐字节相同的一份文件（由 `the_two_backends_ship_the_same_hlsl_source`
 /// 钉住），本表与它严格对应。
-pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
+pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 8] = [
     // position — 不用 POSITION，理由见模块文档
     ("TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0),
     ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8), // local
@@ -261,6 +261,7 @@ pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
     // half_size — 四边形常量，理由见 quad.rs::Vertex::half_size
     ("TEXCOORD", 8, DXGI_FORMAT_R32G32_FLOAT, 48),
     ("TEXCOORD", 10, DXGI_FORMAT_R32_FLOAT, 56), // kind
+    ("TEXCOORD", 11, DXGI_FORMAT_R32_FLOAT, 60), // shape (corner-shape / superellipse K)
 ];
 
 /// 一个输入元素的**持有者**：语义名的字节 + 索引 + 偏移 + 格式。
@@ -415,8 +416,8 @@ pub fn input_elements() -> InputLayout {
 /// 这类错误之所以值得记一笔：它**不是**失败得太晚，而是**失败得太早** —— 一个永远报
 /// 错的校验函数会让人去怀疑 `Vertex` 的定义，而真正的错在一个 `const` 里。
 pub fn validate_layout() -> Result<(), ShaderError> {
-    // 末元素 = `kind`（f32）。`offset_of` 保证我们问的是**真实**布局。
-    let covered = (std::mem::offset_of!(Vertex, kind) + std::mem::size_of::<f32>()) as u32;
+    // 末元素 = `shape`（f32）。`offset_of` 保证我们问的是**真实**布局。
+    let covered = (std::mem::offset_of!(Vertex, shape) + std::mem::size_of::<f32>()) as u32;
     let stride = std::mem::size_of::<Vertex>() as u32;
     if covered > stride {
         return Err(ShaderError::LayoutOutOfRange { covered, stride });

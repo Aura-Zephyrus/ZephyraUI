@@ -21,17 +21,25 @@ impl Node {
         self.flag(&crate::props::COLLAPSED, ctx)
     }
 
-    /// 定位方式。
+    /// 定位方式（D1）。
     pub fn position(&self, ctx: Context<'_>) -> crate::layout::Position {
         match self.value(&crate::props::POSITION, ctx).as_deref() {
             Some(PropertyValue::Position(p)) => *p,
-            _ => crate::layout::Position::Static,
+            _ => crate::layout::Position::Flow,
         }
     }
 
-    /// 是否绝对定位（脱离正常流）。
-    pub fn is_absolute(&self, ctx: Context<'_>) -> bool {
-        self.position(ctx) == crate::layout::Position::Absolute
+    /// 是否为手动定位（`parent` / `root`，脱离正常流）。
+    pub fn is_manual(&self, ctx: Context<'_>) -> bool {
+        self.position(ctx).is_manual()
+    }
+
+    /// 手动定位锚点（border box 9 点）。
+    pub fn anchor(&self, ctx: Context<'_>) -> crate::layout::Anchor {
+        match self.value(&crate::props::ANCHOR, ctx).as_deref() {
+            Some(PropertyValue::Anchor(a)) => *a,
+            _ => crate::layout::Anchor::TopLeft,
+        }
     }
 
     /// 内边距（四边统一值）。
@@ -260,6 +268,13 @@ impl Node {
     /// 圆角半径。
     pub fn corner_radius(&self, ctx: Context<'_>) -> f32 {
         self.number(&crate::props::CORNER_RADIUS, ctx)
+    }
+
+    /// 角形状（CSS `corner-shape`）。默认 [`crate::core::CornerShape::ROUND`]。
+    pub fn corner_shape(&self, ctx: Context<'_>) -> crate::core::CornerShape {
+        self.value(&crate::props::CORNER_SHAPE, ctx)
+            .and_then(|v| v.get::<crate::core::CornerShape>())
+            .unwrap_or(crate::core::CornerShape::ROUND)
     }
 
     /// 描边色。

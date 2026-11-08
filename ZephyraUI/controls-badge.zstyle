@@ -3,107 +3,109 @@
  * 徽章高 18px，圆角全圆角，字号 13px。
  */
 
-Control.badge {
+control.badge {
     direction: horizontal;
     main-align: center;
     cross-align: center;
     height: 18px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     padding: 8px;
     background: @accent_fill;
     border-width: 1px;
     border-color: @accent_fill;
 }
 
-Control.badge.success {
+control.badge.success {
     background: @success;
     border-color: @success;
 }
 
-Control.badge.caution {
+control.badge.caution {
     background: @caution;
     border-color: @caution;
 }
 
-Control.badge.error {
+control.badge.error {
     background: @critical;
     border-color: @critical;
 }
 
-Control.badge.outline {
+control.badge.outline {
     background: transparent;
 }
 
-Control.badge.outline.success {
+control.badge.outline.success {
     border-color: @success;
 }
 
-Control.badge.outline.caution {
+control.badge.outline.caution {
     border-color: @caution;
 }
 
-Control.badge.outline.error {
+control.badge.outline.error {
     border-color: @critical;
 }
 
-Control.badge.info {
+control.badge.info {
     background: @accent_fill;
     border-color: @accent_fill;
 }
 
-Control.badge.outline.info {
+control.badge.outline.info {
     background: transparent;
     border-color: @accent_fill;
 }
 
-Text.badge-text {
+text.badge-text {
     text-size: 13px;
     text-color: @on_accent_fill;
 }
 
-Text.badge-text.outline {
+text.badge-text.outline {
     text-color: @accent_fill;
 }
 
-Text.badge-text.outline.success {
+text.badge-text.outline.success {
     text-color: @success;
 }
 
-Text.badge-text.outline.caution {
+text.badge-text.outline.caution {
     text-color: @caution;
 }
 
-Text.badge-text.outline.error {
+text.badge-text.outline.error {
     text-color: @critical;
 }
 
-Text.badge-text.info {
+text.badge-text.info {
     text-color: @on_accent_fill;
 }
 
-Text.badge-text.outline.info {
+text.badge-text.outline.info {
     text-color: @accent_fill;
 }
 
-Container.badge-dot {
+box.badge-dot {
     width: 5px;
     height: 5px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @accent_fill;
 }
 
-Container.badge-dot.info {
+box.badge-dot.info {
     background: @accent_fill;
 }
 
-Container.badge-dot.success {
+box.badge-dot.success {
     background: @success;
 }
 
-Container.badge-dot.caution {
+box.badge-dot.caution {
     background: @caution;
 }
 
-Container.badge-dot.error {
+box.badge-dot.error {
     background: @critical;
 }

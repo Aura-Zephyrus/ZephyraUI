@@ -41,7 +41,7 @@ fn hitbox(id: &'static str, w: f32, h: f32) -> Element {
 
 /// 一行两个按钮：a 在左（0..40），b 在右（40..80）。
 fn two_buttons() -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key("root")
         .with(
             &props::DIRECTION,
@@ -80,7 +80,6 @@ fn hit_at(node: &Node, x: f32, y: f32) -> HitResult {
         node,
         HitTestRequest {
             point: Point::new(x, y),
-            ignore_above: None,
         },
         ctx(),
         &mut out,
@@ -97,7 +96,7 @@ fn an_interactive_node_is_actually_reported_as_interactive() {
     let node = tree(&two_buttons());
     let result = hit_at(&node, 10.0, 10.0);
     let target = result.target().expect("落在可交互按钮上时必须有 target");
-    assert_eq!(target.id, crate::id::ElementKey::Name("a"));
+    assert_eq!(target.id, Some(crate::id::ElementKey::Name("a")));
     assert!(target.interactive);
 }
 
@@ -142,10 +141,10 @@ fn a_container_is_on_the_path_but_is_not_the_target() {
     assert!(result
         .path
         .iter()
-        .any(|n| n.id == crate::id::ElementKey::Name("root")));
+        .any(|n| n.id == Some(crate::id::ElementKey::Name("root"))));
     assert_eq!(
         result.target().map(|n| &n.id),
-        Some(&crate::id::ElementKey::Name("a"))
+        Some(&Some(crate::id::ElementKey::Name("a")))
     );
 }
 
@@ -177,7 +176,6 @@ fn a_point_in_the_root_but_on_no_control_has_no_target() {
         &node,
         HitTestRequest {
             point: Point::new(10.0, 10.0),
-            ignore_above: None
         },
         ctx(),
         &mut out
@@ -188,7 +186,6 @@ fn a_point_in_the_root_but_on_no_control_has_no_target() {
         &node,
         HitTestRequest {
             point: Point::new(150.0, 150.0),
-            ignore_above: None
         },
         ctx(),
         &mut out
@@ -205,18 +202,19 @@ fn absolute_child_is_hittable_even_when_parent_collapsed() {
     // 弹出菜单的形状：菜单项 `position:absolute` 按窗口坐标摆位，父容器因为
     // 子项脱离正常流而塌成 0×0。父矩形不含点**不能**代表整棵子树不可命中，
     // 否则菜单画得出来却点不到——症状是「点了没反应」，而画面毫无异常。
-    let slot = Element::new(NodeTag::Container)
+    let slot = Element::new(NodeTag::Box)
         .with_key("slot")
         .with(&props::WIDTH, PropertyValue::float(0.0))
         .with(&props::HEIGHT, PropertyValue::float(0.0))
         .with_children([hitbox("menu", 30.0, 20.0)
+            .with(&props::POSITION, PropertyValue::position(Position::Root))
             .with(
-                &props::POSITION,
-                PropertyValue::position(Position::Absolute),
+                &props::ANCHOR,
+                PropertyValue::anchor(crate::layout::Anchor::Center),
             )
             .with(&props::LEFT, PropertyValue::float(120.0))
             .with(&props::TOP, PropertyValue::float(40.0))]);
-    let root = Element::new(NodeTag::Container).with_children([slot]);
+    let root = Element::new(NodeTag::Box).with_children([slot]);
     let node = tree(&root);
 
     let mut out = HitResult::default();
@@ -224,7 +222,6 @@ fn absolute_child_is_hittable_even_when_parent_collapsed() {
         &node,
         HitTestRequest {
             point: Point::new(120.0, 40.0),
-            ignore_above: None
         },
         ctx(),
         &mut out
@@ -232,7 +229,7 @@ fn absolute_child_is_hittable_even_when_parent_collapsed() {
     let target = out.target().expect("绝对定位子项必须可命中");
     assert_eq!(
         target.id,
-        crate::id::ElementKey::Name("menu"),
+        Some(crate::id::ElementKey::Name("menu")),
         "命中的应是菜单项而不是塌陷的父容器"
     );
 }
@@ -245,7 +242,6 @@ fn a_point_outside_the_root_leaves_the_buffer_empty() {
         &node,
         HitTestRequest {
             point: Point::new(500.0, 500.0),
-            ignore_above: None
         },
         ctx(),
         &mut out
@@ -273,7 +269,7 @@ fn a_deep_tree_truncates_but_still_answers_correctly() {
     // 截断只该影响冒泡链，不该影响答案。
     let mut element = hitbox("deep", 100.0, 100.0);
     for _ in 0..(MAX_DEPTH + 5) {
-        element = Element::new(NodeTag::Container)
+        element = Element::new(NodeTag::Box)
             .with_key("l")
             .with(
                 &props::DIRECTION,

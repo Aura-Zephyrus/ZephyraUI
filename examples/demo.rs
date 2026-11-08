@@ -58,9 +58,14 @@ mod ui;
 // 一件事。Rust 没有 cfg 别名，所以只能写全 —— 少写「平台」那一维就是上面那个坑。
 /// Linux 后端（winit + 裸 Vulkan/ash，不用 wgpu）。与上面两个互斥 —— 同一个
 /// 二进制只编一个，理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
-#[cfg(all(not(windows), feature = "linux-vk"))]
+#[cfg(all(feature = "linux-vk", not(all(windows, feature = "d3d12"))))]
 use zephyra_vulkan::HostWindow;
-#[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
+#[cfg(all(
+    windows,
+    feature = "d3d11",
+    not(feature = "d3d12"),
+    not(feature = "linux-vk")
+))]
 use zephyra_winit::HostWindow;
 /// 宿主后端。
 ///
@@ -175,8 +180,13 @@ const ICON_NAMES: [&str; 4] = ["demo:checker", "demo:gradient", "demo:ring", "de
 /// `cargo clippy -- -D warnings` 因此失败。
 #[cfg(any(
     all(windows, feature = "d3d12"),
-    all(windows, feature = "d3d11", not(feature = "d3d12")),
-    all(not(windows), feature = "linux-vk"),
+    all(
+        windows,
+        feature = "d3d11",
+        not(feature = "d3d12"),
+        not(feature = "linux-vk")
+    ),
+    all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
 ))]
 fn icon_pixels(name: &str) -> (Vec<u8>, u32, u32) {
     const S: u32 = 32;
@@ -333,8 +343,13 @@ fn main() {
     // （真正跑事件循环的那支）毫无影响。
     #[cfg(not(any(
         all(windows, feature = "d3d12"),
-        all(windows, feature = "d3d11", not(feature = "d3d12")),
-        all(not(windows), feature = "linux-vk"),
+        all(
+            windows,
+            feature = "d3d11",
+            not(feature = "d3d12"),
+            not(feature = "linux-vk")
+        ),
+        all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
     )))]
     eprintln!(
         "[demo] 没有后端特性：窗口路不可用。用 --dump-cpu（不开窗口）\
@@ -343,8 +358,13 @@ fn main() {
 
     #[cfg(any(
         all(windows, feature = "d3d12"),
-        all(windows, feature = "d3d11", not(feature = "d3d12")),
-        all(not(windows), feature = "linux-vk"),
+        all(
+            windows,
+            feature = "d3d11",
+            not(feature = "d3d12"),
+            not(feature = "linux-vk")
+        ),
+        all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
     ))]
     {
         let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
@@ -676,8 +696,13 @@ fn bench_cpu() {
 /// dropped, the rest still load, and each failure names its file.
 #[cfg(any(
     all(windows, feature = "d3d12"),
-    all(windows, feature = "d3d11", not(feature = "d3d12")),
-    all(not(windows), feature = "linux-vk"),
+    all(
+        windows,
+        feature = "d3d11",
+        not(feature = "d3d12"),
+        not(feature = "linux-vk")
+    ),
+    all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
 ))]
 fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -736,8 +761,13 @@ fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
 /// `V` 必须能整份移出（`new_async` 拿走所有权），所以这里存 `Option<V>`。
 #[cfg(any(
     all(windows, feature = "d3d12"),
-    all(windows, feature = "d3d11", not(feature = "d3d12")),
-    all(not(windows), feature = "linux-vk"),
+    all(
+        windows,
+        feature = "d3d11",
+        not(feature = "d3d12"),
+        not(feature = "linux-vk")
+    ),
+    all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
 ))]
 struct Bootstrap<V: View> {
     inner: Option<HostWindow<V>>,
@@ -746,8 +776,13 @@ struct Bootstrap<V: View> {
 
 #[cfg(any(
     all(windows, feature = "d3d12"),
-    all(windows, feature = "d3d11", not(feature = "d3d12")),
-    all(not(windows), feature = "linux-vk"),
+    all(
+        windows,
+        feature = "d3d11",
+        not(feature = "d3d12"),
+        not(feature = "linux-vk")
+    ),
+    all(feature = "linux-vk", not(all(windows, feature = "d3d12"))),
 ))]
 impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -768,9 +803,19 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
         // 「元素树里少写了几个图标」无法区分。
         for name in ICON_NAMES {
             let (pixels, w, h) = icon_pixels(name);
-            #[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
+            #[cfg(all(
+                windows,
+                feature = "d3d11",
+                not(feature = "d3d12"),
+                not(feature = "linux-vk")
+            ))]
             let _ = app.register_texture(name, &pixels, w, h);
-            #[cfg(not(all(windows, feature = "d3d11", not(feature = "d3d12"))))]
+            #[cfg(not(all(
+                windows,
+                feature = "d3d11",
+                not(feature = "d3d12"),
+                not(feature = "linux-vk")
+            )))]
             if let Err(e) = app.register_texture(name, &pixels, w, h) {
                 eprintln!("[demo] 纹理 {name} 注册失败：{e}");
             }
@@ -797,9 +842,19 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
         // 屏幕上是一个还没被写过的 composition swapchain，透出窗口的白色背景 ——
         // 而它的唯一症状就是「窗口全白」，与「画了但颜色不对」看起来不一样，
         // 于是很容易被当成渲染问题去查。
-        #[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
+        #[cfg(all(
+            windows,
+            feature = "d3d11",
+            not(feature = "d3d12"),
+            not(feature = "linux-vk")
+        ))]
         app.frame();
-        #[cfg(not(all(windows, feature = "d3d11", not(feature = "d3d12"))))]
+        #[cfg(not(all(
+            windows,
+            feature = "d3d11",
+            not(feature = "d3d12"),
+            not(feature = "linux-vk")
+        )))]
         {
             app.sync_input();
             app.frame();

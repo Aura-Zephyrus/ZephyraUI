@@ -1,6 +1,6 @@
 [package]
 name = "zephyra-vulkan"
-description = "ZephyraUI 的 Linux 渲染后端：winit 窗口 + 裸 Vulkan(ash) 回放 DisplayList。与两个 Windows 后端互不依赖。"
+description = "ZephyraUI 的裸 Vulkan(ash) 渲染后端：winit 窗口 + DisplayList 回放（Linux/Windows）。与 D3D11/D3D12 后端互不依赖。"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.87"
@@ -27,15 +27,22 @@ zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 zephyra-platform = { path = "../zephyra-platform" }
-zephyra-platform-linux = { path = "../zephyra-platform-linux" }
 # 多窗口协调（`WindowSet` / `Backend` / `WindowHost`）。三个后端共用这一份契约。
 zephyra-window = { path = "../zephyra-window" }
 # winit 事件 → core 文本事件的翻译。三后端共用这一份 —— 本后端此前把键盘与
 # 滚轮写死成空值，这两条输入在 Linux 上从未接通过。
 zephyra-winit-input = { path = "../zephyra-winit-input" }
+zephyra-render-ext = { path = "../zephyra-render-ext" }
+zephyra-ext = { path = "../zephyra-ext" }
 winit = "0.30"
 raw-window-handle = "0.6"
 ash = "0.37"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zephyra-platform-linux = { path = "../zephyra-platform-linux" }
+
+[target.'cfg(windows)'.dependencies]
+zephyra-platform-win = { path = "../zephyra-platform-win" }
 
 [build-dependencies]
 naga = { version = "30", features = ["wgsl-in", "spv-out"] }

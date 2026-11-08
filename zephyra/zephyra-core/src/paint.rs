@@ -33,8 +33,10 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::context::Context;
-use crate::core::{Color, CornerRadius, Point, Rect};
+use crate::core::{Color, CornerRadius, CornerShape, Point, Rect};
+use crate::layout::Position;
 use crate::node::Node;
+use crate::visual;
 
 /// 合成层。粗粒度，决定后端如何切 render pass。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -86,6 +88,8 @@ pub enum Command {
     Quad {
         rect: Rect,
         radius: CornerRadius,
+        /// 角形状（CSS `corner-shape`）；与 `radius` 配合决定 SDF。
+        shape: CornerShape,
         /// 填充色。
         fill: Color,
         /// 描边；`None` 表示不描边。
@@ -153,6 +157,8 @@ pub enum Command {
         /// 半径为 0 时**不**外扩、**不**施加遮罩 —— 否则最外一圈像素会被压到
         /// 50% alpha，表现为图像四周发暗一圈。
         radius: CornerRadius,
+        /// 角形状（CSS `corner-shape`）；与 `radius` 配合决定圆角 SDF。
+        shape: CornerShape,
         tint: Color,
         filter: crate::filter::FilterChain,
         blend: crate::filter::BlendMode,
@@ -219,6 +225,8 @@ pub enum Command {
         bounds: Rect,
         /// 外部源的身份与载荷。后端按 `kind` 查注册表，载荷由宿主解释。
         source: RenderSource,
+        /// 外部纹理资源键（`ExtContext` 纹理池查找用；与 `source` 并存做兼容迁移）。
+        resource_key: Option<std::borrow::Cow<'static, str>>,
         /// 滤镜链（进离屏段用；见上——离屏内的自绘 v1 不执行）。
         filter: crate::filter::FilterChain,
         /// 混合模式。钩子被调用前由后端设好；钩子自理恢复。
@@ -278,6 +286,11 @@ impl RenderSource {
     /// 借出载荷的具体类型。
     pub fn payload<T: 'static>(&self) -> Option<&T> {
         self.payload.downcast_ref::<T>()
+    }
+
+    /// 借出类型擦除的载荷（供扩展桥接）。
+    pub fn payload_any(&self) -> &(dyn Any + Send + Sync) {
+        &*self.payload
     }
 }
 
@@ -582,6 +595,20 @@ pub fn command_corner_radius(cmd: &Command) -> f32 {
     }
 }
 
+/// 一条命令的**角形状**（CSS `corner-shape`）—— 圆角遮罩/SDF 用。
+/// 非矩形命令返回 [`CornerShape::ROUND`]（与半径 0 的退化一致）。
+pub fn command_corner_shape(cmd: &Command) -> CornerShape {
+    match cmd {
+        Command::Quad { shape, .. } => *shape,
+        Command::Image { shape, .. } => *shape,
+        Command::Path { .. }
+        | Command::Text { .. }
+        | Command::Custom { .. }
+        | Command::PushClip(_)
+        | Command::PopClip => CornerShape::ROUND,
+    }
+}
+
 /// 一批字形四边形的并集，平移 `offset`。
 ///
 /// 空列表返回零尺寸矩形（不是 `None`）——调用方拿到后自然画不出东西，
@@ -684,6 +711,8 @@ struct PaintState {
     opacity: f32,
     /// 祖先链的位移之和（绘制时偏移，**不影响布局与命中测试**）。
     translate: Point,
+    /// 有效合成层（D18：祖先上下文传播，显式 `layer` 属性优先）。
+    layer: Layer,
 }
 
 impl PaintState {
@@ -691,25 +720,28 @@ impl PaintState {
     const ROOT: PaintState = PaintState {
         opacity: 1.0,
         translate: Point::ZERO,
+        layer: Layer::Content,
     };
 
     /// 推进到本节点：把**本节点**的不透明度与位移并入。
     ///
-    /// ⚠ 返回的是"走到本节点时"的累积值，所以它既用于**本节点自身**的命令，
-    /// 也直接传给子节点。若只在传子节点时用它，本节点自己的位移/透明度就丢了 ——
-    /// 症状是"容器背景不动、里面的东西动了"（反过来）。
-    ///
-    /// `opacity` 夹到 `[0, 1]`：`Opacity` 的默认值是 1.0，但样式表可以写
-    /// `opacity: 2`（CSS 不拦），不夹会让下游拿到大于 1 的因子，
-    /// 而那永远不是"更不透明"。
+    /// D11: `position: root` 清除祖先累计 translate，自身 translate 仍生效；
+    /// `opacity` 仍沿祖先链相乘。D18: 显式 `layer` 属性优先，否则继承祖先有效层。
     fn descend(&self, node: &Node, ctx: Context<'_>) -> Self {
         let own = node.opacity(ctx);
         let own = if own.is_finite() { own } else { 1.0 };
         let opacity = self.opacity * own;
+        // D11: root-positioned node does not inherit ancestor accumulated translate.
+        let base_translate = if node.position(ctx) == Position::Root {
+            Point::ZERO
+        } else {
+            self.translate
+        };
         let (tx, ty) = (
-            self.translate.x + node.translate_x(ctx),
-            self.translate.y + node.translate_y(ctx),
+            base_translate.x + node.translate_x(ctx),
+            base_translate.y + node.translate_y(ctx),
         );
+        let layer = visual::effective_layer(node, ctx).unwrap_or(self.layer);
         PaintState {
             opacity: if opacity.is_finite() {
                 opacity.clamp(0.0, 1.0)
@@ -719,11 +751,9 @@ impl PaintState {
             translate: if tx.is_finite() && ty.is_finite() {
                 Point::new(tx, ty)
             } else {
-                // 非有限的位移（样式表里写了 `translate-x: 1e40` 之类）会让整棵
-                // 子树的顶点变成 NaN，而 NaN 在光栅化里表现为"整块不画"——
-                // 症状离病因很远，所以这里当场丢弃而不是画出去。
-                self.translate
+                base_translate
             },
+            layer,
         }
     }
 }
@@ -812,7 +842,7 @@ fn render_rec(
     let draw = NodeDraw::new(node, offset, ctx);
     let rect = draw.rect(node.rect());
     let opacity = state.opacity;
-    let layer = node.layer(ctx);
+    let layer = state.layer;
     // 效果与混合模式取自节点自身，不沿父链继承（见 props.rs 的理由）。
     let filter = node.filter(ctx);
     let blend = node.blend_mode(ctx);
@@ -857,6 +887,7 @@ fn render_rec(
             Command::Quad {
                 rect,
                 radius: CornerRadius { radius },
+                shape: node.corner_shape(ctx),
                 fill,
                 stroke: has_stroke.then_some((stroke_color, stroke_width)),
                 filter: filter.clone(),
@@ -892,6 +923,7 @@ fn render_rec(
                 radius: CornerRadius {
                     radius: draw.scalar(node.corner_radius(ctx)),
                 },
+                shape: node.corner_shape(ctx),
                 tint: node.image_tint(ctx).with_alpha(opacity),
                 filter: filter.clone(),
                 blend,
@@ -976,6 +1008,7 @@ fn render_rec(
             Command::Custom {
                 bounds: rect,
                 source,
+                resource_key: None,
                 filter: filter.clone(),
                 blend,
             },

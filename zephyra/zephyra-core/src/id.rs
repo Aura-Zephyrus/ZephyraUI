@@ -14,8 +14,8 @@ pub enum NodeTag {
     Text,
     /// 图像节点。
     Image,
-    /// 布局容器。
-    Container,
+    /// 布局/结构容器（zypui `<box>`）。
+    Box,
     /// 控件（具体类型由控件层定义）。
     Control,
 }

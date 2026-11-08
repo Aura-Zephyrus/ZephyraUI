@@ -6,10 +6,11 @@
 
 /* ---- RoundButton（正圆 / 全圆角） ---- */
 
-Control.round {
+control.round {
     width: 44px;
     height: 44px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     padding: 8px;
     direction: horizontal;
     main-align: center;
@@ -20,98 +21,100 @@ Control.round {
     border-color: @control_border;
 }
 
-Control.round.hovered {
+control.round.hovered {
     background: @control_secondary;
     border-color: @control_border_strong;
 }
 
-Control.round.pressed {
+control.round.pressed {
     background: @control_tertiary;
 }
 
-Control.round.checked {
+control.round.checked {
     background: @accent_fill;
     border-color: @accent_fill;
 }
 
-Container.round-icon {
+box.round-icon {
     width: 18px;
     height: 18px;
     icon-color: @content;
 }
 
-Container.round-icon.checked {
+box.round-icon.checked {
     icon-color: @on_accent_fill;
 }
 
-Text.round-label {
+text.round-label {
     text-size: 14px;
     text-color: @content;
 }
 
-Text.round-label.checked {
+text.round-label.checked {
     text-color: @on_accent_fill;
 }
 
 /* ---- Hyperlink（accent 字 + 下划线） ---- */
 
-Control.hyperlink {
+control.hyperlink {
     direction: vertical;
     cross-align: stretch;
     spacing: 4px;
     padding: 4px;
 }
 
-Text.hyperlink-label {
+text.hyperlink-label {
     text-size: 15px;
     text-color: @accent_fill;
 }
 
-Container.link-underline {
+box.link-underline {
     height: 1px;
     background: @accent_fill;
 }
 
 /* ---- DropDownButton ---- */
 
-Control.drop-down {
+control.drop-down {
     direction: horizontal;
-    main-align: center;
+    main-align: start;
     cross-align: center;
     spacing: 10px;
     padding: 10px;
+    width: 72px;
     height: 36px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.drop-down.hovered {
+control.drop-down.hovered {
     background: @control_fill_hover;
     border-color: @control_border_strong;
 }
 
-Control.drop-down.pressed {
+control.drop-down.pressed {
     background: @control_fill_pressed;
 }
 
-Control.drop-down.open {
+control.drop-down.open {
     background: @control_secondary;
 }
 
-Text.dd-label {
+text.dd-label {
     text-size: 15px;
     text-color: @content;
 }
 
-Container.dd-icon {
+box.dd-icon {
     width: 18px;
     height: 18px;
     icon-color: @content_secondary;
 }
 
-Container.dd-chevron {
+box.dd-chevron {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
@@ -119,7 +122,7 @@ Container.dd-chevron {
 
 /* ---- ComboBox ---- */
 
-Control.combo-box {
+control.combo-box {
     direction: horizontal;
     main-align: space-between;
     cross-align: center;
@@ -127,26 +130,27 @@ Control.combo-box {
     padding: 10px;
     height: 36px;
     width: 220px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.combo-box.hovered {
+control.combo-box.hovered {
     background: @control_fill_hover;
 }
 
-Control.combo-box.pressed {
+control.combo-box.pressed {
     background: @control_fill_pressed;
 }
 
-Text.combo-value {
+text.combo-value {
     text-size: 15px;
     text-color: @content;
 }
 
-Container.combo-chevron {
+box.combo-chevron {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
@@ -154,7 +158,7 @@ Container.combo-chevron {
 
 /* ---- SpinBox ---- */
 
-Control.spin-box {
+control.spin-box {
     direction: horizontal;
     main-align: start;
     cross-align: center;
@@ -162,40 +166,42 @@ Control.spin-box {
     padding: 6px;
     height: 36px;
     width: 180px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.spin-box.hovered {
+control.spin-box.hovered {
     background: @control_fill_hover;
 }
 
-Text.spin-value {
+text.spin-value {
     text-size: 15px;
     text-color: @content;
 }
 
-Control.spin-step {
+control.spin-step {
     width: 34px;
     height: 26px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: center;
     cross-align: center;
     background: transparent;
 }
 
-Control.spin-step.hovered {
+control.spin-step.hovered {
     background: @control_secondary;
 }
 
-Control.spin-step.pressed {
+control.spin-step.pressed {
     background: @control_tertiary;
 }
 
-Container.spin-step-icon {
+box.spin-step-icon {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
@@ -203,185 +209,652 @@ Container.spin-step-icon {
 
 /* ---- ColorPicker ---- */
 
-Container.color-picker {
+box.color-picker {
     direction: vertical;
     spacing: 10px;
 }
 
-Container.swatch-row {
+box.swatch-row {
     direction: horizontal;
     spacing: 8px;
 }
 
-Container.swatch {
+box.swatch {
     width: 28px;
     height: 28px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.swatch.hovered {
+box.swatch.hovered {
     border-width: 2px;
     border-color: @control_border_strong;
 }
 
-Container.swatch.pressed {
+box.swatch.pressed {
     border-width: 2px;
     border-color: @accent_fill;
     opacity: 0.8;
 }
 
-Container.swatch.selected {
+box.swatch.selected {
     border-width: 2px;
     border-color: @content;
 }
 
 /* 16 个默认色格。颜色是字面量，在样式表里而不是源码里。 */
-Container.sw-0 {
+box.sw-0 {
     background: #e81123;
 }
-Container.sw-1 {
+box.sw-1 {
     background: #ea5800;
 }
-Container.sw-2 {
+box.sw-2 {
     background: #fff100;
 }
-Container.sw-3 {
+box.sw-3 {
     background: #00cc6a;
 }
-Container.sw-4 {
+box.sw-4 {
     background: #00b7c3;
 }
-Container.sw-5 {
+box.sw-5 {
     background: #0078d4;
 }
-Container.sw-6 {
+box.sw-6 {
     background: #6b69d6;
 }
-Container.sw-7 {
+box.sw-7 {
     background: #b146c2;
 }
-Container.sw-8 {
+box.sw-8 {
     background: #e3008c;
 }
-Container.sw-9 {
+box.sw-9 {
     background: #8a8886;
 }
-Container.sw-10 {
+box.sw-10 {
     background: #69797e;
 }
-Container.sw-11 {
+box.sw-11 {
     background: #4a5459;
 }
-Container.sw-12 {
+box.sw-12 {
     background: #107c10;
 }
-Container.sw-13 {
+box.sw-13 {
     background: #016393;
 }
-Container.sw-14 {
+box.sw-14 {
     background: #881798;
 }
-Container.sw-15 {
+box.sw-15 {
     background: #5c2e91;
 }
 
 /* Liquid/材质变体：玻璃时背景/滤镜由宿主绑定驱动（blur+lens），静态背景置透明。 */
-Control.drop-down.glass {
+control.drop-down.glass {
     background: transparent;
     border-color: #ffffff66;
 }
 
-Control.drop-down.solid {
+control.drop-down.solid {
     opacity: 1;
 }
 
-Control.drop-down.focused {
+control.drop-down.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
 
-Control.drop-down.disabled {
+control.drop-down.disabled {
     opacity: 0.45;
 }
 
-Container.dd-chevron.open {
+box.dd-chevron.open {
     icon-color: @content;
 }
 
 /* ---- DropDown morph（按钮直接变形为菜单，同一控件） ---- */
 
-Container.dd-head {
+/* 头部只按内容取高（约 18px），由父级 `cross-align` 在按钮内容区垂直居中。
+ * 之前写死 `height:36px`，叠加 `padding:10px` 后比 36px 的按钮还高，
+ * 文字被顶到按钮下沿（截图里“选项”贴底）—— 去掉固定高度即可居中。 */
+box.dd-head {
     direction: horizontal;
     main-align: start;
     cross-align: center;
     spacing: 8px;
-    height: 36px;
 }
 
-Container.dd-head.morphed {
-    height: 36px;
-}
-
-Container.dd-menu-body {
+box.dd-menu-body {
     direction: vertical;
     spacing: 0px;
     cross-align: stretch;
 }
 
-/* 形变态：纵向菜单布局。 */
-Control.drop-down.morph-menu {
+/* 形变态：几何钩子（整段形变期间存在），不在此强制改布局方向，避免首帧跳动。
+ * `cross-align: start` 让按钮头在盒子长高时仍钉在左上角（不随高度上下漂）。 */
+control.drop-down.morph-menu {
+    spacing: 0px;
+    cross-align: start;
+}
+
+/* 菜单项显示时再切纵向布局。 */
+control.drop-down.menu-layout {
     direction: vertical;
     main-align: start;
     cross-align: stretch;
 }
 
-/* 画廊 morph（open 时）：同一控件变为绝对定位菜单，无额外元素。 */
-Control.drop-down.morph-menu.dd-morph {
-    position: absolute;
-    left: 546px;
-    width: 220px;
-    height: 114px;
-    spacing: 0px;
-    padding: 6px;
-    corner-radius: 10px;
+/* 按钮直接形变为菜单：保持在原按钮流位置（不写死 left/top），
+ * 菜单覆盖在按钮上展开。玻璃向上展开由 translate-y 绑定配合高度完成。 */
+control.drop-down.morph-menu.dd-morph {
+    corner-shape: superellipse(1.5);
     background: @surface_alt;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Control.drop-down.morph-menu.dd-morph-solid {
-    top: 711px;
+control.drop-down.morph-menu.dd-morph-glass {
+    background: transparent;
 }
 
-Control.drop-down.morph-menu.dd-morph-glass {
-    top: 595px;
+control.drop-down.dd-morph {
+    direction: vertical;
 }
-
-Control.drop-down.dd-morph {
+control.drop-down.dd-morph-solid {
+    direction: vertical;
+}
+control.drop-down.dd-morph-glass {
+    direction: vertical;
+}
+control.dd-morph {
     direction: vertical;
 }
 
-Control.drop-down.dd-morph-solid {
-    direction: vertical;
-}
+/* ---- 32 档：从原按钮形状原地连续形变为菜单 ---- */
 
-Control.drop-down.dd-morph-glass {
-    direction: vertical;
+control.drop-down.morph-menu.dd-morph.dd-morph-1 {
+    width: 74.47px;
+    height: 37.30px;
+    padding: 9.93px;
+    corner-radius: 13px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.0667;
 }
-
-Control.dd-morph {
-    direction: vertical;
+control.drop-down.morph-menu.dd-morph.dd-morph-2 {
+    width: 76.93px;
+    height: 38.60px;
+    padding: 9.87px;
+    corner-radius: 13.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.1333;
 }
-
-Control.dd-morph-solid {
-    opacity: 1;
+control.drop-down.morph-menu.dd-morph.dd-morph-3 {
+    width: 79.40px;
+    height: 39.90px;
+    padding: 9.80px;
+    corner-radius: 13.3px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.2000;
 }
-
-Control.dd-morph-glass {
-    opacity: 1;
+control.drop-down.morph-menu.dd-morph.dd-morph-4 {
+    width: 81.87px;
+    height: 41.20px;
+    padding: 9.73px;
+    corner-radius: 13.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.2667;
 }
-
-/* 画廊 morph 定位（open 时）：按钮变为绝对定位菜单，同一控件无额外元素。 */
+control.drop-down.morph-menu.dd-morph.dd-morph-5 {
+    width: 84.33px;
+    height: 42.50px;
+    padding: 9.67px;
+    corner-radius: 13.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.3333;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-6 {
+    width: 86.80px;
+    height: 43.80px;
+    padding: 9.60px;
+    corner-radius: 13.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.4000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-7 {
+    width: 89.27px;
+    height: 45.10px;
+    padding: 9.53px;
+    corner-radius: 13.9px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.4667;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-8 {
+    width: 91.73px;
+    height: 46.40px;
+    padding: 9.47px;
+    corner-radius: 14.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.5333;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-9 {
+    width: 94.20px;
+    height: 47.70px;
+    padding: 9.40px;
+    corner-radius: 14.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.6000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-10 {
+    width: 96.67px;
+    height: 49.00px;
+    padding: 9.33px;
+    corner-radius: 14.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.6667;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-11 {
+    width: 99.13px;
+    height: 50.30px;
+    padding: 9.27px;
+    corner-radius: 14.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.7333;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-12 {
+    width: 101.60px;
+    height: 51.60px;
+    padding: 9.20px;
+    corner-radius: 14.7px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.8000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-13 {
+    width: 104.07px;
+    height: 52.90px;
+    padding: 9.13px;
+    corner-radius: 14.9px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.8667;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-14 {
+    width: 106.53px;
+    height: 54.20px;
+    padding: 9.07px;
+    corner-radius: 15px;
+    corner-shape: superellipse(1.5);
+    opacity: 0.9333;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-15 {
+    width: 109.00px;
+    height: 55.50px;
+    padding: 9.00px;
+    corner-radius: 15.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-16 {
+    width: 111.47px;
+    height: 56.80px;
+    padding: 8.93px;
+    corner-radius: 15.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-17 {
+    width: 113.93px;
+    height: 58.10px;
+    padding: 8.87px;
+    corner-radius: 15.5px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-18 {
+    width: 116.40px;
+    height: 59.40px;
+    padding: 8.80px;
+    corner-radius: 15.7px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-19 {
+    width: 118.87px;
+    height: 60.70px;
+    padding: 8.73px;
+    corner-radius: 15.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-20 {
+    width: 121.33px;
+    height: 62.00px;
+    padding: 8.67px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-21 {
+    width: 123.80px;
+    height: 63.30px;
+    padding: 8.60px;
+    corner-radius: 16.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-22 {
+    width: 126.27px;
+    height: 64.60px;
+    padding: 8.53px;
+    corner-radius: 16.3px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-23 {
+    width: 128.73px;
+    height: 65.90px;
+    padding: 8.47px;
+    corner-radius: 16.5px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-24 {
+    width: 131.20px;
+    height: 67.20px;
+    padding: 8.40px;
+    corner-radius: 16.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-25 {
+    width: 133.67px;
+    height: 68.50px;
+    padding: 8.33px;
+    corner-radius: 16.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-26 {
+    width: 136.13px;
+    height: 69.80px;
+    padding: 8.27px;
+    corner-radius: 17px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-27 {
+    width: 138.60px;
+    height: 71.10px;
+    padding: 8.20px;
+    corner-radius: 17.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-28 {
+    width: 141.07px;
+    height: 72.40px;
+    padding: 8.13px;
+    corner-radius: 17.3px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-29 {
+    width: 143.53px;
+    height: 73.70px;
+    padding: 8.07px;
+    corner-radius: 17.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-30 {
+    width: 146.00px;
+    height: 75.00px;
+    padding: 8.00px;
+    corner-radius: 17.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-31 {
+    width: 148.47px;
+    height: 76.30px;
+    padding: 7.93px;
+    corner-radius: 17.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-32 {
+    width: 150.93px;
+    height: 77.60px;
+    padding: 7.87px;
+    corner-radius: 17.9px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-33 {
+    width: 153.40px;
+    height: 78.90px;
+    padding: 7.80px;
+    corner-radius: 18.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-34 {
+    width: 155.87px;
+    height: 80.20px;
+    padding: 7.73px;
+    corner-radius: 18.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-35 {
+    width: 158.33px;
+    height: 81.50px;
+    padding: 7.67px;
+    corner-radius: 18.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-36 {
+    width: 160.80px;
+    height: 82.80px;
+    padding: 7.60px;
+    corner-radius: 18.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-37 {
+    width: 163.27px;
+    height: 84.10px;
+    padding: 7.53px;
+    corner-radius: 18.7px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-38 {
+    width: 165.73px;
+    height: 85.40px;
+    padding: 7.47px;
+    corner-radius: 18.9px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-39 {
+    width: 168.20px;
+    height: 86.70px;
+    padding: 7.40px;
+    corner-radius: 19px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-40 {
+    width: 170.67px;
+    height: 88.00px;
+    padding: 7.33px;
+    corner-radius: 19.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-41 {
+    width: 173.13px;
+    height: 89.30px;
+    padding: 7.27px;
+    corner-radius: 19.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-42 {
+    width: 175.60px;
+    height: 90.60px;
+    padding: 7.20px;
+    corner-radius: 19.5px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-43 {
+    width: 178.07px;
+    height: 91.90px;
+    padding: 7.13px;
+    corner-radius: 19.7px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-44 {
+    width: 180.53px;
+    height: 93.20px;
+    padding: 7.07px;
+    corner-radius: 19.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-45 {
+    width: 183.00px;
+    height: 94.50px;
+    padding: 7.00px;
+    corner-radius: 20px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-46 {
+    width: 185.47px;
+    height: 95.80px;
+    padding: 6.93px;
+    corner-radius: 20.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-47 {
+    width: 187.93px;
+    height: 97.10px;
+    padding: 6.87px;
+    corner-radius: 20.3px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-48 {
+    width: 190.40px;
+    height: 98.40px;
+    padding: 6.80px;
+    corner-radius: 20.5px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-49 {
+    width: 192.87px;
+    height: 99.70px;
+    padding: 6.73px;
+    corner-radius: 20.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-50 {
+    width: 195.33px;
+    height: 101.00px;
+    padding: 6.67px;
+    corner-radius: 20.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-51 {
+    width: 197.80px;
+    height: 102.30px;
+    padding: 6.60px;
+    corner-radius: 21px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-52 {
+    width: 200.27px;
+    height: 103.60px;
+    padding: 6.53px;
+    corner-radius: 21.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-53 {
+    width: 202.73px;
+    height: 104.90px;
+    padding: 6.47px;
+    corner-radius: 21.3px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-54 {
+    width: 205.20px;
+    height: 106.20px;
+    padding: 6.40px;
+    corner-radius: 21.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-55 {
+    width: 207.67px;
+    height: 107.50px;
+    padding: 6.33px;
+    corner-radius: 21.6px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-56 {
+    width: 210.13px;
+    height: 108.80px;
+    padding: 6.27px;
+    corner-radius: 21.8px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-57 {
+    width: 212.60px;
+    height: 110.10px;
+    padding: 6.20px;
+    corner-radius: 21.9px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-58 {
+    width: 215.07px;
+    height: 111.40px;
+    padding: 6.13px;
+    corner-radius: 22.1px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-59 {
+    width: 217.53px;
+    height: 112.70px;
+    padding: 6.07px;
+    corner-radius: 22.2px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}
+control.drop-down.morph-menu.dd-morph.dd-morph-60 {
+    width: 220.00px;
+    height: 114.00px;
+    padding: 6.00px;
+    corner-radius: 22.4px;
+    corner-shape: superellipse(1.5);
+    opacity: 1.0000;
+}

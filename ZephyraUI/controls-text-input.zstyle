@@ -6,7 +6,7 @@
 
 /* ---- TextField ---- */
 
-Control.text-field {
+control.text-field {
     direction: horizontal;
     main-align: space-between;
     cross-align: center;
@@ -14,45 +14,47 @@ Control.text-field {
     padding: 10px;
     height: 36px;
     width: 240px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.text-field.hovered {
+control.text-field.hovered {
     background: @control_fill_hover;
 }
 
-Control.text-field.focused {
+control.text-field.focused {
     border-color: @accent_fill;
     border-width: 2px;
 }
 
-Text.field-text {
+text.field-text {
     text-size: 15px;
     text-color: @content;
 }
 
-Text.field-text.placeholder {
+text.field-text.placeholder {
     text-color: @content_disabled;
 }
 
-Control.field-clear {
+control.field-clear {
     width: 28px;
     height: 24px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: center;
     cross-align: center;
     background: transparent;
 }
 
-Control.field-clear.hovered {
+control.field-clear.hovered {
     background: @control_secondary;
 }
 
-Container.field-clear-icon {
+box.field-clear-icon {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
@@ -60,99 +62,106 @@ Container.field-clear-icon {
 
 /* ---- TextArea ---- */
 
-Container.text-area {
+box.text-area {
     direction: vertical;
     spacing: 6px;
     padding: 14px;
     width: 340px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Text.area-line {
+text.area-line {
     text-size: 15px;
     text-color: @content;
 }
 
-Container.scroll-area {
+box.scroll-area {
     direction: horizontal;
     spacing: 10px;
     cross-align: stretch;
 }
 
-Container.scrollbar {
+box.scrollbar {
     width: 7px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     direction: vertical;
     main-align: start;
     padding: 0px;
 }
 
-Container.scroll-thumb {
+box.scroll-thumb {
     width: 7px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_strong;
 }
 
 /* ---- AutoSuggestBox ---- */
 
-Container.suggest-list {
+box.suggest-list {
     direction: vertical;
     spacing: 0px;
     padding: 6px;
     cross-align: stretch;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.suggest-row {
+box.suggest-row {
     height: 34px;
     padding: 10px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
     background: transparent;
 }
 
-Container.suggest-row.selected {
+box.suggest-row.selected {
     background: @control_secondary;
 }
 
-Text.suggest-label {
+text.suggest-label {
     text-size: 14px;
     text-color: @content;
 }
 
 /* ---- TextInputMenu ---- */
 
-Container.context-menu {
+box.context-menu {
     direction: vertical;
     spacing: 0px;
     padding: 6px;
     width: 200px;
     cross-align: stretch;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.menu-item {
+box.menu-item {
     height: 34px;
     padding: 10px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
     background: transparent;
 }
 
-Container.menu-item.hovered {
+box.menu-item.hovered {
     background: @control_secondary;
 }

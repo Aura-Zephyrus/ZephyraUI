@@ -52,6 +52,7 @@ zephyra-app-config = { path = "../zephyra-app-config" }
 zephyra-winit-input = { path = "../zephyra-winit-input" }
 zephyra-window = { path = "../zephyra-window" }
 zephyra-render-ext = { path = "../zephyra-render-ext" }
+zephyra-ext = { path = "../zephyra-ext" }
 winit = "0.30"
 # 顶点结构用 bytemuck 的 Pod/Zeroable derive，省掉手写字段校验。
 bytemuck = { version = "1", features = ["derive"] }
@@ -83,6 +84,7 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
+    "Win32_Security",
 ] }
 # 从 winit 窗口取裸 HWND。winit 0.30 的 `Window::window_handle()` 返回
 # `raw_window_handle::WindowHandle`，而要用就必须能命名那个 trait。

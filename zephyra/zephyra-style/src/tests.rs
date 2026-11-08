@@ -64,7 +64,7 @@ fn tag_selector_matches_only_that_type() {
         "matching type must hit"
     );
     assert!(
-        !s.matches(NodeTag::Container, &[]),
+        !s.matches(NodeTag::Box, &[]),
         "a wrong type must not hit -- even when the element carries no class name"
     );
 }
@@ -295,8 +295,7 @@ fn local_still_overrides_the_stylesheet() {
 fn apply_reaches_children() {
     let sheet = StyleSheet::from_rules(vec![background_rule(Selector::named("danger"), RED, 0)]);
     let mut root = Node::from_element(
-        &Element::new(NodeTag::Container)
-            .with_children([Element::new(NodeTag::Control).style("danger")]),
+        &Element::new(NodeTag::Box).with_children([Element::new(NodeTag::Control).style("danger")]),
     );
     sheet.apply_all(&mut root);
 
@@ -580,9 +579,9 @@ fn applying_after_diff_sees_restyled_nodes() {
     // 反过来的话，重建会把你刚 apply 的丢掉。
     let sheet = StyleSheet::from_rules(vec![background_rule(Selector::named("danger"), RED, 0)]);
 
-    let mut node = Node::from_element(&Element::new(NodeTag::Container));
+    let mut node = Node::from_element(&Element::new(NodeTag::Box));
     // 第一帧：Container。
-    diff(&mut node, &Element::new(NodeTag::Container));
+    diff(&mut node, &Element::new(NodeTag::Box));
     sheet.apply_all(&mut node);
     assert_eq!(
         background_of(&node),

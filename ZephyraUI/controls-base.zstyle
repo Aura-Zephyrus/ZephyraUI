@@ -6,19 +6,19 @@
 
 /* ---- 通用叶子 ---- */
 
-Container.glyph {
+box.glyph {
     width: 22px;
     height: 22px;
     icon-color: @content;
 }
 
 /* 分隔线 */
-Container.divider {
+box.divider {
     height: 1px;
     background: @divider;
 }
 
-Container.divider-v {
+box.divider-v {
     width: 1px;
     height: 22px;
     background: @divider;
@@ -26,27 +26,27 @@ Container.divider-v {
 
 /* ---- 排版档位 ---- */
 
-Text.text-title {
+text.text-title {
     text-size: 22px;
     text-color: @content;
 }
 
-Text.text-subtitle {
+text.text-subtitle {
     text-size: 17px;
     text-color: @content;
 }
 
-Text.text-body {
+text.text-body {
     text-size: 15px;
     text-color: @content;
 }
 
-Text.text-body-strong {
+text.text-body-strong {
     text-size: 15px;
     text-color: @content;
 }
 
-Text.text-caption {
+text.text-caption {
     text-size: 13px;
     text-color: @content_secondary;
 }

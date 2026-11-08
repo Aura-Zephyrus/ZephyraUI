@@ -9,22 +9,11 @@
 //! 每窗口 [`Surface`]（`VkSurfaceKHR` + `VkSwapchainKHR` + 格式）——多窗口下
 //! 前者只能有一份，后者必须每个窗口一份。
 //!
-//! # 为什么不用 Xlib surface
+//! # 平台 surface
 //!
-//! 实测（2026-10，WSL2 Ubuntu 24.04 + WSLg）：
-//!   - Wayland surface 可用（winit 默认走 Wayland，`libxkbcommon.so.0` 系统自带）；
-//!   - X11 surface 需要 `libxkbcommon-x11.so.0`，系统没有、装它要 sudo（无免密 sudo）。
-//!
-//! 结论：走 **Wayland surface**（WSLg 的原生合成路径）。
-//!
-//! 对「输出 1:1」这件事它少两处分叉：少一处缩放（XWayland 下交换链尺寸由
-//! 它协商，Wayland 下由本进程给）、少一处色彩分叉（合成器不再插入色彩管理）。
-//!
-//! # Wayland 特有的两个坑
-//!
-//! 1. `current_extent` 在 Wayland 上报 `u32::MAX`（"尺寸未定义，由 swapchain 定"）——
-//!    规范允许，extent 必须由应用给（用 `window.inner_size()`）。
-//! 2. surface 指针来自 winit 自己的连接 —— surface 必须挂在**创建窗口的那个连接**上。
+//! - Linux：**Wayland surface**（WSLg 原生合成路径；实测避开 X11 + libxkbcommon-x11）。
+//!   `current_extent` 在 Wayland 上可为 `u32::MAX`，extent 由应用给（`window.inner_size()`）。
+//! - Windows：**Win32 surface**（`VK_KHR_win32_surface`），使本 crate 在当前 Windows Vulkan 环境可运行。
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -231,8 +220,12 @@ pub struct Device {
     pub(crate) queue_family: u32,
     pub(crate) khr_surface: ash::extensions::khr::Surface,
     /// 只为持有所有权：建 surface 要经它，Instance 销毁之前不能 drop。
+    #[cfg(target_os = "linux")]
     #[allow(dead_code, reason = "只为持有所有权")]
     pub(crate) khr_wayland: ash::extensions::khr::WaylandSurface,
+    #[cfg(windows)]
+    #[allow(dead_code, reason = "只为持有所有权")]
+    pub(crate) khr_win32: ash::extensions::khr::Win32Surface,
     pub(crate) khr_swapchain: ash::extensions::khr::Swapchain,
     /// MSAA 采样数。放在设备上而不是窗口上：`ZEPHYRA_MSAA` 是进程级变量，
     /// 让两个窗口取到不同采样数会让共享的图集/纹理无法互认。
@@ -323,13 +316,30 @@ impl Device {
         // 验证层开关。必须在**建 instance 之前**定：层与扩展都是创建时参数，
         // 事后无法追加（与 D3D11/12 的调试层同一个约束）。
         let debug_on = std::env::var("ZEPHYRA_VK_DEBUG").as_deref() == Ok("1");
-        let mut ext_names: Vec<std::ffi::CString> = vec![
-            std::ffi::CString::new("VK_KHR_surface").unwrap(),
-            std::ffi::CString::new("VK_KHR_wayland_surface").unwrap(),
-        ];
+        let mut ext_names: Vec<std::ffi::CString> =
+            vec![std::ffi::CString::new("VK_KHR_surface").unwrap()];
+        #[cfg(target_os = "linux")]
+        ext_names.push(std::ffi::CString::new("VK_KHR_wayland_surface").unwrap());
+        #[cfg(windows)]
+        ext_names.push(std::ffi::CString::new("VK_KHR_win32_surface").unwrap());
         let layer_name = std::ffi::CString::new("VK_LAYER_KHRONOS_validation").unwrap();
+        let validation_available = debug_on
+            && entry
+                .enumerate_instance_layer_properties()
+                .map(|ls| {
+                    ls.iter().any(|l| {
+                        unsafe { std::ffi::CStr::from_ptr(l.layer_name.as_ptr()) }.to_bytes()
+                            == b"VK_LAYER_KHRONOS_validation"
+                    })
+                })
+                .unwrap_or(false);
         if debug_on {
             ext_names.push(std::ffi::CString::new("VK_EXT_debug_utils").unwrap());
+            if !validation_available {
+                eprintln!(
+                    "[vk] ZEPHYRA_VK_DEBUG=1 but VK_LAYER_KHRONOS_validation not found; continuing without validation layer"
+                );
+            }
         }
         let ext_ptrs: Vec<*const std::ffi::c_char> = ext_names.iter().map(|e| e.as_ptr()).collect();
         // ⚠ `ApplicationInfo` 与层指针数组必须是**命名绑定**：builder 借的是它们的
@@ -343,11 +353,23 @@ impl Device {
         let mut info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_extension_names(&ext_ptrs);
-        if debug_on {
+        if validation_available {
             info = info.enabled_layer_names(&layer_ptrs);
         }
-        let instance = unsafe { entry.create_instance(&info, None) }
-            .map_err(|e| SurfaceError::new("vkCreateInstance", e.to_string()))?;
+        let built = info.build();
+        let instance = match unsafe { entry.create_instance(&built, None) } {
+            Ok(i) => i,
+            Err(e) if validation_available => {
+                eprintln!("[vk] enabling VK_LAYER_KHRONOS_validation failed ({e}); retrying without validation layer");
+                let info2 = vk::InstanceCreateInfo::builder()
+                    .application_info(&app_info)
+                    .enabled_extension_names(&ext_ptrs)
+                    .build();
+                unsafe { entry.create_instance(&info2, None) }
+                    .map_err(|e2| SurfaceError::new("vkCreateInstance", e2.to_string()))?
+            }
+            Err(e) => return Err(SurfaceError::new("vkCreateInstance", e.to_string())),
+        };
 
         // ── 验证信使 ──
         //
@@ -451,7 +473,10 @@ impl Device {
         // 扩展函数表：内部只 clone 句柄，必须在 `entry` / `instance` 被移进
         // 结构体之前构造。
         let khr_surface = ash::extensions::khr::Surface::new(&entry, &instance);
+        #[cfg(target_os = "linux")]
         let khr_wayland = ash::extensions::khr::WaylandSurface::new(&entry, &instance);
+        #[cfg(windows)]
+        let khr_win32 = ash::extensions::khr::Win32Surface::new(&entry, &instance);
         let khr_swapchain = ash::extensions::khr::Swapchain::new(&instance, &device);
 
         Ok(Self {
@@ -462,7 +487,10 @@ impl Device {
             physical,
             queue_family,
             khr_surface,
+            #[cfg(target_os = "linux")]
             khr_wayland,
+            #[cfg(windows)]
+            khr_win32,
             khr_swapchain,
             msaa_samples,
             command_pool,
@@ -489,18 +517,7 @@ impl Surface {
     /// 不校验的症状是：第二个窗口 `vkCreateSwapchainKHR` 静默失败，或者更糟 ——
     /// 创建成功但 present 一直返回 out-of-date，画面停在黑色。
     pub fn new(device: &Device, window: &Window) -> Result<Self, SurfaceError> {
-        let (dpy, wl_surface) =
-            wayland_handles(window).map_err(|e| SurfaceError::new("wayland handles", e))?;
-        let surface = unsafe {
-            device.khr_wayland.create_wayland_surface(
-                &vk::WaylandSurfaceCreateInfoKHR::builder()
-                    .display(dpy)
-                    .surface(wl_surface)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| SurfaceError::new("vkCreateWaylandSurfaceKHR", e.to_string()))?;
+        let surface = create_platform_surface(device, window)?;
 
         // ⚠ 共享设备按 graphics 队列挑，而 present 支持是 **surface 相关**的：
         // 一个物理设备有 graphics 队列，不代表它能向这个窗口呈现。
@@ -526,16 +543,63 @@ impl Surface {
                 .get_physical_device_surface_capabilities(device.physical, surface)
         }
         .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
-        let (w, h) = if caps.current_extent.width == u32::MAX {
+        if std::env::var("ZEPHYRA_VK_DEBUG").as_deref() == Ok("1") {
+            eprintln!(
+                "[zephyra-vulkan] caps current={}x{} min={}x{} max={}x{} transform={:?}",
+                caps.current_extent.width,
+                caps.current_extent.height,
+                caps.min_image_extent.width,
+                caps.min_image_extent.height,
+                caps.max_image_extent.width,
+                caps.max_image_extent.height,
+                caps.current_transform
+            );
+        }
+        let (mut w, mut h) = if caps.current_extent.width == u32::MAX {
             let s = window.inner_size();
-            (s.width, s.height)
+            (s.width.max(1), s.height.max(1))
         } else {
-            (caps.current_extent.width, caps.current_extent.height)
+            let cw = caps.current_extent.width;
+            let ch = caps.current_extent.height;
+            // Guard against bogus driver-reported extents (observed on some Windows ICDs).
+            let sane = cw > 0 && ch > 0 && cw <= 16384 && ch <= 16384;
+            if sane {
+                (cw, ch)
+            } else {
+                let s = window.inner_size();
+                eprintln!(
+                    "[zephyra-vulkan] surface current_extent {}x{} looks invalid; using window {}x{} (caps min {}x{} max {}x{})",
+                    cw, ch, s.width, s.height,
+                    caps.min_image_extent.width, caps.min_image_extent.height,
+                    caps.max_image_extent.width, caps.max_image_extent.height
+                );
+                (s.width.max(1), s.height.max(1))
+            }
         };
         if w == 0 || h == 0 {
             unsafe { device.khr_surface.destroy_surface(surface, None) };
             return Err(SurfaceError::new("surface extent", format!("{w}x{h}")));
         }
+        let max_w = {
+            let m = caps.max_image_extent.width;
+            if m == 0 || m > 16384 {
+                16384
+            } else {
+                m
+            }
+        };
+        let max_h = {
+            let m = caps.max_image_extent.height;
+            if m == 0 || m > 16384 {
+                16384
+            } else {
+                m
+            }
+        };
+        let min_w = caps.min_image_extent.width.max(1).min(max_w);
+        let min_h = caps.min_image_extent.height.max(1).min(max_h);
+        w = w.clamp(min_w, max_w);
+        h = h.clamp(min_h, max_h);
         let formats = unsafe {
             device
                 .khr_surface
@@ -548,23 +612,22 @@ impl Surface {
         // 着色器写线性值 16，swapchain 落 71（= encode(16)），屏幕观感比 Windows
         // 亮一档。Windows 那边的交换链是 B8G8R8A8_UNORM（非 sRGB），着色器值
         // 直通。要「输出一致」，两边必须同一种直通行为 —— 所以这里选 UNORM。
-        let format = formats
+        let chosen = formats
             .iter()
-            .map(|f| f.format)
-            .find(|f| *f == vk::Format::B8G8R8A8_UNORM)
+            .find(|f| f.format == vk::Format::B8G8R8A8_UNORM)
             .or_else(|| {
                 formats
                     .iter()
-                    .map(|f| f.format)
-                    .find(|f| *f == vk::Format::R8G8B8A8_UNORM)
+                    .find(|f| f.format == vk::Format::R8G8B8A8_UNORM)
             })
             .or_else(|| {
                 formats
                     .iter()
-                    .map(|f| f.format)
-                    .find(|f| *f == vk::Format::B8G8R8A8_SRGB)
+                    .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)
             })
             .ok_or_else(|| SurfaceError::new("surface format", "no supported format"))?;
+        let format = chosen.format;
+        let color_space = chosen.color_space;
         if !caps
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::TRANSFER_SRC)
@@ -587,30 +650,40 @@ impl Surface {
         } else {
             vk::CompositeAlphaFlagsKHR::INHERIT
         };
-        let swapchain = unsafe {
-            device.khr_swapchain.create_swapchain(
-                &vk::SwapchainCreateInfoKHR::builder()
-                    .surface(surface)
-                    .min_image_count(caps.min_image_count.max(2))
-                    .image_format(format)
-                    .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
-                    .image_extent(vk::Extent2D {
-                        width: w,
-                        height: h,
-                    })
-                    .image_array_layers(1)
-                    .image_usage(
-                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-                    )
-                    .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .pre_transform(caps.current_transform)
-                    .composite_alpha(alpha)
-                    .present_mode(vk::PresentModeKHR::FIFO)
-                    .build(),
-                None,
-            )
+        let mut min_image_count = caps.min_image_count.max(2);
+        if caps.max_image_count > 0 && min_image_count > caps.max_image_count {
+            min_image_count = caps.max_image_count;
         }
-        .map_err(|e| SurfaceError::new("vkCreateSwapchainKHR", e.to_string()))?;
+        let mut pre_transform = caps.current_transform;
+        if !caps.supported_transforms.contains(pre_transform) {
+            pre_transform = vk::SurfaceTransformFlagsKHR::IDENTITY;
+        }
+        let create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(surface)
+            .min_image_count(min_image_count)
+            .image_format(format)
+            .image_color_space(color_space)
+            .image_extent(vk::Extent2D {
+                width: w,
+                height: h,
+            })
+            .image_array_layers(1)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(pre_transform)
+            .composite_alpha(alpha)
+            .present_mode(vk::PresentModeKHR::FIFO)
+            .build();
+        let swapchain = unsafe { device.khr_swapchain.create_swapchain(&create_info, None) }
+            .map_err(|e| {
+                SurfaceError::new(
+                    "vkCreateSwapchainKHR",
+                    format!(
+                        "{e}; {w}x{h} fmt={format:?} cs={color_space:?} images={min_image_count} usage={:?} alpha={alpha:?} pre={pre_transform:?}",
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC
+                    ),
+                )
+            })?;
         let images = unsafe { device.khr_swapchain.get_swapchain_images(swapchain) }
             .map_err(|e| SurfaceError::new("get_swapchain_images", e.to_string()))?;
 
@@ -668,7 +741,7 @@ impl Surface {
                     )
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(caps.current_transform)
-                    .composite_alpha(caps.supported_composite_alpha)
+                    .composite_alpha(pick_composite_alpha(caps.supported_composite_alpha))
                     .present_mode(self.present_mode)
                     .build(),
                 None,
@@ -914,6 +987,51 @@ impl Surface {
     }
 }
 
+fn create_platform_surface(
+    device: &Device,
+    window: &Window,
+) -> Result<vk::SurfaceKHR, SurfaceError> {
+    #[cfg(target_os = "linux")]
+    {
+        let (dpy, wl_surface) =
+            wayland_handles(window).map_err(|e| SurfaceError::new("wayland handles", e))?;
+        unsafe {
+            device.khr_wayland.create_wayland_surface(
+                &vk::WaylandSurfaceCreateInfoKHR::builder()
+                    .display(dpy)
+                    .surface(wl_surface)
+                    .build(),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("vkCreateWaylandSurfaceKHR", e.to_string()))
+    }
+    #[cfg(windows)]
+    {
+        let (hwnd, hinstance) =
+            win32_handles(window).map_err(|e| SurfaceError::new("win32 handles", e))?;
+        unsafe {
+            device.khr_win32.create_win32_surface(
+                &vk::Win32SurfaceCreateInfoKHR::builder()
+                    .hinstance(hinstance)
+                    .hwnd(hwnd)
+                    .build(),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("vkCreateWin32SurfaceKHR", e.to_string()))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (device, window);
+        Err(SurfaceError::new(
+            "platform surface",
+            "unsupported platform",
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn wayland_handles(
     window: &Window,
 ) -> Result<(*mut std::ffi::c_void, *mut std::ffi::c_void), String> {
@@ -929,6 +1047,33 @@ fn wayland_handles(
     Ok((dpy, surface))
 }
 
+#[cfg(windows)]
+fn win32_handles(window: &Window) -> Result<(vk::HINSTANCE, vk::HWND), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().map_err(|e| e.to_string())?.as_raw() {
+        RawWindowHandle::Win32(h) => {
+            let hwnd = h.hwnd.get() as vk::HWND;
+            let hinstance = match h.hinstance {
+                Some(i) => i.get() as vk::HINSTANCE,
+                None => get_module_handle(),
+            };
+            Ok((hinstance, hwnd))
+        }
+        _ => Err("winit did not give a Win32 window handle".into()),
+    }
+}
+
+#[cfg(windows)]
+fn get_module_handle() -> vk::HINSTANCE {
+    // Win32: GetModuleHandleW(NULL) returns the module handle for the current process.
+    // Vulkan requires a valid HINSTANCE for Win32 surface creation.
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleW(lpModuleName: *const u16) -> *mut std::ffi::c_void;
+    }
+    unsafe { GetModuleHandleW(std::ptr::null()) }
+}
+
 pub(crate) fn pick_type(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
@@ -942,4 +1087,16 @@ pub(crate) fn pick_type(
                 .contains(want)
         })
         .ok_or_else(|| SurfaceError::new("memory type", format!("no type with {want:?}")))
+}
+
+fn pick_composite_alpha(supported: vk::CompositeAlphaFlagsKHR) -> vk::CompositeAlphaFlagsKHR {
+    if supported.contains(vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED) {
+        vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+    } else if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
+        vk::CompositeAlphaFlagsKHR::OPAQUE
+    } else if supported.contains(vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED) {
+        vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED
+    } else {
+        vk::CompositeAlphaFlagsKHR::INHERIT
+    }
 }

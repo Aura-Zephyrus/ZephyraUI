@@ -62,6 +62,35 @@ hover 是 `.hovered`，动画是 `.enter-3`。
 本仓取 [`anim::STEPS`] = 8：83 ms ÷ 8 ≈ **10.4 ms 一档**，仍在官方
 "至少 60 fps"的响应式要求内（触控页原文：「动画还应至少保持 60 fps」）。
 
+### 3.1 应用层曲线：菜单用 Apple 口径 + 按钮原地形变（不是官方表的第六条）
+
+官方表里**没有**"菜单开合"这一行。菜单是应用级转场，所以
+[`anim::Easing`] 额外有一条 `AppleMenu = cubic-bezier(0.22, 1.0, 0.36, 1.0)`（iOS 风格连续减速），
+**只用于下拉菜单**，不替代 §1 的四条官方曲线，也不用于页面切换。
+
+为什么另立一条：官方四条里最接近的 `Direct (0,0,0,1)` 在 t=0.5 已到 0.89，
+240 ms 上尾段太短，看起来"咔"地到位；Apple 这条同一点是 0.955，而前 10%
+只走到约 0.27 —— 起步更有加速感、尾段更长。数字由曲线实算，
+`zephyra-style/tests/anim_tests.rs::apple_menu_curve_starts_fast_and_settles_softly`
+钉住形状。
+
+| 参数 | 值 | 依据 |
+|---|---|---|
+| 打开时长 | 240 ms | 本仓口径（比 §1 的 250 ms 少 10 ms，菜单比整页转场轻） |
+| 关闭时长 | 180 ms | 本仓口径：退出比进入短，关闭时用户已经知道要什么 |
+| 档位密度 | 16（`step_with`） | 240 ÷ 16 = 15 ms/档，与 60 fps 同量级；全局 `STEPS = 8` 仍归页面入场 |
+
+下拉菜单表现为**按钮原地形变为菜单**：代码只发 `dd-morph-N` 分类名（32 档），
+`ZephyraUI/controls-forms.zstyle` 在每档里给出 `left/top/width/height/padding/`
+`corner-radius/opacity`，**全部几何与外观值仍在样式表**。控件 `position:absolute`
+但锚定在原按钮 rect（按钮不位移），菜单覆盖在按钮上展开：实心向下长高（顶边锚定），
+玻璃向上长高（底边锚定）。`paint` 的文字路径不吃 `scale-x/scale-y`（见 §4），
+所以不用 `scale`；菜单项在盒子有足够空间后再揭示，避免从小方块溢出。
+
+实现分三处：`gallery/frontend/app/motion.rs`（可中断的定时补间、档位/揭示阈值）、
+`ZephyraUI/controls-forms.zstyle` 的 `.dd-morph-N`、以及 `DropDownButton` 的
+`extra_class` 形参。补间在目标翻转时从**当前值**重新起跑，所以动画中途再点一次不会跳。
+
 ## 4. 缺口（**已在本轮结清**，这里保留原判断）
 
 上表的官方动作全是**不透明度**与**位置**。core 此前两者都不能动画：

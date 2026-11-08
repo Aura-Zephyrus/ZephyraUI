@@ -3,47 +3,49 @@
  * 分段控件高 32px，圆角 8px。
  */
 
-Container.segmented {
+box.segmented {
     direction: horizontal;
     spacing: 4px;
     padding: 4px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.seg-item {
+control.seg-item {
     height: 32px;
     padding: 12px;
     direction: horizontal;
     main-align: center;
     cross-align: center;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: transparent;
 }
 
-Control.seg-item.selected {
+control.seg-item.selected {
     background: @accent_fill;
 }
 
-Control.seg-item.hovered {
+control.seg-item.hovered {
     background: @control_secondary;
 }
 
-Control.seg-item.selected.hovered {
+control.seg-item.selected.hovered {
     background: @accent_fill;
 }
 
-Text.seg-label {
+text.seg-label {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
-Text.seg-label.hovered {
+text.seg-label.hovered {
     text-color: @content;
 }
 
-Text.seg-label.selected {
+text.seg-label.selected {
     text-color: @on_accent_fill;
 }

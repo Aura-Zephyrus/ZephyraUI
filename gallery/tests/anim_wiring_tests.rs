@@ -122,15 +122,20 @@ fn no_class_name_after_tier_exhausted() {
     );
 
     // 一路跑到放完。
+    //
+    // 按 **1 ms** 采样而不是按 16 ms 帧采样：入场缓动换成 `AppleMenu` 之后起步
+    // 很快，16 ms 的第一帧已经落在 `enter-2`，`enter-1` 在任何 60/144 Hz 的
+    // 真实帧上都看不到。本用例验的是「8 档都可到达、放完撤类」，不是帧率 ——
+    // 帧时间本身由 `clock_advances_by_milliseconds_not_frames` 负责。
     let mut seen: Vec<Option<&'static str>> = Vec::new();
     let mut last = None;
-    for _ in 0..60 {
+    for _ in 0..=(anim::ENTER_MS as u32) {
         let c = g.enter_class();
         if c != last {
             seen.push(c);
             last = c;
         }
-        g.enter_ms = (g.enter_ms + DT).min(anim::ENTER_MS);
+        g.enter_ms = (g.enter_ms + 1.0).min(anim::ENTER_MS);
     }
     assert_eq!(
         last, None,
@@ -278,7 +283,7 @@ fn opacity_of(class: &str) -> f32 {
         .find(|(n, _)| *n == "shell")
         .map(|(_, src)| *src)
         .expect("shell.zstyle 应当在内嵌样式表里");
-    let needle = format!("Container.page.{class} {{");
+    let needle = format!("box.page.{class} {{");
     let start = css
         .find(&needle)
         .unwrap_or_else(|| panic!("样式表里没有 {needle} —— 档位与 `anim::STEPS` 不同数？"));

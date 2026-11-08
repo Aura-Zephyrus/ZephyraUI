@@ -272,6 +272,7 @@ fn quad(filter: FilterChain, blend: BlendMode, rect: Rect) -> Command {
     Command::Quad {
         rect,
         radius: CornerRadius { radius: 0.0 },
+        shape: zephyra_core::core::CornerShape::ROUND,
         fill: Color::rgb(1.0, 1.0, 1.0),
         stroke: None,
         filter,
@@ -698,6 +699,7 @@ fn refraction_quad_geometry_covers_the_element_exactly() {
         element,
         (sw, sh),
         12.0,
+        1.0,
         crate::offscreen::Refraction {
             strength: 16.0,
             bezel: 20.0,

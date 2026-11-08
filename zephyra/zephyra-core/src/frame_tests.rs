@@ -42,7 +42,7 @@ fn step(cache: &mut FrameCache, element: &Element, bounds: (f32, f32)) -> (bool,
 /// `Rect { width: 0 }` 在 scissor 里意味着「什么都不画」，症状是元素直接消失，
 /// 且没有任何报错。所以这条尺寸是本组测试的**前提**，不是装饰。
 fn chip(color: Color) -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with(&props::WIDTH, PropertyValue::float(120.0))
         .with(&props::HEIGHT, PropertyValue::float(60.0))
         .with(&props::BACKGROUND, PropertyValue::color(color))
@@ -53,7 +53,7 @@ fn chip(color: Color) -> Element {
 /// 两个节点是刻意的 —— 只有一个节点时「脏的是哪个」无从分辨，多一个才能验出
 /// 脏区不是碰巧等于某个矩形。`PADDING` 让内层离开原点，于是脏矩形不等于整窗。
 fn two_nodes() -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with(
             &props::BACKGROUND,
             PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)),
@@ -67,7 +67,7 @@ fn two_nodes() -> Element {
 /// 只改颜色、不动任何影响布局的属性 —— 这正是 hover / 按下走的路径，也是
 /// 脏区唯一能收窄的场景。
 fn two_nodes_recolored() -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with(
             &props::BACKGROUND,
             PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)),
@@ -183,7 +183,7 @@ fn structural_change_repaints() {
     let mut cache = FrameCache::new();
     let (_, before) = step(&mut cache, &two_nodes(), (400.0, 300.0));
 
-    let grown = Element::new(NodeTag::Container)
+    let grown = Element::new(NodeTag::Box)
         .with(
             &props::BACKGROUND,
             PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)),
@@ -262,7 +262,7 @@ fn damage_of(cache: &mut FrameCache, element: &Element, bounds: (f32, f32)) -> D
 fn damage_is_union_of_multiple_dirty_nodes() {
     /// 水平一行两块。根不加背景色 —— 否则它会被标脏、并把整窗并进来。
     fn row(a: Color, b: Color) -> Element {
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with(&props::DIRECTION, PropertyValue::static_str("horizontal"))
             .with_children([chip(a), chip(b)])
     }
@@ -303,11 +303,11 @@ fn damage_falls_back_to_full_when_a_dirty_node_is_scaled() {
     let bounds = (400.0, 300.0);
     step(
         &mut cache,
-        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        &Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
         bounds,
     );
 
-    let scaled = Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))
+    let scaled = Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))
         .with(&props::SCALE_X, PropertyValue::float(1.5))
         .with(&props::SCALE_Y, PropertyValue::float(1.5))]);
     assert!(
@@ -326,12 +326,12 @@ fn damage_falls_back_to_full_when_a_dirty_node_is_translated() {
     let bounds = (400.0, 300.0);
     step(
         &mut cache,
-        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        &Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
         bounds,
     );
 
     let moved =
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_children([chip(Color::rgb(0.9, 0.2, 0.2))
                 .with(&props::TRANSLATE_X, PropertyValue::float(20.0))]);
     assert!(
@@ -350,12 +350,12 @@ fn damage_expands_for_decorations() {
     let bounds = (400.0, 300.0);
     step(
         &mut cache,
-        &Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
+        &Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]),
         bounds,
     );
 
-    let decorated =
-        Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2)).with(
+    let decorated = Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))
+        .with(
             &props::DECORATIONS,
             PropertyValue::decorations(crate::decoration::Decorations::glass()),
         )]);
@@ -389,11 +389,11 @@ fn collapsed_node_repaints_and_falls_back_to_full_damage() {
     let mut cache = FrameCache::new();
     let bounds = (400.0, 300.0);
 
-    let open = Element::new(NodeTag::Container).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]);
+    let open = Element::new(NodeTag::Box).with_children([chip(Color::rgb(0.9, 0.2, 0.2))]);
     let (_, before) = step(&mut cache, &open, bounds);
     assert!(before > 0, "前置：chip 有背景色，应当产出命令");
 
-    let folded = Element::new(NodeTag::Container).with_children([
+    let folded = Element::new(NodeTag::Box).with_children([
         chip(Color::rgb(0.9, 0.2, 0.2)).with(&props::COLLAPSED, PropertyValue::bool(true))
     ]);
     let (changed, after) = step(&mut cache, &folded, bounds);
@@ -458,7 +458,7 @@ fn structural_change_falls_back_to_full_damage() {
     let mut cache = FrameCache::new();
     step(&mut cache, &two_nodes(), (400.0, 300.0));
 
-    let grown = Element::new(NodeTag::Container)
+    let grown = Element::new(NodeTag::Box)
         .with(
             &props::BACKGROUND,
             PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)),

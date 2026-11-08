@@ -156,4 +156,15 @@ mod tests {
             assert!(!none.has(cap));
         }
     }
+
+    #[test]
+    fn capability_provider_contract() {
+        struct P;
+        impl CapabilityProvider for P {
+            fn capabilities(&self) -> BackendCapabilities {
+                BackendCapabilities::none().with(Capability::CustomBasic, true)
+            }
+        }
+        assert!(P.capabilities().has(Capability::CustomBasic));
+    }
 }

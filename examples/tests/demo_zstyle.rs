@@ -4,7 +4,7 @@
 //!
 //! `demo.rs` 的测试钉的是**源码这边**：Local 层里没有外观、分类名都打得通、
 //! 每个元素都能被选中。它们都过了，**删掉样式表里的一条声明照样全绿** ——
-//! 实测过：删掉 `Container.status { background: ... }` 后 6 条测试全过，
+//! 实测过：删掉 `box.status { background: ... }` 后 6 条测试全过，
 //! 而状态栏的背景已经没了，没有任何东西报错。
 //!
 //! 这就是「源码干净」和「样式表正确」是两件事：前者靠 `demo.rs` 的测试，
@@ -84,14 +84,14 @@ fn every_rule_in_demo_zstyle_is_pinned() {
     let cases: Vec<Case> = vec![
         // ---- 根与工具栏 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["root"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("surface".into())),
             what: "root takes @surface",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["root"],
             key: &props::DIRECTION,
             want: Some(PropertyValue::direction(
@@ -100,14 +100,14 @@ fn every_rule_in_demo_zstyle_is_pinned() {
             what: "root stacks",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["toolbar"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("surface_alt".into())),
             what: "toolbar takes @surface_alt",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["toolbar"],
             key: &props::DIRECTION,
             want: Some(PropertyValue::direction(
@@ -116,14 +116,14 @@ fn every_rule_in_demo_zstyle_is_pinned() {
             what: "toolbar is a row",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["toolbar"],
             key: &props::PADDING,
             want: Some(PropertyValue::float(8.0)),
             what: "toolbar padding 8",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["toolbar"],
             key: &props::SPACING,
             want: Some(PropertyValue::float(12.0)),
@@ -131,7 +131,7 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- 图标墙 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["icon-row"],
             key: &props::SPACING,
             want: Some(PropertyValue::float(16.0)),
@@ -153,7 +153,7 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- uv 裁剪 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["crop-row"],
             key: &props::SPACING,
             want: Some(PropertyValue::float(8.0)),
@@ -175,28 +175,28 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- 说明面板 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["content"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("surface".into())),
             what: "content takes @surface",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["content"],
             key: &props::PADDING,
             want: Some(PropertyValue::float(16.0)),
             what: "content padding 16",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["hero"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("accent_fill".into())),
             what: "hero takes @accent_fill",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["hero"],
             key: &props::CORNER_RADIUS,
             want: Some(PropertyValue::float(12.0)),
@@ -218,35 +218,35 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- 效果样张 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["effects"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("surface_alt".into())),
             what: "effects takes @surface_alt",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["effects"],
             key: &props::PADDING,
             want: Some(PropertyValue::float(12.0)),
             what: "effects padding 12",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["effects-row"],
             key: &props::SPACING,
             want: Some(PropertyValue::float(12.0)),
             what: "effects row spacing 12",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["fx"],
             key: &props::SPACING,
             want: Some(PropertyValue::float(6.0)),
             what: "fx spacing 6",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["backdrop"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::color(Color::rgba(
@@ -258,35 +258,35 @@ fn every_rule_in_demo_zstyle_is_pinned() {
             what: "backdrop is the literal #1a336b",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["backdrop"],
             key: &props::WIDTH,
             want: Some(PropertyValue::float(96.0)),
             what: "backdrop 96 wide",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["backdrop"],
             key: &props::HEIGHT,
             want: Some(PropertyValue::float(64.0)),
             what: "backdrop 64 tall",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["backdrop"],
             key: &props::PADDING,
             want: Some(PropertyValue::float(12.0)),
             what: "backdrop padding 12",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["swatch"],
             key: &props::WIDTH,
             want: Some(PropertyValue::float(72.0)),
             what: "swatch 72 wide -- 0 would collapse it",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["swatch"],
             key: &props::CORNER_RADIUS,
             want: Some(PropertyValue::float(6.0)),
@@ -301,28 +301,28 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- 状态栏 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["status"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("surface_alt".into())),
             what: "status takes @surface_alt",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["status"],
             key: &props::PADDING,
             want: Some(PropertyValue::float(8.0)),
             what: "status padding 8",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["dot"],
             key: &props::BACKGROUND,
             want: Some(PropertyValue::Resource("focus_ring".into())),
             what: "dot takes @focus_ring",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["dot"],
             key: &props::WIDTH,
             want: Some(PropertyValue::float(10.0)),
@@ -337,21 +337,21 @@ fn every_rule_in_demo_zstyle_is_pinned() {
         },
         // ---- 交互态 ----
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["glyph"],
             key: &props::ICON_COLOR,
             want: Some(PropertyValue::Resource("content_secondary".into())),
             what: "idle icon colour",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["glyph", "hovered"],
             key: &props::ICON_COLOR,
             want: Some(PropertyValue::Resource("content".into())),
             what: "hover brightens the icon",
         },
         Case {
-            tag: NodeTag::Container,
+            tag: NodeTag::Box,
             names: vec!["glyph", "pressed"],
             key: &props::ICON_COLOR,
             want: Some(PropertyValue::Resource("content".into())),
@@ -466,14 +466,14 @@ fn every_rule_in_demo_zstyle_is_pinned() {
 #[test]
 fn rules_do_not_set_anything_they_should_not() {
     // 根节点不该有边框 —— 它不是一个可交互控件。
-    let (v, s) = styled_tag(NodeTag::Container, &["root"], &props::BORDER_WIDTH);
+    let (v, s) = styled_tag(NodeTag::Box, &["root"], &props::BORDER_WIDTH);
     assert_eq!(
         (v, s),
         (None, ValueSource::Default),
         "root must not gain a border"
     );
     // 图标墙是透明的行，不该有背景。
-    let (v, s) = styled_tag(NodeTag::Container, &["icon-row"], &props::BACKGROUND);
+    let (v, s) = styled_tag(NodeTag::Box, &["icon-row"], &props::BACKGROUND);
     assert_eq!(
         (v, s),
         (None, ValueSource::Default),
@@ -486,19 +486,19 @@ fn rules_do_not_set_anything_they_should_not() {
         (None, ValueSource::Default),
         "crop must not inherit icon's corner radius"
     );
-    // 类型不该串：Container 上的分类名不该命中 Image。
+    // 类型不该串：box 上的分类名不该命中 Image。
     let (v, s) = styled_tag(NodeTag::Image, &["toolbar"], &props::BACKGROUND);
     assert_eq!(
         (v, s),
         (None, ValueSource::Default),
-        "Image must not match Container.toolbar"
+        "image must not match box.toolbar"
     );
-    // 控件分类名不该串到 Container 上。
-    let (v, s) = styled_tag(NodeTag::Container, &["pressed"], &props::BORDER_WIDTH);
+    // 控件分类名不该串到 box 上。
+    let (v, s) = styled_tag(NodeTag::Box, &["pressed"], &props::BORDER_WIDTH);
     assert_eq!(
         (v, s),
         (None, ValueSource::Default),
-        "Container must not match Control.pressed"
+        "box must not match control.pressed"
     );
 }
 

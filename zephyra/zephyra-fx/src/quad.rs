@@ -46,12 +46,12 @@ use std::rc::Rc;
 use zephyra_core::core::{Color, Point, Rect, UvRect};
 use zephyra_core::paint::{Command, DisplayList};
 
-/// 每顶点 52 字节：位置(2) + 局部(2) + uv(2) + 颜色(4) + 圆角描边(2) + 类型(1) 个 f32。
+/// 每顶点 56 字节：位置(2) + 局部(2) + uv(2) + 颜色(4) + 圆角描边(2) + 半宽半高(2) + 类型(1) + 角形状(1) 个 f32。
 ///
 /// 圆角与描边必须走顶点而不是常量缓冲：同一批里每个四边形的圆角半径和描边宽度
 /// 都不同。走常量就得每换一个矩形重设一次并重录命令，破坏合批。
 ///
-/// 52 是算出来的（13 个 f32），不是凑的 —— 但仍要显式断言，因为 `Vertex` 是
+/// 56 是算出来的（14 个 f32），不是凑的 —— 但仍要显式断言，因为 `Vertex` 是
 /// `Pod`，布局一旦与着色器输入描述符对不上，症状是**画面整体错位**而不是报错。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -64,7 +64,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     /// 线性 RGBA。
     pub color: [f32; 4],
-    /// x = 圆角半径（DIP），y = 描边宽度（DIP）。
+    /// x = 圆角半径（DIP），y = 描边宽度（DIP）/pass 复用字段。
     pub corner: [f32; 2],
     /// 四边形的**半宽半高**（与 `local` 同单位）。
     ///
@@ -106,6 +106,11 @@ pub struct Vertex {
     /// 这里的代价可以忽略：图元都是小四边形，且同一批内 `kind` 通常相同，
     /// 分支预测器几乎总命中。
     pub kind: f32,
+    /// 角形状参数（CSS `corner-shape` / `superellipse(K)` 的 `K`）。
+    ///
+    /// `1.0` = `round`（圆弧，默认），`2.0` = `squircle`。`nointerpolation`
+    /// 语义由着色器保证；四顶点填同值。对不使用圆角 SDF 的图元填 `1.0`。
+    pub shape: f32,
 }
 
 /// 抗锯齿过渡带的半宽（DIP），与 `zephyra.hlsl` 的 `float px = 0.75` 必须相等。
@@ -302,12 +307,33 @@ pub fn expand_indices_with_paths_into(quads: usize, path_tris: usize, out: &mut 
 }
 
 impl Vertex {
-    /// SDF 圆角矩形的四个顶点。
+    /// SDF 圆角矩形的四个顶点（`round` / `superellipse(1)`）。
     ///
     /// `local` 携带的是**像素空间**的局部坐标 —— SDF 需要知道片元离边角多远，
     /// 而这只有在知道目标物理尺寸时才算得出来。
     pub fn from_rect(rect: Rect, px: (f32, f32), color: [f32; 4], corner: [f32; 2]) -> [Vertex; 4] {
-        Self::quad(rect, px, color, corner, [0.0; 2], [0.0, 1.0], kind::RECT)
+        Self::from_rect_shaped(rect, px, color, corner, 1.0)
+    }
+
+    /// SDF 圆角矩形的四个顶点，带 CSS `corner-shape` / `superellipse(K)` 的 `shape_k`。
+    /// `shape_k = 1.0` 为 `round`，`2.0` 为 `squircle`。
+    pub fn from_rect_shaped(
+        rect: Rect,
+        px: (f32, f32),
+        color: [f32; 4],
+        corner: [f32; 2],
+        shape_k: f32,
+    ) -> [Vertex; 4] {
+        Self::quad(
+            rect,
+            px,
+            color,
+            corner,
+            [0.0; 2],
+            [0.0, 1.0],
+            kind::RECT,
+            shape_k,
+        )
     }
 
     /// 纹理采样的四个顶点（字形 / 图像）。`uv` 是纹理内的归一化坐标。
@@ -329,6 +355,7 @@ impl Vertex {
             [uv.x, uv.y],
             [uv.right(), uv.bottom()],
             kind,
+            1.0,
         )
     }
 
@@ -361,6 +388,19 @@ impl Vertex {
         color: [f32; 4],
         uv: UvRect,
         radius: f32,
+    ) -> [Vertex; 4] {
+        Self::from_rounded_uv_rect_shaped(rect, px, color, uv, radius, 1.0)
+    }
+
+    /// 带圆角/角形状的图像四边形（`kind == IMAGE`）。
+    /// `shape_k = 1.0` 为 `round`，`2.0` 为 `squircle`（CSS `superellipse(2)`）。
+    pub fn from_rounded_uv_rect_shaped(
+        rect: Rect,
+        px: (f32, f32),
+        color: [f32; 4],
+        uv: UvRect,
+        radius: f32,
+        shape_k: f32,
     ) -> [Vertex; 4] {
         // ⚠️ 判据是 `!(radius > 0.0)` 而不是 `radius <= 0.0`，因为**负数截距
         // （partial order）**下两者对 `NaN` 的处理相反：
@@ -410,10 +450,12 @@ impl Vertex {
             [uv_out.x, uv_out.y],
             [uv_out.right(), uv_out.bottom()],
             kind::IMAGE,
+            shape_k,
         )
     }
 
     /// 通用四边形展开。
+    #[allow(clippy::too_many_arguments)]
     pub fn quad(
         rect: Rect,
         px: (f32, f32),
@@ -422,6 +464,7 @@ impl Vertex {
         uv0: [f32; 2],
         uv1: [f32; 2],
         kind: f32,
+        shape: f32,
     ) -> [Vertex; 4] {
         let (w, h) = (px.0.max(1e-6), px.1.max(1e-6));
         // **预乘 alpha**：`color` 进到这里是非预乘的（`Color::rgba` 原样存值），
@@ -482,6 +525,7 @@ impl Vertex {
             corner,
             half_size,
             kind,
+            shape,
         };
         [
             v([x0, y0], [0.0, 0.0], uv0),
@@ -520,6 +564,7 @@ impl Vertex {
             corner: [0.0; 2],
             half_size: [0.0; 2],
             kind: kind::PATH,
+            shape: 1.0,
         }
     }
 }
@@ -1325,6 +1370,7 @@ pub fn expand_range_translated_into(
             Command::Quad {
                 rect,
                 radius,
+                shape,
                 fill,
                 stroke,
                 filter,
@@ -1373,16 +1419,17 @@ pub fn expand_range_translated_into(
                 // 混进去会让描边与填充重叠处被填充盖住。
                 let solid_before = out.solid.len();
                 if fill.a > 0.0 {
-                    out.solid.extend_from_slice(&Vertex::from_rect(
+                    out.solid.extend_from_slice(&Vertex::from_rect_shaped(
                         rect,
                         px,
                         [fill.r, fill.g, fill.b, fill.a],
                         [radius.radius, 0.0],
+                        shape.k,
                     ));
                     out.report.quads += 1;
                 }
                 if stroke_w > 0.0 {
-                    out.solid.extend_from_slice(&Vertex::from_rect(
+                    out.solid.extend_from_slice(&Vertex::from_rect_shaped(
                         rect,
                         px,
                         [
@@ -1392,6 +1439,7 @@ pub fn expand_range_translated_into(
                             stroke_color.a,
                         ],
                         [radius.radius, stroke_w],
+                        shape.k,
                     ));
                     out.report.quads += 1;
                 }
@@ -1410,6 +1458,7 @@ pub fn expand_range_translated_into(
                 tint,
                 texture,
                 radius,
+                shape,
                 filter,
                 blend,
             } => {
@@ -1448,12 +1497,13 @@ pub fn expand_range_translated_into(
                     open_blend = *blend;
                 }
                 let first = pending.len() as u32;
-                pending.extend_from_slice(&Vertex::from_rounded_uv_rect(
+                pending.extend_from_slice(&Vertex::from_rounded_uv_rect_shaped(
                     rect,
                     px,
                     [tint.r, tint.g, tint.b, tint.a],
                     uv,
                     radius.radius,
+                    shape.k,
                 ));
                 push_run(
                     &mut tally,

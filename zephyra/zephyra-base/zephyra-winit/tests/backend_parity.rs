@@ -70,6 +70,7 @@ fn scene_with(blend: BlendMode, fg: Color) -> DisplayList {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: BACKDROP,
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -86,6 +87,7 @@ fn scene_with(blend: BlendMode, fg: Color) -> DisplayList {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: fg,
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),

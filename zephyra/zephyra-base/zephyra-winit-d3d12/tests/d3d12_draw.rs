@@ -181,6 +181,7 @@ fn d3d12_quad_reaches_pixels() {
                 height: side,
             },
             radius: zephyra_core::core::CornerRadius { radius: 24.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 0.0, 0.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -567,6 +568,7 @@ fn translucent_quad_composites_in_premultiplied_space_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.0, 0.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -583,6 +585,7 @@ fn translucent_quad_composites_in_premultiplied_space_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.5),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -648,6 +651,7 @@ fn blend_modes_switch_pso_on_d3d12() {
             Command::Quad {
                 rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
                 radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(0.5, 0.5, 0.5),
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
@@ -664,6 +668,7 @@ fn blend_modes_switch_pso_on_d3d12() {
             Command::Quad {
                 rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
                 radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(1.0, 0.0, 0.0),
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
@@ -699,6 +704,7 @@ fn per_run_dst_refresh_on_d3d12() {
                 Command::Quad {
                     rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
                     radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                    shape: zephyra_core::core::CornerShape::ROUND,
                     fill,
                     stroke: None,
                     filter: zephyra_core::filter::FilterChain::none(),
@@ -765,6 +771,7 @@ fn separable_blends_are_applied_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.5, 0.5, 0.5),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -781,6 +788,7 @@ fn separable_blends_are_applied_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 0.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -825,6 +833,7 @@ fn one(
         Command::Quad {
             rect,
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill,
             stroke: None,
             filter,
@@ -946,6 +955,7 @@ fn composite_lands_only_on_the_bounds_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.0, 0.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -962,6 +972,7 @@ fn composite_lands_only_on_the_bounds_on_d3d12() {
         Command::Quad {
             rect: bar(),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
@@ -1011,6 +1022,7 @@ fn composite_blends_over_the_destination_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.0, 0.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -1027,6 +1039,7 @@ fn composite_blends_over_the_destination_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(8.0, 8.0, 24.0, 24.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.25),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
@@ -1064,6 +1077,7 @@ fn drop_shadow_works_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.0, 0.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -1080,6 +1094,7 @@ fn drop_shadow_works_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(28.0, 28.0, 8.0, 8.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(
@@ -1233,6 +1248,7 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(8.0, 8.0, (SIZE - 16) as f32, (SIZE - 16) as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
@@ -1253,6 +1269,7 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 0.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -1301,6 +1318,7 @@ fn stripes_glass(ior: f32, thickness: f32, bezel: f32) -> DisplayList {
             Command::Quad {
                 rect: zephyra_core::core::Rect::new(x, 0.0, w, SIZE as f32),
                 radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: c,
                 stroke: None,
                 filter: zephyra_core::filter::FilterChain::none(),
@@ -1323,6 +1341,7 @@ fn stripes_glass(ior: f32, thickness: f32, bezel: f32) -> DisplayList {
                 SIZE as f32 * 0.5,
             ),
             radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(
@@ -1390,6 +1409,7 @@ fn solid_glass(ior: f32) -> DisplayList {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(0.25, 0.25, 0.25, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -1411,6 +1431,7 @@ fn solid_glass(ior: f32) -> DisplayList {
                 SIZE as f32 * 0.5,
             ),
             radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(
@@ -1441,6 +1462,7 @@ fn solid_only() -> DisplayList {
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(0.25, 0.25, 0.25, 1.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),
@@ -1698,6 +1720,7 @@ fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
             Command::Quad {
                 rect: zephyra_core::core::Rect::new(i as f32 * PERIOD, 0.0, PERIOD, SIZE as f32),
                 radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: if i % 2 == 0 {
                     Color::rgba(1.0, 0.0, 0.0, 1.0)
                 } else {
@@ -1724,6 +1747,7 @@ fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
                 SIZE as f32 * 0.5,
             ),
             radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::single(
@@ -1886,6 +1910,7 @@ fn custom_only_list(bounds: Rect) -> DisplayList {
         Command::Custom {
             bounds,
             source: RenderSource::new("test:fill-red", 7u32),
+            resource_key: None,
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::SrcOver,
         },

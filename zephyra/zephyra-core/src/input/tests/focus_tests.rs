@@ -20,21 +20,19 @@ use super::{collect_focusable, FocusState};
 ///   d  (FOCUSABLE)
 /// ```
 fn tree() -> Node {
-    let el = Element::new(NodeTag::Container)
-        .with_key("root")
-        .with_children([
-            Element::new(NodeTag::Control)
-                .with_key("a")
-                .with(&FOCUSABLE, PropertyValue::bool(true)),
-            Element::new(NodeTag::Container)
-                .with_key("b")
-                .with_children([Element::new(NodeTag::Control)
-                    .with_key("c")
-                    .with(&FOCUSABLE, PropertyValue::bool(true))]),
-            Element::new(NodeTag::Control)
-                .with_key("d")
-                .with(&FOCUSABLE, PropertyValue::bool(true)),
-        ]);
+    let el = Element::new(NodeTag::Box).with_key("root").with_children([
+        Element::new(NodeTag::Control)
+            .with_key("a")
+            .with(&FOCUSABLE, PropertyValue::bool(true)),
+        Element::new(NodeTag::Box)
+            .with_key("b")
+            .with_children([Element::new(NodeTag::Control)
+                .with_key("c")
+                .with(&FOCUSABLE, PropertyValue::bool(true))]),
+        Element::new(NodeTag::Control)
+            .with_key("d")
+            .with(&FOCUSABLE, PropertyValue::bool(true)),
+    ]);
     Node::from_element(&el)
 }
 
@@ -239,12 +237,10 @@ fn manual_focus_clears_old_tab_focus() {
 
 #[test]
 fn tab_without_focusable_does_nothing() {
-    let el = Element::new(NodeTag::Container)
-        .with_key("root")
-        .with_children([
-            Element::new(NodeTag::Control).with_key("x"),
-            Element::new(NodeTag::Control).with_key("y"),
-        ]);
+    let el = Element::new(NodeTag::Box).with_key("root").with_children([
+        Element::new(NodeTag::Control).with_key("x"),
+        Element::new(NodeTag::Control).with_key("y"),
+    ]);
     let mut root = Node::from_element(&el);
     let mut fs = FocusState::new();
     assert!(
@@ -325,7 +321,7 @@ fn revision_increments_on_focus_change() {
 
 #[test]
 fn revision_stable_when_tab_finds_nothing() {
-    let el = Element::new(NodeTag::Container).with_key("root");
+    let el = Element::new(NodeTag::Box).with_key("root");
     let mut root = Node::from_element(&el);
     let mut fs = FocusState::new();
     let r0 = fs.revision();

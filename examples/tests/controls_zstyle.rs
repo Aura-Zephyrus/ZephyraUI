@@ -129,7 +129,7 @@ fn other_element_types_are_left_alone() {
     let parsed = zstylec::parse("controls.zstyle", &css);
     assert!(parsed.is_ok());
 
-    let mut node = Node::from_element(&Element::new(NodeTag::Container));
+    let mut node = Node::from_element(&Element::new(NodeTag::Box));
     let mut styler = SheetStyler(std::sync::Arc::new(parsed.sheet));
     zephyra_core::styler::Styler::apply(&mut styler, &mut node);
 

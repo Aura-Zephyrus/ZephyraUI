@@ -98,7 +98,7 @@ impl View for TextHeavy {
     fn on_input(&mut self, _state: &InputState) {}
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_key("root")
             // ⚠ **不要**给根容器上背景色。
             //

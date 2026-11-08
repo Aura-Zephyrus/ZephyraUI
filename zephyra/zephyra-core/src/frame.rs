@@ -60,7 +60,7 @@
 //! `view()` 必须跑才能知道有没有变。
 
 use crate::context::Context;
-use crate::core::{Point, Rect};
+use crate::core::Rect;
 use crate::diff::{diff, DiffStats};
 use crate::element::Element;
 use crate::node::{clear_dirty, Dirty, Node};
@@ -275,7 +275,13 @@ impl FrameCache {
                 let layout_dirty = tree_needs_layout(node);
                 (
                     layout_dirty || stats.needs_layout(),
-                    scan(node, ctx, Point::ZERO, &mut dirty_rects, &mut force_full) || layout_dirty,
+                    scan(
+                        node,
+                        ctx,
+                        crate::visual::VisualState::ROOT,
+                        &mut dirty_rects,
+                        &mut force_full,
+                    ) || layout_dirty,
                 )
             }
             // 树建不起来（`element` 与 `Node::from_element` 抛不出东西，纯防御）。
@@ -344,27 +350,6 @@ impl FrameCache {
     }
 }
 
-/// 扫一遍树，收集脏节点的矩形。
-///
-/// 返回「是否需要重绘」。**被折叠的子树不递归** —— `paint::render_rec` 遇到
-/// 折叠节点会提前返回，它的子树不产出任何命令，所以子树里的脏标记与绘制无关。
-///
-/// ⚠ 折叠节点**自己**若被标脏，只贡献 `true`、不贡献矩形。理由是它一旦不再产出
-/// 命令，宿主的 scissor 就不该圈住它那块区域 —— 圈了会被 clear 掉却没有命令去填，
-/// 表现为一个颜色正确的空洞。
-///
-/// # 这条分支是防御性的，没有测试覆盖
-///
-/// 走不到的原因：`COLLAPSED` 在 `property::name_affects_layout` 的名单里，所以
-/// 「一个节点从展开变成折叠」必然经由 `diff` 标成 `Dirty::Layout` ⇒
-/// `need_layout` 为真 ⇒ [`Self::frame`] 直接短路，**根本不会调用 `scan`**。
-///
-/// 要抵达它只能靠 [`Self::node_mut`] + 手动 `mark_dirty(Paint)` 且不改属性，
-/// 而那样构造出来的场景（一个自始至终折叠的节点被标脏）重绘与否在
-/// `DisplayList` 上**看不出差别** —— 它从来没有过命令。
-///
-/// 实测：把这里的 `return dirty` 改成 `return false`，15 条测试仍然全绿。
-/// 与其放一条恒真的测试，不如把这件事写清楚 —— 后来者会以为这里被验过了。
 /// 树上**任一**节点是否标了 `Dirty::Layout` 及以上。
 ///
 /// # 为什么需要它 —— 「为什么只有 resize 才更新布局」的答案
@@ -386,7 +371,7 @@ fn tree_needs_layout(node: &Node) -> bool {
 fn scan(
     node: &Node,
     ctx: Context<'_>,
-    translate: Point,
+    parent: crate::visual::VisualState,
     out: &mut Vec<Rect>,
     force_full: &mut bool,
 ) -> bool {
@@ -394,18 +379,14 @@ fn scan(
     if node.is_collapsed(ctx) {
         return dirty;
     }
-    // 位移**沿祖先链累加**（与 `paint::PaintState::descend` 同一语义），
-    // 缩放只作用于本节点。脏节点记的是**画出来的**矩形，不是布局盒 —— 见
-    // [`visual_bounds`] 的理由。
-    let own_translate = Point::new(
-        translate.x + node.translate_x(ctx),
-        translate.y + node.translate_y(ctx),
-    );
+    // D11: root clears ancestor accumulated translate; own translate still applies.
+    // D2/D8/D17: damage uses visual bounds + filter/decoration outsets and unions text.
+    let (state, own_translate) = crate::visual::enter(node, ctx, parent);
     if dirty {
-        let bounds = visual_bounds(node, ctx, own_translate);
+        let bounds = crate::visual::damage_bounds(node, ctx, own_translate);
         out.push(bounds);
         // 绘制变换非恒等的脏节点会「移走」：新位置清得掉，旧位置的像素却没人
-        // 负责清（没有旧矩形快照）⇒ 只能整帧重来，否则留下把手/投影的残影。
+        // 负责清（没有旧矩形快照）=> 只能整帧重来，否则留下把手/投影的残影。
         if node.translate_x(ctx) != 0.0
             || node.translate_y(ctx) != 0.0
             || node.scale_x(ctx) != 1.0
@@ -414,63 +395,12 @@ fn scan(
             *force_full = true;
         }
     }
-    // ⚠ 不能在这里提前返回：早退会漏掉后面兄弟子树里的脏节点，于是脏矩形偏小 ——
-    // 症状是那一块留着上一帧的旧颜色（残影），而所有计数器都正常。
-    //
-    // （这条是有测试的：把并集换成"只取第一个矩形"，`damage_is_union_of_multiple_dirty_nodes` 立刻失败。）
+    // 不能在这里提前返回：早退会漏掉后面兄弟子树里的脏节点，于是脏矩形偏小。
     let mut any = dirty;
     for child in node.children() {
-        any |= scan(child, ctx, own_translate, out, force_full);
+        any |= scan(child, ctx, state, out, force_full);
     }
     any
-}
-
-/// 一个节点**实际画到画面上**的矩形（脏区的输入）。
-///
-/// # 为什么不能直接用 `node.rect()`
-///
-/// `node.rect()` 是**布局盒**。绘制时还会叠两样「只影响画面、不影响布局」的变换：
-///
-/// - `translate-x/y`（沿祖先链累加）—— 开关把手靠它跑完 20px 行程；
-/// - `scale-x/y`（绕本节点中心）—— 按住时把手放大到 1.5。
-///
-/// 再加上装饰/滤镜的外扩（投影半径、模糊半径、高光宽度、折射 outset）。
-/// 只用布局盒当脏区，scissor 会裁掉**移出布局盒 / 放大到盒外**的那部分像素：
-/// 新位置画不出来、旧位置又没被清 —— 长按（把手续涨到 1.5）时表现为随机残影，
-/// 而 `shot`（强制 `Damage::Full`）永远看不到它。这正是「截图和真机不一致」的根因。
-///
-/// 取**放大**而不是精确值：多刷几个像素只是浪费，少刷一个像素就是残影。
-fn visual_bounds(node: &Node, ctx: Context<'_>, translate: Point) -> Rect {
-    let r = node.rect();
-    let sx = node.scale_x(ctx);
-    let sy = node.scale_y(ctx);
-    let (sx, sy) = (
-        if sx.is_finite() { sx } else { 1.0 },
-        if sy.is_finite() { sy } else { 1.0 },
-    );
-    // 与 `paint::NodeDraw::point` 同一条公式：绕**未平移**布局盒的中心缩放。
-    // 用 abs 是因为缩放为负时矩形会翻到中心另一侧，w/h 得取正。
-    let cx = r.x + r.width * 0.5;
-    let cy = r.y + r.height * 0.5;
-    let x0 = cx + (r.x - cx) * sx;
-    let y0 = cy + (r.y - cy) * sy;
-    let mut b = Rect::new(
-        x0 + translate.x,
-        y0 + translate.y,
-        (r.width * sx).abs(),
-        (r.height * sy).abs(),
-    );
-    // 滤镜（模糊 / 折射）与装饰（投影 / 高光 / 内阴影）都把像素画到矩形外。
-    // 与 `zephyra_fx::offscreen::plan_offscreens` 同一口径（滤镜 ∪ 装饰投影）。
-    let filter = node.filter(ctx);
-    if !filter.is_identity() {
-        b = filter.bounds_for(b);
-    }
-    let outsets = node.decorations(ctx).outsets();
-    if !outsets.is_zero() {
-        b = b.outset_by(outsets);
-    }
-    b
 }
 
 /// 矩形并集。

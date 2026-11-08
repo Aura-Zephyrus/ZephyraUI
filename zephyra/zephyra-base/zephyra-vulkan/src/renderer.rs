@@ -24,7 +24,7 @@
 //! 1. 带滤镜的命令要折返到离屏 —— Vulkan 渲染通道也不能中途换附件；
 //! 2. 合成必须画进 MSAA 附件 —— 否则下一次 resolve 会覆盖。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
 
@@ -33,13 +33,16 @@ use zephyra_core::core::Rect;
 use zephyra_core::filter::BlendMode;
 use zephyra_core::frame::Damage;
 use zephyra_core::paint::{
-    command_content_rect, command_corner_radius, Command, DisplayList, RenderSource,
+    command_content_rect, command_corner_radius, command_corner_shape, Command, DisplayList,
+    RenderSource,
 };
 use zephyra_fx::quad::{self, RenderReport, Scratch, Vertex};
+use zephyra_render_ext::registration::HookContext;
+use zephyra_render_ext::types::Rect as ExtRect;
 
 use crate::surface::{Device, SurfaceError};
 
-/// 顶点属性表（7 个属性，与 `zephyra_fx::quad::Vertex` 一一对应）。
+/// 顶点属性表（8 个属性，与 `zephyra_fx::quad::Vertex` 一一对应）。
 ///
 /// 偏移由 `offset_of!` 现算，不手抄。
 const VERTEX_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -48,7 +51,7 @@ const VERTEX_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBinding
     input_rate: vk::VertexInputRate::VERTEX,
 };
 
-const VERTEX_ATTRIBUTES: [vk::VertexInputAttributeDescription; 7] = [
+const VERTEX_ATTRIBUTES: [vk::VertexInputAttributeDescription; 8] = [
     // position (vec2f) @ location 0
     vk::VertexInputAttributeDescription {
         location: 0,
@@ -97,6 +100,13 @@ const VERTEX_ATTRIBUTES: [vk::VertexInputAttributeDescription; 7] = [
         binding: 0,
         format: vk::Format::R32_SFLOAT,
         offset: offset_of!(Vertex, kind) as u32,
+    },
+    // shape (f32, corner-shape / superellipse K) @ location 7
+    vk::VertexInputAttributeDescription {
+        location: 7,
+        binding: 0,
+        format: vk::Format::R32_SFLOAT,
+        offset: offset_of!(Vertex, shape) as u32,
     },
 ];
 
@@ -314,6 +324,8 @@ enum SegmentPlan {
         element: Rect,
         /// 元素的圆角半径（折射 SDF 用）。
         corner_radius: f32,
+        /// 角形状 `superellipse(K)`（CSS corner-shape）。
+        corner_shape_k: f32,
     },
 }
 
@@ -325,14 +337,14 @@ pub struct TextureTable {
 }
 
 #[derive(Debug)]
-struct ImageTexture {
+pub(crate) struct ImageTexture {
     /// 只为调试输出（`Renderer::Debug` 打纹理名）。
     #[allow(dead_code, reason = "只为 Debug")]
     name: String,
     #[allow(dead_code)]
-    image: vk::Image,
-    view: vk::ImageView,
-    memory: vk::DeviceMemory,
+    pub(crate) image: vk::Image,
+    pub(crate) view: vk::ImageView,
+    pub(crate) memory: vk::DeviceMemory,
 }
 
 impl TextureTable {
@@ -354,11 +366,13 @@ impl TextureTable {
         self.slots.get(slot as usize)?.as_ref().map(|t| t.view)
     }
     pub fn remove(&mut self, name: &str) -> Option<u32> {
+        self.take(name).map(|_| 0)
+    }
+
+    /// 取出纹理并从表中移除（调用方负责销毁 Vulkan 句柄）。
+    pub(crate) fn take(&mut self, name: &str) -> Option<ImageTexture> {
         let slot = self.index.remove(name)?;
-        if let Some(t) = self.slots.get_mut(slot as usize) {
-            *t = None;
-        }
-        Some(slot)
+        self.slots.get_mut(slot as usize)?.take()
     }
 }
 
@@ -468,6 +482,12 @@ pub struct Renderer {
     segments: Vec<SegmentPlan>,
     /// 外部渲染源钩子（按 kind 查找；数量由宿主控制）。
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
+    /// ext 共享状态（与 ExtContextHandle 同步）。
+    ext_pool: std::rc::Rc<std::cell::RefCell<crate::ext::ExtPool>>,
+    ext_hooks: std::rc::Rc<std::cell::RefCell<crate::ext::HookTable>>,
+    ext_frame: std::rc::Rc<std::cell::Cell<u64>>,
+    /// 已通过 CPU pending 路径上传到 `textures` 的 ext 键（用于卸载同步）。
+    ext_texture_keys: std::collections::HashSet<String>,
     /// 单段展开用的暂存（跨段复用 —— 见 `prepare` 里那条「每次调用都清空」的警告）。
     segment_scratch: Scratch,
     /// 当前帧的绘制尺寸（物理像素）—— 视口/裁剪由它算。
@@ -490,12 +510,18 @@ impl std::fmt::Debug for Renderer {
 }
 
 /// Vulkan 后端的外部渲染源钩子。
-///
-/// 只在主 render pass 内调用。钩子负责绑定自己的管线与所需状态；下一段会重新绑定
-/// 自己的绘制状态。v1 不允许钩子切换 render pass 或 attachment。
 pub trait RenderHook: Send + Sync {
     /// 把 `source` 的内容绘制到 `bounds`（屏幕像素坐标）覆盖的区域。
     fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+    fn draw_with_key(
+        &mut self,
+        ctx: HookCtx<'_>,
+        bounds: Rect,
+        source: &RenderSource,
+        _resource_key: Option<&str>,
+    ) {
+        self.draw(ctx, bounds, source);
+    }
 }
 
 /// 传给 [`RenderHook`] 的 Vulkan 录制上下文。
@@ -506,17 +532,52 @@ pub struct HookCtx<'a> {
     pub device: &'a ash::Device,
     /// 当前 render target 的尺寸（宽，高）。
     pub size: (f32, f32),
+    pub frame_index: u64,
+    pub ext_pool: Option<&'a crate::ext::ExtPool>,
 }
 
-fn custom_command(list: &DisplayList, index: usize) -> (Rect, &RenderSource) {
+impl HookContext for HookCtx<'_> {
+    fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+    fn size(&self) -> (f32, f32) {
+        self.size
+    }
+    fn damage(&self) -> Option<ExtRect> {
+        None
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        static UNIT: () = ();
+        &UNIT
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        fn placeholder() -> &'static mut () {
+            static mut P: () = ();
+            unsafe { &mut *std::ptr::addr_of_mut!(P) }
+        }
+        placeholder()
+    }
+}
+
+fn core_rect_to_ext(r: Rect) -> ExtRect {
+    ExtRect::new(r.x, r.y, r.width, r.height)
+}
+
+fn custom_command(list: &DisplayList, index: usize) -> (Rect, &RenderSource, Option<&str>) {
     let item = list
         .iter()
         .nth(index)
         .expect("Custom 段下标来自当前 DisplayList");
-    let Command::Custom { bounds, source, .. } = &item.command else {
+    let Command::Custom {
+        bounds,
+        source,
+        resource_key,
+        ..
+    } = &item.command
+    else {
         unreachable!("Custom 段只由 Command::Custom 产出");
     };
-    (*bounds, source)
+    (*bounds, source, resource_key.as_deref())
 }
 
 impl Renderer {
@@ -823,6 +884,10 @@ impl Renderer {
             scratch: Scratch::new(),
             segments: Vec::new(),
             hooks: Vec::new(),
+            ext_pool: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::ExtPool::default())),
+            ext_hooks: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::HookTable::default())),
+            ext_frame: std::rc::Rc::new(std::cell::Cell::new(0)),
+            ext_texture_keys: std::collections::HashSet::new(),
             segment_scratch: Scratch::new(),
             size: (1, 1),
             pad: Vec::new(),
@@ -851,6 +916,14 @@ impl Renderer {
     /// 当前 MSAA 采样数。
     pub fn samples(&self) -> u32 {
         self.samples
+    }
+
+    pub fn ext_handle(&self) -> zephyra_ext::ExtContextHandle {
+        crate::ext::new_ext_handle(
+            self.ext_pool.clone(),
+            self.ext_hooks.clone(),
+            self.ext_frame.clone(),
+        )
     }
 
     /// 图像纹理表（只读）。
@@ -1037,6 +1110,9 @@ impl Renderer {
             self.atlas_revision_uploaded = ctx.atlas_revision;
         }
 
+        // ext CPU 纹理：消费 pending_cpu，上传到 TextureTable，使 resource_key 走通用采样路径。
+        self.sync_ext_cpu_textures(dev)?;
+
         // ── 段计划 ──
         //
         // 带滤镜的命令要**折返**到离屏去（否则它会盖在所有东西上面），所以一帧
@@ -1072,21 +1148,23 @@ impl Renderer {
                     }
                 }
                 zephyra_fx::offscreen::Segment::Custom { index } => {
-                    let item = ctx
-                        .display_list
-                        .iter()
-                        .nth(index)
-                        .expect("Custom 段下标来自当前 DisplayList");
-                    let Command::Custom { source, .. } = &item.command else {
-                        unreachable!("Custom 段只由 Command::Custom 产出");
+                    let (_bounds, source, _resource_key) = custom_command(ctx.display_list, index);
+                    let hook_kind = source.kind.as_ref();
+                    let has_ext = {
+                        let h = self.ext_hooks.borrow();
+                        h.global.contains_key(hook_kind)
+                            || h.window.keys().any(|(_, k)| k == hook_kind)
                     };
-                    if self.hooks.iter().any(|(kind, _)| *kind == source.kind) {
+                    let has_internal = self
+                        .hooks
+                        .iter()
+                        .any(|(kind, _)| kind.as_ref() == hook_kind);
+                    if has_ext || has_internal {
                         report.custom_passes += 1;
-                        self.segments.push(SegmentPlan::Custom { index });
                     } else {
                         report.unhandled_custom += 1;
-                        self.segments.push(SegmentPlan::Custom { index });
                     }
+                    self.segments.push(SegmentPlan::Custom { index });
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,
@@ -1118,6 +1196,7 @@ impl Renderer {
                     // 先算出来：`pass` 下一刻就移进段计划里。
                     let element = command_content_rect(&item.command).unwrap_or(pass.bounds);
                     let corner_radius = command_corner_radius(&item.command);
+                    let corner_shape_k = command_corner_shape(&item.command).k;
                     self.segments.push(SegmentPlan::Offscreen {
                         pass,
                         content,
@@ -1131,6 +1210,7 @@ impl Renderer {
                         inner_shadow: None,
                         element,
                         corner_radius,
+                        corner_shape_k,
                     });
                     if redraw {
                         // 合成之后再照常画一遍原命令（投影类效果）：不折返、不平移，
@@ -1172,6 +1252,61 @@ impl Renderer {
     /// 尺寸则用该段自己的 `pass.rt_size`（= bounds 向上取整）—— RT 只那么大，
     /// 而 `local / half_size` 必须与 RT 的真实像素尺寸一致，否则模糊半径会按
     /// 屏幕尺寸缩放，σ 直接缩水一个数量级。
+    /// 消费 ext pool 中的 CPU 挂起纹理并同步卸载（132：使 `resource_key` 走通用采样路径）。
+    fn sync_ext_cpu_textures(&mut self, dev: &Device) -> Result<(), SurfaceError> {
+        let (pending, live_keys): (
+            Vec<(String, zephyra_ext::CpuTextureDescOwned)>,
+            HashSet<String>,
+        ) = {
+            let mut pool = self.ext_pool.borrow_mut();
+            let live = pool.textures.keys().cloned().collect();
+            let mut out = Vec::new();
+            for (k, res) in pool.textures.iter_mut() {
+                if let Some(cpu) = res.pending_cpu.take() {
+                    out.push((k.clone(), cpu));
+                }
+            }
+            (out, live)
+        };
+        let stale: Vec<String> = self
+            .ext_texture_keys
+            .iter()
+            .filter(|k| !live_keys.contains(*k))
+            .cloned()
+            .collect();
+        for k in stale {
+            if let Some(old) = self.textures.take(&k) {
+                unsafe {
+                    self.device.destroy_image_view(old.view, None);
+                    self.device.destroy_image(old.image, None);
+                    self.device.free_memory(old.memory, None);
+                }
+            }
+            self.ext_texture_keys.remove(&k);
+        }
+        for (key, cpu) in pending {
+            let pixels = if cpu.row_pitch == cpu.width.saturating_mul(4) {
+                cpu.pixels
+            } else {
+                // 紧密打包 RGBA 行。
+                let tight = (cpu.width as usize) * 4;
+                let mut out = vec![0u8; tight * (cpu.height as usize)];
+                for row in 0..cpu.height as usize {
+                    let src = row * (cpu.row_pitch as usize);
+                    let dst = row * tight;
+                    let copy = tight.min(cpu.pixels.len().saturating_sub(src));
+                    if copy > 0 {
+                        out[dst..dst + copy].copy_from_slice(&cpu.pixels[src..src + copy]);
+                    }
+                }
+                out
+            };
+            self.upload_texture(dev, &key, &pixels, (cpu.width, cpu.height))?;
+            self.ext_texture_keys.insert(key);
+        }
+        Ok(())
+    }
+
     fn build_offscreen_geometry(&mut self, size: (u32, u32), scratch: &mut Scratch) {
         let screen_f = (size.0 as f32, size.1 as f32);
         for i in 0..self.segments.len() {
@@ -1188,6 +1323,7 @@ impl Renderer {
                 backdrop_blur,
                 element,
                 corner_radius,
+                corner_shape_k,
                 hollow_shadow,
                 highlight,
                 inner_shadow,
@@ -1196,6 +1332,7 @@ impl Renderer {
                     pass,
                     element,
                     corner_radius,
+                    corner_shape_k,
                     ..
                 } => (
                     pass.blurs.clone(),
@@ -1207,6 +1344,7 @@ impl Renderer {
                     pass.backdrop_blur,
                     *element,
                     *corner_radius,
+                    *corner_shape_k,
                     pass.hollow_shadow.then_some(pass.element_rect),
                     pass.highlight,
                     pass.inner_shadow,
@@ -1244,6 +1382,7 @@ impl Renderer {
                     element,
                     screen_f,
                     corner_radius,
+                    corner_shape_k,
                     r,
                 );
                 scratch.vertices.extend_from_slice(&quad);
@@ -1262,8 +1401,13 @@ impl Renderer {
             if let Some(l) = lens {
                 let vtx_off = scratch.vertices.len() as u32;
                 let idx_off = scratch.indices.len() as u32;
-                let quad =
-                    zephyra_fx::offscreen::lens_composite_quad(element, screen_f, corner_radius, l);
+                let quad = zephyra_fx::offscreen::lens_composite_quad(
+                    element,
+                    screen_f,
+                    corner_radius,
+                    corner_shape_k,
+                    l,
+                );
                 scratch.vertices.extend_from_slice(&quad);
                 scratch.indices.extend_from_slice(&[0u16, 1, 2, 0, 2, 3]);
                 let SegmentPlan::Offscreen { lens: slot, .. } = &mut self.segments[i] else {
@@ -1278,6 +1422,7 @@ impl Renderer {
                     element,
                     screen_f,
                     corner_radius,
+                    corner_shape_k,
                     bb.sigma,
                 );
                 scratch.vertices.extend_from_slice(&quad);
@@ -1302,6 +1447,7 @@ impl Renderer {
                     elem,
                     screen_f,
                     corner_radius,
+                    corner_shape_k,
                     tint,
                 );
                 scratch.vertices.extend_from_slice(&quad);
@@ -1374,6 +1520,7 @@ impl Renderer {
         display_list: &DisplayList,
         default_blend: BlendMode,
     ) -> (u32, u32, u32, u32) {
+        self.ext_frame.set(self.ext_frame.get().wrapping_add(1));
         let mut unimplemented = 0u32;
         // 描述符池每帧重置一次（**不是每段一次**）。
         //
@@ -1412,23 +1559,88 @@ impl Renderer {
                         );
                     }
                     SegmentPlan::Custom { index } => {
-                        let (bounds, source) = custom_command(display_list, *index);
-                        if let Some(hook) = self
-                            .hooks
-                            .iter_mut()
-                            .find(|(kind, _)| *kind == source.kind)
-                            .map(|(_, hook)| hook)
+                        let (bounds, source, resource_key) = custom_command(display_list, *index);
+                        let hook_kind = source.kind.as_ref();
+                        let ext_pool = self.ext_pool.borrow();
+                        let imported_payload = resource_key
+                            .and_then(|k| ext_pool.get(k))
+                            .map(|r| r as &dyn std::any::Any);
+                        let payload = imported_payload
+                            .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
+                        let mut ctx = HookCtx {
+                            cmd,
+                            device: &self.device,
+                            size: (self.size.0 as f32, self.size.1 as f32),
+                            frame_index: self.ext_frame.get(),
+                            ext_pool: Some(&*ext_pool),
+                        };
+                        let mut handled = false;
                         {
-                            hook.draw(
-                                HookCtx {
-                                    cmd,
-                                    device: &self.device,
-                                    size: (self.size.0 as f32, self.size.1 as f32),
-                                },
-                                bounds,
-                                source,
-                            );
+                            let mut ext_hooks = self.ext_hooks.borrow_mut();
+                            if let Some(h) = ext_hooks.global.get_mut(hook_kind) {
+                                let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                    resource_key,
+                                    Some(payload),
+                                );
+                                let r =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        h(&mut ctx, core_rect_to_ext(bounds), &ext_src);
+                                    }));
+                                if r.is_ok() {
+                                    handled = true;
+                                } else {
+                                    zephyra_ext::debug::log_hook(&format!(
+                                        "ext hook panicked: kind={hook_kind} key={:?}",
+                                        resource_key
+                                    ));
+                                }
+                            } else if let Some((w, k)) = ext_hooks
+                                .window
+                                .keys()
+                                .find(|(_, k)| k.as_str() == hook_kind)
+                                .cloned()
+                            {
+                                if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                                    let ext_src =
+                                        zephyra_render_ext::registration::RenderSource::new(
+                                            resource_key,
+                                            Some(payload),
+                                        );
+                                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                        || {
+                                            h(&mut ctx, core_rect_to_ext(bounds), &ext_src);
+                                        },
+                                    ));
+                                    if r.is_ok() {
+                                        handled = true;
+                                    } else {
+                                        zephyra_ext::debug::log_hook(&format!(
+                                            "ext hook panicked: kind={hook_kind} key={:?}",
+                                            resource_key
+                                        ));
+                                    }
+                                }
+                            }
                         }
+                        if !handled {
+                            if let Some((_, hook)) = self
+                                .hooks
+                                .iter_mut()
+                                .find(|(kind, _)| kind.as_ref() == hook_kind)
+                            {
+                                let r =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        hook.draw_with_key(ctx, bounds, source, resource_key);
+                                    }));
+                                if r.is_err() {
+                                    zephyra_ext::debug::log_hook(&format!(
+                                        "internal hook panicked: kind={hook_kind} key={:?}",
+                                        resource_key
+                                    ));
+                                }
+                            }
+                        }
+                        drop(ext_pool);
                     }
                     SegmentPlan::Offscreen { .. } => {}
                 }
@@ -1491,20 +1703,85 @@ impl Renderer {
                     opened = true;
                 }
                 SegmentPlan::Custom { index } => {
-                    let (bounds, source) = custom_command(display_list, *index);
-                    let hook_index = self.hooks.iter().position(|(kind, _)| *kind == source.kind);
+                    let (bounds, source, resource_key) = custom_command(display_list, *index);
+                    let hook_kind = source.kind.as_ref();
                     self.begin_main_pass(cmd, framebuffer, !opened);
-                    if let Some(hook_index) = hook_index {
-                        self.hooks[hook_index].1.draw(
-                            HookCtx {
-                                cmd,
-                                device: &self.device,
-                                size: (self.size.0 as f32, self.size.1 as f32),
-                            },
-                            bounds,
-                            source,
-                        );
+                    let ext_pool = self.ext_pool.borrow();
+                    let imported_payload = resource_key
+                        .and_then(|k| ext_pool.get(k))
+                        .map(|r| r as &dyn std::any::Any);
+                    let payload = imported_payload
+                        .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
+                    let mut ctx = HookCtx {
+                        cmd,
+                        device: &self.device,
+                        size: (self.size.0 as f32, self.size.1 as f32),
+                        frame_index: self.ext_frame.get(),
+                        ext_pool: Some(&*ext_pool),
+                    };
+                    let mut handled = false;
+                    {
+                        let mut ext_hooks = self.ext_hooks.borrow_mut();
+                        if let Some(h) = ext_hooks.global.get_mut(hook_kind) {
+                            let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                resource_key,
+                                Some(payload),
+                            );
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                h(&mut ctx, core_rect_to_ext(bounds), &ext_src);
+                            }));
+                            if r.is_ok() {
+                                handled = true;
+                            } else {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "ext hook panicked: kind={hook_kind} key={:?}",
+                                    resource_key
+                                ));
+                            }
+                        } else if let Some((w, k)) = ext_hooks
+                            .window
+                            .keys()
+                            .find(|(_, k)| k.as_str() == hook_kind)
+                            .cloned()
+                        {
+                            if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                                let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                    resource_key,
+                                    Some(payload),
+                                );
+                                let r =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        h(&mut ctx, core_rect_to_ext(bounds), &ext_src);
+                                    }));
+                                if r.is_ok() {
+                                    handled = true;
+                                } else {
+                                    zephyra_ext::debug::log_hook(&format!(
+                                        "ext hook panicked: kind={hook_kind} key={:?}",
+                                        resource_key
+                                    ));
+                                }
+                            }
+                        }
                     }
+                    if !handled {
+                        if let Some((_, hook)) = self
+                            .hooks
+                            .iter_mut()
+                            .find(|(kind, _)| kind.as_ref() == hook_kind)
+                        {
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                hook.draw_with_key(ctx, bounds, source, resource_key);
+                            }));
+                            if r.is_err() {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "internal hook panicked: kind={hook_kind} key={:?}",
+                                    resource_key
+                                ));
+                            }
+                        }
+                    }
+                    drop(ext_pool);
                     unsafe {
                         self.device.cmd_end_render_pass(cmd);
                     }

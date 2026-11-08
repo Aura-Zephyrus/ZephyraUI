@@ -347,6 +347,78 @@ fn every_class_name_the_source_emits_exists_in_the_stylesheet() {
     );
 }
 
+/// 下拉菜单的形变档位分类名必须**每一档**都有规则。
+///
+/// `dd-morph-N` 驱动「原方块扩大成菜单」的几何与透明度，只在开合过程中发，
+/// 默认态不可见。直接拿 `motion::MORPH_CLASSES` 与表对，不依赖时间点。
+#[test]
+fn every_dropdown_morph_step_has_a_rule() {
+    let sheet = merged_sheet();
+    let known: Vec<&str> = sheet
+        .rules()
+        .iter()
+        .flat_map(|r| r.selector.names.iter().copied())
+        .collect();
+    let classes = zephyra_gallery::app::motion::MORPH_CLASSES;
+    assert!(
+        classes.len() >= 8,
+        "档位太少（{}）—— 短动画会看出阶梯",
+        classes.len()
+    );
+    let mut missing: Vec<&str> = Vec::new();
+    for cls in classes {
+        if !known.contains(&cls) {
+            missing.push(cls);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "这些形变档位在样式表里没有规则：{missing:?}"
+    );
+}
+
+/// 静与动两条路径都要落到**节点**上，而不只是发对分类名。
+///
+/// 分类名对、样式规则也在，仍可能被更高优先级或更早的 `opacity: 1` 盖住。
+/// 这一条把「点击 → 推进一帧 → 建树 → 应用样式表」整条链走完，直接读节点
+/// 的最终状态：形变第一帧必须在中间档位（分类名与几何/透明度已落地）。
+#[test]
+fn dropdown_morph_lands_on_the_control_node() {
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.click(zephyra_gallery::app::LIQUID_DD_SOLID_KEY);
+    g.on_input(&zephyra_fx::InputState {
+        dt_ms: 16.0,
+        ..zephyra_fx::InputState::default()
+    });
+    let progress = g.liquid_dd_solid_motion.value();
+    assert!(
+        progress > 0.0 && progress < 1.0,
+        "第一帧进度应在中途，实际 {progress}"
+    );
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut root = Node::from_element(&g.view(&ctx));
+    merged_sheet().apply_all(&mut root);
+
+    let mut found: Option<(String, f32)> = None;
+    walk(&root, &mut |n: &Node| {
+        if n.key().and_then(|k| k.as_name()) == Some(zephyra_gallery::app::LIQUID_DD_SOLID_KEY) {
+            found = Some((n.style_names().join(" "), n.opacity(ctx)));
+        }
+    });
+    let (classes, opacity) = found.expect("树上找不到下拉控件 —— 路由或 key 变了");
+    assert!(
+        classes.split(' ').any(|c| c.starts_with("dd-morph-")),
+        "控件没拿到形变档位，实际分类名：{classes}"
+    );
+    assert!(
+        opacity > 0.0 && opacity <= 1.0,
+        "形变档位没落到节点上（opacity={opacity}，分类名 {classes}）"
+    );
+}
+
 // ------------------------------------------------------- 门禁 3：元素可被选中
 
 /// 反方向：每个元素要么有分类名，要么其类型有裸规则。
@@ -470,22 +542,14 @@ fn shell_metrics_match_stylesheet() {
     let css = shell_css();
     let want = [
         (
-            "Container.titlebar",
+            "box.titlebar",
             "height",
             zephyra_gallery::app::shell::TITLEBAR_H,
         ),
+        ("box.nav-pane", "width", zephyra_gallery::app::shell::NAV_W),
+        ("box.nav-pane", "height", zephyra_gallery::app::shell::NAV_H),
         (
-            "Container.nav-pane",
-            "width",
-            zephyra_gallery::app::shell::NAV_W,
-        ),
-        (
-            "Container.nav-pane",
-            "height",
-            zephyra_gallery::app::shell::NAV_H,
-        ),
-        (
-            "Container.content-card",
+            "box.content-card",
             "width",
             zephyra_gallery::app::shell::CONTENT_W,
         ),
@@ -535,16 +599,16 @@ fn shell_metrics_match_stylesheet() {
 fn root_container_writes_no_fixed_size() {
     let css = shell_css();
     let start = css
-        .split("Container.window {")
+        .split("box.window {")
         .nth(1)
-        .unwrap_or_else(|| panic!("样式表里找不到 Container.window"));
+        .unwrap_or_else(|| panic!("样式表里找不到 box.window"));
     let block = &start[..start.find('}').unwrap_or(start.len())];
     for prop in ["width", "height"] {
         assert!(
             !block
                 .lines()
                 .any(|l| l.trim().starts_with(&format!("{prop}:"))),
-            "Container.window 写了 {prop} —— 根容器必须由 arrange 按 bounds 铺满，\
+            "box.window 写了 {prop} —— 根容器必须由 arrange 按 bounds 铺满，\
              写死尺寸会让整个响应式失效（窗口变化时内容仍按旧尺寸排）"
         );
     }
@@ -913,10 +977,7 @@ fn hit_test_agrees_with_the_painted_rects() {
             checked += 1;
             if !zephyra_core::hit::hit_test(
                 root,
-                zephyra_core::hit::HitTestRequest {
-                    point,
-                    ignore_above: None,
-                },
+                zephyra_core::hit::HitTestRequest { point },
                 ctx,
                 &mut hit,
             ) {
@@ -959,7 +1020,7 @@ fn hit_test_agrees_with_the_painted_rects() {
             });
             if !covered_by_own_subtree {
                 wrong.push(format!(
-                    "{label} / {key}：中心 {point:?} 的处理目标是 {}（矩形 {:?}）—— \
+                    "{label} / {key}：中心 {point:?} 的处理目标是 {:?}（矩形 {:?}）—— \
                      而它自己子树里没有任何可交互节点在那个点上",
                     target.id, target.rect
                 ));
@@ -2664,7 +2725,7 @@ fn the_glass_pane_has_no_fill() {
         let code = strip_comments(css);
 
         // 玻璃块那条规则里不许出现 `background`。
-        if let Some(at) = code.find("Container.glass-pane") {
+        if let Some(at) = code.find("box.glass-pane") {
             let rest = &code[at..];
             let body_start = rest.find('{').expect("`.glass-pane` 规则后面要跟 `{`");
             let body_end = rest[body_start..]
@@ -2765,7 +2826,7 @@ fn glass_param_steppers_are_clamped_without_side_effects() {
 ///
 /// # 实测过一次（写这条门禁的直接原因）
 ///
-/// 给圆按钮调尺寸时写了 `Control.button.round { width: 28px; height: 28px; }`。
+/// 给圆按钮调尺寸时写了 `control.button.round { width: 28px; height: 28px; }`。
 /// `controls::round_button` 发的是 `NodeTag::Control` + 分类名 `round` ——
 /// **没有** `button` 这个分类名（`button` 是别的控件用的）。于是这条规则一个
 /// 元素都选不中，尺寸**纹丝不动**，而两个方向的门禁全绿：分类名 `round` 有规则、
@@ -2779,8 +2840,8 @@ fn glass_param_steppers_are_clamped_without_side_effects() {
 ///
 /// # 为什么不查**控件层**（那 15 张表）
 ///
-/// 控件层是**给宿主用的样式库**，它承诺覆盖一整套状态 —— `Text.focused`、
-/// `Container.toast.error`、`Container.ring-track.paused`、`Container.suggest-row.selected`
+/// 控件层是**给宿主用的样式库**，它承诺覆盖一整套状态 —— `text.focused`、
+/// `box.toast.error`、`box.ring-track.paused`、`box.suggest-row.selected`
 /// 都在表里，而本 gallery 的界面**根本不存在**那些状态（没有 toast、没有输入框、
 /// 没有建议列表）。按全表判，这些规则会全部报成死规则，于是唯一的选择是删规则
 /// —— 那是把控件层改成「只服务当前 demo」，比留几条暂时用不上的规则坏得多。
@@ -3555,7 +3616,7 @@ fn the_accessibility_tree_matches_the_painted_controls() {
         name: "Zephyra Gallery".into(),
         client: Rect::new(0.0, 0.0, 1400.0, 800.0),
     };
-    let snap = zephyra_uia::rules::build(&root, &win);
+    let snap = zephyra_uia::rules::build(&root, &win, ctx);
 
     // 恒真防御：树造失败时快照会只有窗口根 —— 那下面每条断言都会「因为找不到
     // 而跳过」，变成恒真绿。这条先把它钉死。
@@ -3665,7 +3726,7 @@ fn the_switch_family_is_exposed_with_the_right_roles() {
         name: "Zephyra Gallery".into(),
         client: Rect::new(0.0, 0.0, 1400.0, 800.0),
     };
-    let snap = zephyra_uia::rules::build(&root, &win);
+    let snap = zephyra_uia::rules::build(&root, &win, ctx);
 
     assert!(
         snap.elements.len() > 5,
@@ -4295,7 +4356,7 @@ fn switching_the_language_changes_the_button_and_checkbox_labels() {
             name: "Zephyra Gallery".into(),
             client: Rect::new(0.0, 0.0, 1400.0, 800.0),
         };
-        let snap = zephyra_uia::rules::build(&root, &win);
+        let snap = zephyra_uia::rules::build(&root, &win, ctx);
         snap.find_by_key(key)
             .unwrap_or_else(|| panic!("{route}/{family}（lang={lang}）：{key} 必须在无障碍树上"))
             .name

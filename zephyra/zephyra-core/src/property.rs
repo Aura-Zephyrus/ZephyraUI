@@ -166,6 +166,8 @@ pub enum PropertyValue {
     Layer(crate::paint::Layer),
     /// 定位方式（`layout::Position`）。
     Position(crate::layout::Position),
+    /// 手动定位锚点（`layout::Anchor`）。
+    Anchor(crate::layout::Anchor),
     /// 滤镜链（`filter::FilterChain`）。
     ///
     /// 刻意**不**走 [`PropertyValue::Custom`]：滤镜要进每帧产出的 `Command`，
@@ -196,6 +198,11 @@ pub enum PropertyValue {
     Decorations(crate::decoration::Decorations),
     /// 纹理内的归一化矩形（`core::UvRect`）。
     UvRect(crate::core::UvRect),
+    /// 角形状（`core::CornerShape` / CSS `corner-shape`）。
+    ///
+    /// 与 [`PropertyValue::Filter`] 同理：固定词汇（`round`/`squircle`/`superellipse(K)`），
+    /// 进渲染命令与着色器分支，`Copy` + 按值比较，`const` 可构造。
+    CornerShape(crate::core::CornerShape),
     /// **资源键引用**：存键而非字面值，主题切换时只需重解析这些键。
     ///
     /// 这是 `ThemeResource` 能做到「切主题不遍历控件树」的关键。
@@ -279,6 +286,11 @@ impl PropertyValue {
         PropertyValue::Position(v)
     }
 
+    /// 构造手动定位锚点属性值（`const` 可用）。
+    pub const fn anchor(v: crate::layout::Anchor) -> Self {
+        PropertyValue::Anchor(v)
+    }
+
     /// 构造滤镜链属性值（空链可`const`）。
     pub const fn filter(v: crate::filter::FilterChain) -> Self {
         PropertyValue::Filter(v)
@@ -307,6 +319,11 @@ impl PropertyValue {
     /// 构造纹理 uv 矩形属性值（`const` 可用）。
     pub const fn uv_rect(v: crate::core::UvRect) -> Self {
         PropertyValue::UvRect(v)
+    }
+
+    /// 构造角形状属性值（`const` 可用）。
+    pub const fn corner_shape(v: crate::core::CornerShape) -> Self {
+        PropertyValue::CornerShape(v)
     }
 
     /// 构造任意自定义属性值。
@@ -351,12 +368,14 @@ impl PropertyValue {
             PropertyValue::FlexDirection(v) => v,
             PropertyValue::Layer(v) => v,
             PropertyValue::Position(v) => v,
+            PropertyValue::Anchor(v) => v,
             PropertyValue::Filter(v) => v,
             PropertyValue::BlendMode(v) => v,
             PropertyValue::Material(v) => v,
             PropertyValue::MaterialParams(v) => v,
             PropertyValue::Decorations(v) => v,
             PropertyValue::UvRect(v) => v,
+            PropertyValue::CornerShape(v) => v,
             PropertyValue::Custom { inner, .. } => &**inner,
             PropertyValue::Resource(_) => return None,
         };
@@ -386,12 +405,14 @@ impl PartialEq for PropertyValue {
             (PropertyValue::MaterialParams(a), PropertyValue::MaterialParams(b)) => a == b,
             (PropertyValue::Decorations(a), PropertyValue::Decorations(b)) => a == b,
             (PropertyValue::UvRect(a), PropertyValue::UvRect(b)) => a == b,
+            (PropertyValue::CornerShape(a), PropertyValue::CornerShape(b)) => a == b,
             (PropertyValue::Resource(a), PropertyValue::Resource(b)) => a == b,
             (PropertyValue::AlignContent(a), PropertyValue::AlignContent(b)) => a == b,
             (PropertyValue::AlignSelf(a), PropertyValue::AlignSelf(b)) => a == b,
             (PropertyValue::FlexWrap(a), PropertyValue::FlexWrap(b)) => a == b,
             (PropertyValue::FlexDirection(a), PropertyValue::FlexDirection(b)) => a == b,
             (PropertyValue::Position(a), PropertyValue::Position(b)) => a == b,
+            (PropertyValue::Anchor(a), PropertyValue::Anchor(b)) => a == b,
             (
                 PropertyValue::Custom { inner: ai, eq },
                 PropertyValue::Custom { inner: bi, eq: eqi },
@@ -422,6 +443,7 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::FlexWrap(v) => write!(f, "{v:?}"),
             PropertyValue::FlexDirection(v) => write!(f, "{v:?}"),
             PropertyValue::Position(v) => write!(f, "{v:?}"),
+            PropertyValue::Anchor(v) => write!(f, "{v:?}"),
             PropertyValue::Layer(v) => write!(f, "{v:?}"),
             // 调试输出要能看出"有几个滤镜"，否则属性 diff 失败时无从下手。
             PropertyValue::Filter(v) => write!(f, "Filter({} 项)", v.filters().len()),
@@ -438,6 +460,7 @@ impl std::fmt::Debug for PropertyValue {
                 v.inner_shadow.is_some()
             ),
             PropertyValue::UvRect(v) => write!(f, "{v:?}"),
+            PropertyValue::CornerShape(v) => write!(f, "CornerShape(k={})", v.k),
             PropertyValue::Resource(k) => write!(f, "Resource({k})"),
             PropertyValue::Custom { .. } => write!(f, "Custom"),
         }
@@ -546,10 +569,11 @@ pub fn name_affects_layout(name: &str) -> bool {
             | "FlexBasis"
             | "Order"
             // ---- 定位 ----
-            // `measure` 排除绝对子项、`arrange` 按 left/top 摆位；三者都进布局趟。
+            // 手动定位影响测量/摆位/几何。
             | "Position"
             | "Left"
             | "Top"
+            | "Anchor"
     )
 }
 

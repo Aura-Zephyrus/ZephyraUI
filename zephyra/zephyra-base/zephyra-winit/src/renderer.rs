@@ -85,7 +85,8 @@ use zephyra_core::paint::{Command, DisplayList, RenderSource};
 
 use zephyra_render_ext::{
     lifecycle::{LifecycleContext, RenderLifecycle},
-    registration::{DrawHook, HookContext, HookContextDowncast, RenderExtension},
+    registration::{DrawHook, HookContext, RenderExtension},
+    types::Rect as ExtRect,
 };
 
 use crate::quad::{self, RenderReport, Vertex};
@@ -306,6 +307,8 @@ pub(crate) fn content_translate(pass: &OffscreenPass) -> Point {
 /// 一份 `ID3D11Device`，就多出一条与窗口那条并行的引用路径，"谁在用上下文"会
 /// 变得无法回答。
 pub struct Renderer {
+    /// 设备（ext 导入/资源操作）。与 `HostWindow` 共享同一 D3D11 设备。
+    device: ID3D11Device,
     shaders: Shaders,
     blend: ID3D11BlendState,
     /// 每个混合模式一个 `ID3D11BlendState`，下标即 `BlendMode as usize`。
@@ -367,6 +370,10 @@ pub struct Renderer {
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
     /// 生命周期钩子（扩展注册的生命周期回调）。
     lifecycle_hooks: Vec<Box<dyn RenderLifecycle>>,
+    /// 扩展纹理池/Hook 表（与 `ExtContextHandle` 共享）。
+    pub(crate) ext_pool: std::sync::Arc<std::cell::RefCell<crate::ext::ExtPool>>,
+    pub(crate) ext_hooks: std::sync::Arc<std::cell::RefCell<crate::ext::HookTable>>,
+    pub(crate) ext_frame: std::sync::Arc<std::cell::Cell<u64>>,
 }
 
 /// 一次回放的输入。
@@ -630,8 +637,19 @@ pub trait RenderHook: Send + Sync {
     /// 在 `bounds`（屏幕像素坐标）处绘制自绘内容。
     ///
     /// `source.payload::<T>()` 取回宿主在 [`zephyra_core::paint::RenderSource::new`]
-    /// 里放的载荷。
+    /// 里放的载荷。`resource_key` 为新契约的纹理池键（可选，兼容迁移）。
     fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+
+    /// 带 `resource_key` 的绘制入口（默认委托到 [`Self::draw`]）。
+    fn draw_with_key(
+        &mut self,
+        ctx: HookCtx<'_>,
+        bounds: Rect,
+        source: &RenderSource,
+        _resource_key: Option<&str>,
+    ) {
+        self.draw(ctx, bounds, source);
+    }
 }
 
 /// 传给 [`RenderHook`] 的 D3D11 上下文。
@@ -645,15 +663,30 @@ pub struct HookCtx<'a> {
     pub rtv: &'a ID3D11RenderTargetView,
     /// 目标像素尺寸（宽，高）。
     pub size: (f32, f32),
+    /// 帧序号（新契约 HookContext 要求）。
+    pub frame_index: u64,
+    /// 外部纹理池（`resource_key` 查找）。仅在渲染回放期间有效。
+    pub(crate) ext_pool: Option<&'a crate::ext::ExtPool>,
+}
+
+impl HookCtx<'_> {
+    /// 按 `resource_key` 查找外部纹理 SRV（ext 回放）。
+    pub fn ext_srv(&self, key: &str) -> Option<&ID3D11ShaderResourceView> {
+        self.ext_pool?.srv(key)
+    }
 }
 
 /// `HookContext` 实现：提供后端无关的公共访问。
 impl HookContext for HookCtx<'_> {
+    fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+
     fn size(&self) -> (f32, f32) {
         self.size
     }
 
-    fn damage(&self) -> Option<Rect> {
+    fn damage(&self) -> Option<ExtRect> {
         None
     }
 
@@ -664,17 +697,28 @@ impl HookContext for HookCtx<'_> {
     fn offscreen_pass_index(&self) -> Option<usize> {
         None
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        static UNIT: () = ();
+        &UNIT
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        // 返回静态可变引用不安全/不合理；提供一个线程局部占位以满足签名。
+        // 后端特定访问请直接使用 `HookCtx` 的公有字段。
+        fn placeholder() -> &'static mut () {
+            // 单次可变借用语义无法对静态满足；用 Box 泄漏的极小占位不可取。
+            // 这里用 unsafe 获取静态 mut 占位，仅用于 downcast 失败路径（不可达的正确用法）。
+            static mut P: () = ();
+            // SAFETY: 占位仅用于 trait 签名满足；调用方不应依赖其内容。
+            unsafe { &mut *std::ptr::addr_of_mut!(P) }
+        }
+        placeholder()
+    }
 }
 
-/// `HookContextDowncast` 实现：提供给后端特定类型的下转支持。
-impl<'a> HookContextDowncast for HookCtx<'a> {
-    fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        None
-    }
-
-    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        None
-    }
+fn core_rect_to_ext(r: Rect) -> ExtRect {
+    ExtRect::new(r.x, r.y, r.width, r.height)
 }
 
 /// 离屏 pass 用的一对乒乓 RT（E4.4 / E4.6）。
@@ -961,6 +1005,7 @@ impl Renderer {
             .map_err(|e| ShaderError::Create("建索引缓冲", e))?;
 
         Ok(Self {
+            device: device.clone(),
             shaders,
             blends,
             dst_copy: std::cell::RefCell::new(None),
@@ -978,6 +1023,14 @@ impl Renderer {
             atlas_size,
             hooks: Vec::new(),
             lifecycle_hooks: Vec::new(),
+            #[allow(clippy::arc_with_non_send_sync)]
+            ext_pool: std::sync::Arc::new(std::cell::RefCell::new(crate::ext::ExtPool::default())),
+            #[allow(clippy::arc_with_non_send_sync)]
+            ext_hooks: std::sync::Arc::new(std::cell::RefCell::new(
+                crate::ext::HookTable::default(),
+            )),
+            #[allow(clippy::arc_with_non_send_sync)]
+            ext_frame: std::sync::Arc::new(std::cell::Cell::new(0)),
         })
     }
 
@@ -1005,6 +1058,22 @@ impl Renderer {
     /// 顶点缓冲容量（字节）。稳态下跨帧不变。
     pub fn vertex_capacity(&self) -> u64 {
         self.vertex_capacity
+    }
+
+    /// 创建扩展上下文句柄（与本渲染器共享 ext 纹理池/Hook 表）。
+    pub fn ext_handle(&self, context: &ID3D11DeviceContext) -> zephyra_ext::ExtContextHandle {
+        crate::ext::new_ext_handle(
+            self.device.clone(),
+            context.clone(),
+            self.ext_pool.clone(),
+            self.ext_hooks.clone(),
+            self.ext_frame.clone(),
+        )
+    }
+
+    /// 按 `resource_key` 查找 ext 纹理 SRV。
+    pub fn ext_srv(&self, key: &str) -> Option<ID3D11ShaderResourceView> {
+        self.ext_pool.borrow().srv(key).cloned()
     }
 
     /// 把字形图集的位图上传到 GPU 纹理。
@@ -1072,6 +1141,8 @@ impl Renderer {
     }
 
     pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
+        let next_frame = self.ext_frame.get().wrapping_add(1);
+        self.ext_frame.set(next_frame);
         let RenderCtx {
             context,
             device,
@@ -1141,27 +1212,75 @@ impl Renderer {
                 }
                 zephyra_fx::offscreen::Segment::Custom { index } => {
                     let item = &list.iter().nth(index).expect("下标来自同一份列表");
-                    let Command::Custom { bounds, source, .. } = &item.command else {
+                    let Command::Custom {
+                        bounds,
+                        source,
+                        resource_key,
+                        ..
+                    } = &item.command
+                    else {
                         unreachable!("Custom 段只由 Command::Custom 产出");
                     };
-                    match self.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
-                        Some((_, hook)) => {
-                            hook.draw(
-                                HookCtx {
-                                    context,
-                                    device,
-                                    rtv,
-                                    size: (size.0 as f32, size.1 as f32),
-                                },
-                                *bounds,
-                                source,
+                    let key_str = resource_key.as_deref();
+                    let hook_kind = source.kind.as_ref();
+                    let ext_pool = self.ext_pool.borrow();
+                    let imported_payload = key_str
+                        .and_then(|k| ext_pool.get(k))
+                        .map(|r| r as &dyn std::any::Any);
+                    let payload = imported_payload
+                        .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
+                    let mut ctx = HookCtx {
+                        context,
+                        device,
+                        rtv,
+                        size: (size.0 as f32, size.1 as f32),
+                        frame_index: self.ext_frame.get(),
+                        ext_pool: Some(&*ext_pool),
+                    };
+                    // 优先 ext 注册的 DrawHook（kind 选 Hook），再回退内部 RenderHook。
+                    let mut handled = false;
+                    {
+                        let mut ext_hooks = self.ext_hooks.borrow_mut();
+                        if let Some(h) = ext_hooks.global.get_mut(hook_kind) {
+                            let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                key_str,
+                                Some(payload),
                             );
-                            report.custom_passes += 1;
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                h(&mut ctx, core_rect_to_ext(*bounds), &ext_src);
+                            }));
+                            if r.is_ok() {
+                                handled = true;
+                            } else {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "ext hook panicked: kind={hook_kind} key={:?}",
+                                    key_str
+                                ));
+                            }
                         }
-                        None => {
-                            // 没登记钩子：跳过并计数——"这块区域没画"而不是崩。
-                            report.unhandled_custom += 1;
+                    }
+                    if !handled {
+                        if let Some((_, hook)) =
+                            self.hooks.iter_mut().find(|(k, _)| k.as_ref() == hook_kind)
+                        {
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                hook.draw_with_key(ctx, *bounds, source, key_str);
+                            }));
+                            if r.is_ok() {
+                                handled = true;
+                            } else {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "internal hook panicked: kind={hook_kind} key={:?}",
+                                    key_str
+                                ));
+                            }
                         }
+                    }
+                    drop(ext_pool);
+                    if handled {
+                        report.custom_passes += 1;
+                    } else {
+                        report.unhandled_custom += 1;
                     }
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
@@ -1655,17 +1774,18 @@ impl Renderer {
         let content =
             zephyra_core::paint::command_content_rect(&item.command).unwrap_or(pass.bounds);
         let corner = zephyra_core::paint::command_corner_radius(&item.command);
+        let shape_k = zephyra_core::paint::command_corner_shape(&item.command).k;
         // 第 4 项标记"这一趟是折射还是背景模糊"，用来计正确的正面计数。
         let (q, ps, dst_srv, is_refraction) = match (pass.refraction, pass.backdrop_blur, dst_copy)
         {
             (Some(r), _, Some(srv)) => (
-                offscreen::refraction_composite_quad(content, screen, corner, r),
+                offscreen::refraction_composite_quad(content, screen, corner, shape_k, r),
                 crate::shader::PS_REFRACTION,
                 Some(srv),
                 true,
             ),
             (_, Some(bb), Some(srv)) => (
-                offscreen::backdrop_blur_composite_quad(content, screen, corner, bb.sigma),
+                offscreen::backdrop_blur_composite_quad(content, screen, corner, shape_k, bb.sigma),
                 crate::shader::PS_BACKDROP_BLUR,
                 Some(srv),
                 false,
@@ -2226,14 +2346,29 @@ impl Renderer {
     }
 }
 
-/// \DrawHook\\uff08\FnMut(&mut dyn HookContext, Rect, &RenderSource)\\uff09\u5230\u672c\u540e\u7aef \RenderHook\ \u7684\u8584\u9002\u914d\u5668\u3002
-///
-/// \u95e8\u9898\uff1a\RenderHook\ \u662f\u81ea\u5b9a\u4e49\u7684 trait\uff0c\u95ed\u5305\uff08closure\uff09\u65e0\u6cd5\u7ed9\u81ea\u5b9a\u4e49\u7684 trait \u505a\u9690\u5f0f\u5b9e\u73b0\u3002
+/// `zephyra-render-ext::DrawHook`（HRTB, 借用 `RenderSource`）到本后端 `RenderHook` 的适配器。
 struct DrawHookAdapter(Box<DrawHook>);
 
+// SAFETY: 仅在渲染线程调用；`DrawHook` 为 `Send + FnMut`。
+unsafe impl Sync for DrawHookAdapter {}
+
 impl RenderHook for DrawHookAdapter {
-    fn draw(&mut self, mut ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
-        (self.0)(&mut ctx, bounds, source);
+    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+        self.draw_with_key(ctx, bounds, source, None);
+    }
+
+    fn draw_with_key(
+        &mut self,
+        mut ctx: HookCtx<'_>,
+        bounds: Rect,
+        source: &RenderSource,
+        resource_key: Option<&str>,
+    ) {
+        let ext_src = zephyra_render_ext::registration::RenderSource::new(
+            resource_key,
+            Some(source.payload_any() as &dyn std::any::Any),
+        );
+        (self.0)(&mut ctx, core_rect_to_ext(bounds), &ext_src);
     }
 }
 
@@ -2242,19 +2377,24 @@ impl RenderHook for DrawHookAdapter {
 // =============================================================================
 
 impl RenderExtension for Renderer {
-    type HookCtx = HookCtx<'static>;
-
     fn register_hook(&mut self, kind: std::borrow::Cow<'static, str>, hook: Box<DrawHook>) {
+        // 通过本后端 `RenderHook` 表注册，保持与既有 Custom 回放兼容。
         self.register_hook(kind, Box::new(DrawHookAdapter(hook)));
     }
 
-    fn unregister_hook(&mut self, kind: &str) -> bool {
+    fn unregister_hook(&mut self, kind: &str, window: Option<u64>) -> bool {
+        if window.is_some() {
+            return false;
+        }
         let len_before = self.hooks.len();
         self.hooks.retain(|(k, _)| k.as_ref() != kind);
         self.hooks.len() < len_before
     }
 
-    fn has_hook(&self, kind: &str) -> bool {
+    fn has_hook(&self, kind: &str, window: Option<u64>) -> bool {
+        if window.is_some() {
+            return false;
+        }
         self.hooks.iter().any(|(k, _)| k.as_ref() == kind)
     }
 

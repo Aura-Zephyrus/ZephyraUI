@@ -30,7 +30,7 @@ impl View for Probe {
     fn view(&self, _ctx: &Context<'_>) -> Element {
         // 三行**竖排**（direction: vertical）：默认方向是 horizontal，
         // 不显式声明会把三行排成一列横队，逐字符对号就乱了。
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_key("root")
             .with(
                 &props::DIRECTION,

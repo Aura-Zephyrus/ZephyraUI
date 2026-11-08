@@ -23,6 +23,7 @@ use zephyra_fx::{InputState, PointerInputPhase, View};
 
 pub mod data;
 pub mod glass;
+pub mod motion;
 pub mod pages;
 pub mod shell;
 
@@ -885,9 +886,9 @@ pub struct Gallery {
     pub liquid_dd_glass: zephyra_ui::LiquidButton,
     pub liquid_dd_solid_open: bool,
     pub liquid_dd_glass_open: bool,
-    /// 菜单开合动画进度（0=收起, 1=展开），由 advance 按 dt 逼近目标。
-    pub liquid_dd_solid_anim: f32,
-    pub liquid_dd_glass_anim: f32,
+    /// 菜单开合动画：Apple 风格曲线 + 可中断的起跑点（见 [`motion`]）。
+    pub liquid_dd_solid_motion: motion::DropdownMotion,
+    pub liquid_dd_glass_motion: motion::DropdownMotion,
     /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
     ///
     /// 初始值取基准画布尺寸（见 [`crate::app::BASE_VIEWPORT`]）：dump 路没有宿主，
@@ -1071,7 +1072,7 @@ impl Gallery {
         let p = zephyra_style::anim::progress(
             self.enter_ms,
             zephyra_style::anim::ENTER_MS,
-            zephyra_style::anim::Easing::PointToPoint,
+            zephyra_style::anim::Easing::AppleMenu,
         );
         zephyra_style::anim::step(p).map(|n| match n {
             1 => "enter-1",
@@ -1260,8 +1261,8 @@ impl Default for Gallery {
                 .with_material(zephyra_core::filter::Material::Glass),
             liquid_dd_solid_open: false,
             liquid_dd_glass_open: false,
-            liquid_dd_solid_anim: 0.0,
-            liquid_dd_glass_anim: 0.0,
+            liquid_dd_solid_motion: motion::DropdownMotion::default(),
+            liquid_dd_glass_motion: motion::DropdownMotion::default(),
             radio_group: {
                 let mut g = zephyra_ui::RadioGroup::new();
                 for (key, label_key) in RADIO_KEYS.iter().zip(RADIO_LABEL_KEYS) {
@@ -1701,34 +1702,12 @@ impl View for Gallery {
         self.liquid_btn_glass.advance(dt);
         self.liquid_dd_solid.advance(dt);
         self.liquid_dd_glass.advance(dt);
-        // 下拉菜单开合动画（指数逼近，~180ms 视觉量级；目标由 *_open 决定）。
-        fn dd_anim_toward(v: &mut f32, target: f32, dt_ms: f32) {
-            if !v.is_finite() {
-                *v = target;
-                return;
-            }
-            let dt = if dt_ms.is_finite() && dt_ms > 0.0 {
-                dt_ms.min(64.0)
-            } else {
-                return;
-            };
-            let k = 1.0 - (-dt / 55.0_f32).exp();
-            *v += (target - *v) * k;
-            if (*v - target).abs() < 0.001 {
-                *v = target;
-            }
-            *v = v.clamp(0.0, 1.0);
-        }
-        dd_anim_toward(
-            &mut self.liquid_dd_solid_anim,
-            if self.liquid_dd_solid_open { 1.0 } else { 0.0 },
-            dt,
-        );
-        dd_anim_toward(
-            &mut self.liquid_dd_glass_anim,
-            if self.liquid_dd_glass_open { 1.0 } else { 0.0 },
-            dt,
-        );
+        // 下拉菜单开合：iOS 连续曲线（`Easing::AppleMenu`）的定时补间。
+        // 目标态在**本帧的 click 分派**里已经先更新了，所以这里直接读它。
+        self.liquid_dd_solid_motion
+            .tick(self.liquid_dd_solid_open, dt);
+        self.liquid_dd_glass_motion
+            .tick(self.liquid_dd_glass_open, dt);
 
         // 入场动画时钟。
         //
@@ -1805,8 +1784,8 @@ impl View for Gallery {
             || self.liquid_btn_glass.is_animating()
             || self.liquid_dd_solid.is_animating()
             || self.liquid_dd_glass.is_animating()
-            || (self.liquid_dd_solid_anim > 0.001 && self.liquid_dd_solid_anim < 0.999)
-            || (self.liquid_dd_glass_anim > 0.001 && self.liquid_dd_glass_anim < 0.999)
+            || self.liquid_dd_solid_motion.is_animating()
+            || self.liquid_dd_glass_motion.is_animating()
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {
@@ -2030,22 +2009,19 @@ impl zypui::Host for Gallery {
             "ldd_s_tx" => F(g.liquid_dd_solid.translation().0),
             "ldd_s_ty" => F(g.liquid_dd_solid.translation().1),
             "ldd_s_open" => B(g.liquid_dd_solid_open),
-            "ldd_s_visible" => B(g.liquid_dd_solid_anim > 0.001),
-            // 菜单 morph 的 draw-time scale/translate **刻意不用**：`paint` 的文字路径
-            // 不吃 `scale-x/scale-y`，缩放容器会让文字溢出/错位（关闭动画最明显）。
-            // 形态切换改由 `morph-menu`（绝对菜单矩形）+ `show_items` 驱动；连续形变
-            // 需要文字也参与缩放或改走布局动画，当前引擎不具备。
+            "ldd_s_visible" => B(motion::visible(g.liquid_dd_solid_motion.value())),
+            // 「原方块扩大形变变成菜单」：`dd-morph-N` 在 `.zstyle` 里同时驱动
+            // width/height/padding/corner-radius/opacity（Apple 曲线进度，16 档）。
+            // 代码只发进度对应的分类名，值全部在样式表；scale/translate 归一。
             "ldd_s_menu_sx" => F(1.0),
             "ldd_s_menu_sy" => F(1.0),
             "ldd_s_menu_tx" => F(0.0),
             "ldd_s_menu_ty" => F(0.0),
-            // 开：过阈值再揭示（避免未 morph 完文字溢出）；关：衰减期保持可见，
-            // 避免全尺寸菜单壳子先空出来再消失（配合无 scale 变换的形态切换）。
-            "ldd_s_reveal" => B(if g.liquid_dd_solid_open {
-                g.liquid_dd_solid_anim > 0.85
-            } else {
-                g.liquid_dd_solid_anim > 0.001
-            }),
+            "ldd_s_motion" => S(motion::morph_class(g.liquid_dd_solid_motion.value())),
+            "ldd_s_reveal" => B(motion::reveal_items(
+                g.liquid_dd_solid_motion.value(),
+                g.liquid_dd_solid_open,
+            )),
             "ldd_s_entries" => L(vec![
                 rec(vec![
                     ("key", S("liquid:dd:solid:opt1")),
@@ -2065,16 +2041,16 @@ impl zypui::Host for Gallery {
             "ldd_g_tx" => F(g.liquid_dd_glass.translation().0),
             "ldd_g_ty" => F(g.liquid_dd_glass.translation().1),
             "ldd_g_open" => B(g.liquid_dd_glass_open),
-            "ldd_g_visible" => B(g.liquid_dd_glass_anim > 0.001),
+            "ldd_g_visible" => B(motion::visible(g.liquid_dd_glass_motion.value())),
             "ldd_g_menu_sx" => F(1.0),
             "ldd_g_menu_sy" => F(1.0),
             "ldd_g_menu_tx" => F(0.0),
-            "ldd_g_menu_ty" => F(0.0),
-            "ldd_g_reveal" => B(if g.liquid_dd_glass_open {
-                g.liquid_dd_glass_anim > 0.85
-            } else {
-                g.liquid_dd_glass_anim > 0.001
-            }),
+            "ldd_g_menu_ty" => F(motion::glass_anchor_ty(g.liquid_dd_glass_motion.value())),
+            "ldd_g_motion" => S(motion::morph_class(g.liquid_dd_glass_motion.value())),
+            "ldd_g_reveal" => B(motion::reveal_items(
+                g.liquid_dd_glass_motion.value(),
+                g.liquid_dd_glass_open,
+            )),
             "ldd_g_entries" => L(vec![
                 rec(vec![
                     ("key", S("liquid:dd:glass:opt1")),

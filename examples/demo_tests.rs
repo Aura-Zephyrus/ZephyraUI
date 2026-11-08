@@ -78,7 +78,7 @@ fn button(
 }
 
 fn view(hovered: Option<&ElementKey>, pressed: Option<&ElementKey>) -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key("toolbar")
         .with(
             &props::BACKGROUND,
@@ -345,7 +345,7 @@ fn image_node(src: Option<UvRect>) -> Element {
 fn cropping_an_image_changes_only_the_command_not_the_geometry() {
     // 端到端走一遍：属性 → diff → 布局 → 命令。uv 是纹理坐标，与节点矩形无关，
     // 所以布局必须命中缓存、矩形必须逐字段相同。
-    let mut root = Element::new(NodeTag::Container)
+    let mut root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -362,7 +362,7 @@ fn cropping_an_image_changes_only_the_command_not_the_geometry() {
     let rect_before = node.children()[0].rect();
 
     // 换成图集右半边。
-    root = Element::new(NodeTag::Container)
+    root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),

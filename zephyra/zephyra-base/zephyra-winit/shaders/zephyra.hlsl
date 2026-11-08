@@ -66,6 +66,8 @@ struct VSIn {
     // 完整推导见 `crates/base/zephyra-winit/src/quad.rs` 的 `Vertex::half_size`。
     float2 half_size : TEXCOORD8;   // 占 8,9
     float  kind      : TEXCOORD10;  // 占 10
+    // 角形状（CSS corner-shape / superellipse(K) 的 K）：1=round, 2=squircle。
+    float  shape     : TEXCOORD11;  // 占 11
 };
 
 struct VSOut {
@@ -87,12 +89,10 @@ struct VSOut {
     //
     // 用途只有一个：采样 `g_dst` 时需要**屏幕 uv**。`SV_Position` 给的是像素坐标，
     // 要换算成 uv 就得知道目标尺寸 —— 而那需要一个常量缓冲（本管线没有）。
-    // NDC 已经在手里，`×0.5+0.5` 就是 uv（y 与 `to_ndc` 相反，见下）。
-    //
-    // ⚠ 只加在 **VSOut** 上，不动 `VSIn`：`VSIn` 的语义索引被 `CreateInputLayout`
-    // 按区间绑定，加一项就要同步改 `shader.rs` 的 `VERTEX_LAYOUT`，且索引必须重排。
-    // `VSOut` 的语义只是名字，`fxc` 会自己分配寄存器。
+    // 原始 NDC 位置透传到片元（屏幕 uv 用）。
     float2 ndc : TEXCOORD5;
+    // 角形状 K（corner-shape），flat/nointerpolation。
+    nointerpolation float shape : TEXCOORD6;
 };
 
 VSOut VSMain(VSIn i) {
@@ -105,6 +105,7 @@ VSOut VSMain(VSIn i) {
     o.kind      = i.kind;
     o.half_size = i.half_size;
     o.ndc       = i.position;
+    o.shape     = i.shape;
     return o;
 }
 
@@ -117,15 +118,70 @@ float2 DstUv(VSOut i) {
 }
 
 // 圆角矩形的有符号距离：矩形内为负，外部为正。
-float sd_round_rect(float2 p, float2 half_size, float radius) {
+// shape_k = CSS corner-shape / superellipse(K) 的 K（1=round, 2=squircle）。
+float sd_round_rect(float2 p, float2 half_size, float radius, float shape_k) {
     float r = min(radius, min(half_size.x, half_size.y));
+    if (r <= 0.0 || shape_k > 1e6) {
+        float2 q = abs(p) - half_size;
+        return length(max(q, float2(0.0, 0.0))) + min(max(q.x, q.y), 0.0);
+    }
     float2 q = abs(p) - half_size + float2(r, r);
-    return length(max(q, float2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+    float qx = max(q.x, 0.0);
+    float qy = max(q.y, 0.0);
+    float inside = min(max(q.x, q.y), 0.0);
+    float k = shape_k;
+    // round（与历史公式一致）
+    if (abs(k - 1.0) < 1e-4) {
+        return length(float2(qx, qy)) + inside - r;
+    }
+    // bevel (K=0)
+    if (abs(k) < 1e-4) {
+        return (qx + qy) + inside - r;
+    }
+    if (k > 0.0) {
+        // 凸超椭圆（squircle K=2 → n=4）：L^n
+        float n = 2.0 * k;
+        float ax = max(qx / r, 0.0);
+        float ay = max(qy / r, 0.0);
+        float corner_d = 0.0;
+        if (ax > 0.0 || ay > 0.0) {
+            corner_d = r * pow(pow(max(ax, 1e-7), n) + pow(max(ay, 1e-7), n), 1.0 / n);
+        }
+        return corner_d + inside - r;
+    }
+    // scoop/notch（凹形）近似
+    if (k < -1e6) {
+        float d_outer = length(float2(qx, qy)) + inside - r;
+        if (qx > 0.0 && qy > 0.0) {
+            float notch = -min(q.x, q.y);
+            return max(notch, d_outer);
+        }
+        return d_outer;
+    }
+    float n2 = 2.0 * (-k);
+    float ax2 = max(qx / r, 0.0);
+    float ay2 = max(qy / r, 0.0);
+    float convex = 0.0;
+    if (ax2 > 0.0 || ay2 > 0.0) {
+        convex = pow(pow(max(ax2, 1e-7), n2) + pow(max(ay2, 1e-7), n2), 1.0 / n2);
+    }
+    float scoop_d = r * (1.0 - convex);
+    float base = length(float2(qx, qy)) + inside - r;
+    if (qx > 0.0 && qy > 0.0) {
+        return max(scoop_d, base);
+    }
+    return base;
+}
+
+// 兼容旧调用点（默认 round）。
+float sd_round_rect(float2 p, float2 half_size, float radius) {
+    return sd_round_rect(p, half_size, radius, 1.0);
 }
 
 // 前向声明：`PSHighlight` 用 `grad_sd_rounded_rect`，而它的定义与 `PSLens`
 // 住在一起（下方「透镜」那一节）。HLSL 允许原型，WGSL 不允许 —— 那边把定义
 // 挪到了 `fs_highlight` 之前。
+float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius, float shape_k);
 float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius);
 
 /// 算出这一片元的**预乘**源色（不含任何混合）。
@@ -188,7 +244,7 @@ float4 ShadeSource(VSOut i) {
         if (i.corner.x > 0.0) {
             float2 half_size = i.half_size;
             float2 p = i.local - half_size;
-            float d = sd_round_rect(p, half_size, i.corner.x);
+            float d = sd_round_rect(p, half_size, i.corner.x, i.shape);
             float px_img = 0.75;
             a *= 1.0 - smoothstep(-px_img, px_img, d);
         }
@@ -198,13 +254,13 @@ float4 ShadeSource(VSOut i) {
         return float4(texel.rgb * texel.a * i.color.rgb, a);
     }
 
-    // kind == 0：SDF 圆角矩形。
+    // kind == 0：SDF 圆角矩形（shape-aware, CSS corner-shape）。
     //
     // `p` 是「片元相对四边形中心的偏移」，`half_size` 是四边形的半宽半高 ——
     // **两者来自不同的顶点通道**，且都是常量/线性插值的正确量。
     float2 half_size = i.half_size;
     float2 p = i.local - half_size;
-    float d = sd_round_rect(p, half_size, i.corner.x);
+    float d = sd_round_rect(p, half_size, i.corner.x, i.shape);
 
     // 1 像素过渡带：抗锯齿。带宽不随缩放变化，所以高 DPI 下边缘不会变毛糙。
     float px = 0.75;
@@ -583,19 +639,22 @@ float glass_surface_height(float t) {
 ///
 /// 有限差分（4 次 SDF 求值）没有分支，也就没有这类错。代价可以忽略：
 /// 本像素着色器里 SDF 求值本来就被 `PSMain` 每片元调一次。
-float2 SdNormal(float2 p, float2 half_size, float radius) {
+float2 SdNormal(float2 p, float2 half_size, float radius, float shape_k) {
     // 步长取 0.75，与 `quad::AA_BAND` 同量级 —— 再小会被浮点噪声淹没，
     // 再大在 1px 宽的边缘上会跨过整个直边区，梯度反而失真。
     const float e = 0.75;
     float2 g;
-    g.x = sd_round_rect(p + float2(e, 0.0), half_size, radius)
-        - sd_round_rect(p - float2(e, 0.0), half_size, radius);
-    g.y = sd_round_rect(p + float2(0.0, e), half_size, radius)
-        - sd_round_rect(p - float2(0.0, e), half_size, radius);
+    g.x = sd_round_rect(p + float2(e, 0.0), half_size, radius, shape_k)
+        - sd_round_rect(p - float2(e, 0.0), half_size, radius, shape_k);
+    g.y = sd_round_rect(p + float2(0.0, e), half_size, radius, shape_k)
+        - sd_round_rect(p - float2(0.0, e), half_size, radius, shape_k);
     float len = length(g);
     // 元素**正中心**处 SDF 的梯度确实为 0（对称）。那不是错误 ——
     // 中心本来就没有"边缘方向"。返回 0 让那里的位移为零，正是想要的。
     return (len > 1e-5) ? (g / len) : float2(0.0, 0.0);
+}
+float2 SdNormal(float2 p, float2 half_size, float radius) {
+    return SdNormal(p, half_size, radius, 1.0);
 }
 
 /// 折射合成：把元素**背后**的画面按边缘法线推开后显示出来。
@@ -612,7 +671,7 @@ float4 PSRefraction(VSOut i) : SV_TARGET {
 
     // 元素内坐标 → SDF（矩形内为负）。
     float2 p = i.local - i.half_size;
-    float d = sd_round_rect(p, i.half_size, radius);
+    float d = sd_round_rect(p, i.half_size, radius, i.shape);
 
     // ⚠ 元素**外**（d > 0）必须完全不输出：那里的背景没有被任何东西遮挡，
     // 位移它只会凭空撕裂画面。遮罩取 `saturate(-d / edge)`。
@@ -631,7 +690,7 @@ float4 PSRefraction(VSOut i) : SV_TARGET {
     float edge = 1.0;
     float mask = saturate(-d / edge);
 
-    float2 n = SdNormal(p, i.half_size, radius);
+    float2 n = SdNormal(p, i.half_size, radius, i.shape);
 
     // 像素位移 → uv 位移。屏幕尺寸走 `ddx/ddy`，**不占顶点字段** ——
     // 加一个字段会让 `Vertex` 从 52 涨到 56 字节，进而要同步改两个后端的
@@ -737,15 +796,29 @@ float4 PSRefraction(VSOut i) : SV_TARGET {
 // - 7 个通道按 `dispersionIntensity = (cx·cy)/(hx·hy)` 分配，红/橙/黄/绿/青/蓝/紫
 //   各采样一次。
 
-/// `gradSdRoundedRect` 的逐字转译。
-float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius) {
-    float2 corner_coord = abs(coord) - (half_size - float2(radius, radius));
-    if (corner_coord.x >= 0.0 || corner_coord.y >= 0.0) {
-        return sign(coord) * normalize(max(corner_coord, float2(0.0, 0.0)));
-    } else {
-        float grad_x = step(corner_coord.y, corner_coord.x);
-        return sign(coord) * float2(grad_x, 1.0 - grad_x);
+/// `gradSdRoundedRect` 的逐字转译（round），shape-aware 时回退到有限差分。
+float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius, float shape_k) {
+    float k = shape_k;
+    if (abs(k - 1.0) < 1e-4) {
+        float2 corner_coord = abs(coord) - (half_size - float2(radius, radius));
+        if (corner_coord.x >= 0.0 || corner_coord.y >= 0.0) {
+            return sign(coord) * normalize(max(corner_coord, float2(0.0, 0.0)));
+        } else {
+            float grad_x = step(corner_coord.y, corner_coord.x);
+            return sign(coord) * float2(grad_x, 1.0 - grad_x);
+        }
     }
+    // 非 round 形状：有限差分（与 SdNormal 同法），保持 corner-shape 严格一致。
+    const float e = 0.5;
+    float2 g;
+    g.x = sd_round_rect(coord + float2(e, 0.0), half_size, radius, shape_k)
+        - sd_round_rect(coord - float2(e, 0.0), half_size, radius, shape_k);
+    g.y = sd_round_rect(coord + float2(0.0, e), half_size, radius, shape_k)
+        - sd_round_rect(coord - float2(0.0, e), half_size, radius, shape_k);
+    return g;
+}
+float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius) {
+    return grad_sd_rounded_rect(coord, half_size, radius, 1.0);
 }
 
 float circle_map(float x) {
@@ -761,7 +834,7 @@ float4 PSLens(VSOut i) : SV_TARGET {
     // 原版以负数写入 uniform：沿外法线向内采样 = 放大，而不是把背景挤出去。
     float refraction_amount = -i.corner.y;
 
-    float sd = sd_round_rect(centered_coord, half_size, radius);
+    float sd = sd_round_rect(centered_coord, half_size, radius, i.shape);
     float2 uv = DstUv(i);
     if (-sd >= refraction_height) {
         return g_dst.SampleLevel(g_smp, uv, 0);
@@ -774,7 +847,7 @@ float4 PSLens(VSOut i) : SV_TARGET {
     float d = circle_map(1.0 - -sd / refraction_height) * refraction_amount;
     float grad_radius = min(radius * 1.5, min(half_size.x, half_size.y));
     // `depthEffect = false`（LiquidToggle 的默认值）⇒ 只剩 SDF 梯度那一项。
-    float2 grad = normalize(grad_sd_rounded_rect(centered_coord, half_size, grad_radius));
+    float2 grad = normalize(grad_sd_rounded_rect(centered_coord, half_size, grad_radius, i.shape));
     // 像素位移 → uv 位移。与 `PSRefraction` 同理走 `ddx/ddy`，不占顶点字段。
     float2 px2uv = float2(ddx(uv.x), ddy(uv.y));
     float2 base = d * grad * px2uv;
@@ -845,7 +918,7 @@ float4 PSBackdropBlur(VSOut i) : SV_TARGET {
 
     // 元素内坐标 → SDF → 1px 抗锯齿遮罩（与折射同一条纪律：元素外不输出）。
     float2 p = i.local - i.half_size;
-    float d = sd_round_rect(p, i.half_size, radius);
+    float d = sd_round_rect(p, i.half_size, radius, i.shape);
     float mask = saturate(-d / 1.0);
 
     float2 uv = DstUv(i);
@@ -927,7 +1000,7 @@ float4 PSHollowShadow(VSOut i) : SV_TARGET {
     // 挖洞：`sd > 0` 是元素**外**（影子保留），`sd <= 0` 是内侧（清零）。
     // 覆盖带给 1px 抗锯齿过渡，避免挖出一条硬边。
     float2 p = i.local - i.half_size;
-    float sd = sd_round_rect(p, i.half_size, i.corner.x);
+    float sd = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     float keep = saturate(sd / 1.0);
     if (tintAmount <= 0.0) {
         return t * keep;
@@ -956,7 +1029,7 @@ float4 PSHighlight(VSOut i) : SV_TARGET {
     float kind    = i.corner.y;
 
     float2 p = i.local - i.half_size;
-    float d  = sd_round_rect(p, i.half_size, i.corner.x);
+    float d  = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     // ⚠ 原版 `HighlightNode` 把描边**裁到轮廓内**（`canvas.clipOutline`）：
     // 可见的是靠边的一条**内**带，形状外面一个像素都不画。
     // 这里曾经允许 `d <= 0.75`，于是 Ambient 的白色那半圈画到了形状**外面**，
@@ -971,7 +1044,7 @@ float4 PSHighlight(VSOut i) : SV_TARGET {
     // 边缘法线用 `gradSdRoundedRect`（与 `PSLens` / 原版高光同一份），
     // 而不是有限差分 —— 原版高光与透镜共用这一个函数。
     float grad_radius = min(i.corner.x * 1.5, min(i.half_size.x, i.half_size.y));
-    float2 grad = grad_sd_rounded_rect(p, i.half_size, grad_radius);
+    float2 grad = grad_sd_rounded_rect(p, i.half_size, grad_radius, i.shape);
     float2 normal = float2(cos(angle), sin(angle));
     float dd = dot(grad, normal);
     float intensity = pow(abs(dd), 1.0);
@@ -1006,13 +1079,13 @@ float4 PSInnerShadow(VSOut i) : SV_TARGET {
     float alpha = i.color.z;
 
     float2 p = i.local - i.half_size;
-    float d = sd_round_rect(p, i.half_size, i.corner.x);
+    float d = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     // 元素内才画（`d < 0`），1px 过渡。
     float inside = saturate(-d / 1.0);
     if (inside <= 0.0039) { discard; }
 
     // 偏移形状的 SDF：阴影从"偏移形状之外"衰减进来。
-    float di = sd_round_rect(p - off, i.half_size, i.corner.x);
+    float di = sd_round_rect(p - off, i.half_size, i.corner.x, i.shape);
     float cover = SoftBand(di, sigma) * inside;
     if (cover <= 0.0039) { discard; }
 

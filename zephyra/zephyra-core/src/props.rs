@@ -7,7 +7,7 @@
 //!
 //! 全部是 `const`：属性定义是编译期常量，全树共享同一份身份，diff 靠指针相等配对。
 
-use crate::core::{Color, CornerRadius, UvRect};
+use crate::core::{Color, CornerRadius, CornerShape, UvRect};
 use crate::layout::{
     AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
 };
@@ -51,19 +51,22 @@ pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyVal
 
 // ============================== 定位 ==============================
 
-/// 定位方式（CSS `position` 的简化子集）。
-///
-/// [`Position::Absolute`](crate::layout::Position::Absolute) 让元素脱离正常流，
-/// 按 [`LEFT`] / [`TOP`] 定位到**窗口坐标**。弹层、悬浮按钮、tooltip 都靠它。
+/// 定位方式（D1）：`flow` / `parent` / `root`，默认 `flow`。
 pub static POSITION: PropertyKey = PropertyKey::layout(
     "Position",
-    PropertyValue::position(crate::layout::Position::Static),
+    PropertyValue::position(crate::layout::Position::Flow),
 );
 
-/// 绝对定位的**中心**窗口 x 坐标（DIP）。`NaN` 表示未设置（回落到正常流本位的中心）。
+/// 手动定位的自锚点（border box 9 点），默认 `top-left`。
+pub static ANCHOR: PropertyKey = PropertyKey::layout(
+    "Anchor",
+    PropertyValue::anchor(crate::layout::Anchor::TopLeft),
+);
+
+/// 手动定位在参考系内的锚点 x 坐标（DIP）。`NaN` 表示该轴未显式设置。
 pub static LEFT: PropertyKey = PropertyKey::layout("Left", PropertyValue::float(f32::NAN));
 
-/// 绝对定位的**中心**窗口 y 坐标（DIP）。`NaN` 表示未设置（回落到正常流本位的中心）。
+/// 手动定位在参考系内的锚点 y 坐标（DIP）。`NaN` 表示该轴未显式设置。
 pub static TOP: PropertyKey = PropertyKey::layout("Top", PropertyValue::float(f32::NAN));
 
 // ============================== Flexbox ==============================
@@ -129,6 +132,13 @@ pub static BACKGROUND: PropertyKey = PropertyKey::new(
 
 /// 圆角半径（DIP）。
 pub static CORNER_RADIUS: PropertyKey = PropertyKey::new("CornerRadius", PropertyValue::float(0.0));
+
+/// 角形状（CSS `corner-shape`）。默认 `round`（`superellipse(1)`，圆弧）；
+/// `squircle` 为 `superellipse(2)`（连续曲率观感）。纯视觉，不影响布局。
+pub static CORNER_SHAPE: PropertyKey = PropertyKey::new(
+    "CornerShape",
+    PropertyValue::corner_shape(CornerShape::ROUND),
+);
 
 /// 描边颜色。alpha 为 0 表示不描边。
 pub static BORDER_COLOR: PropertyKey = PropertyKey::new(

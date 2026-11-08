@@ -84,7 +84,7 @@ fn private_icons(slot: usize) -> &'static zephyra_core::icon::IconSet {
 
 /// 一个带背景与描边、固定尺寸的方块。
 fn box_el(key: &'static str) -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key(key)
         .with(&props::WIDTH, PropertyValue::float(100.0))
         .with(&props::HEIGHT, PropertyValue::float(100.0))
@@ -219,7 +219,7 @@ fn container_opacity_applies_to_text() {
 #[test]
 fn opacity_multiplies_along_parent_chain() {
     let child = box_el("child").with(&props::OPACITY, PropertyValue::float(0.5));
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&props::WIDTH, PropertyValue::float(200.0))
         .with(&props::HEIGHT, PropertyValue::float(200.0))
@@ -245,7 +245,7 @@ fn ancestor_opacity_affects_descendant_draw() {
         &props::BACKGROUND,
         PropertyValue::color(zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 1.0)),
     );
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&props::WIDTH, PropertyValue::float(200.0))
         .with(&props::HEIGHT, PropertyValue::float(200.0))
@@ -317,44 +317,30 @@ fn offset_does_not_write_back_to_layout_box() {
     );
 }
 
-/// 命中测试按**布局盒**判，因此动画期间仍然可点。
-///
-/// 用 hit 模块的真实入口测（`interaction_tests.rs` 走的是宿主路由，这里直接问 hit）。
 #[test]
-fn offset_does_not_affect_hit_testing() {
-    let plain = box_el("b");
+fn translate_affects_hit_testing_visual() {
     let shifted = box_el("b").with(&props::TRANSLATE_Y, PropertyValue::float(20.0));
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
 
-    let mut na = zephyra_core::node::Node::from_element(&plain);
-    zephyra_core::layout::layout(&mut na, Rect::new(0.0, 0.0, W, H), ctx);
     let mut nb = zephyra_core::node::Node::from_element(&shifted);
     zephyra_core::layout::layout(&mut nb, Rect::new(0.0, 0.0, W, H), ctx);
 
-    // 未平移时两者都命中原点；这证明"位移没有渗进命中测试"。
     let req = HitTestRequest {
-        point: Point::new(10.0, 10.0),
-        ignore_above: None,
+        point: Point::new(10.0, 25.0),
     };
-    let mut ra = HitResult::default();
     let mut rb = HitResult::default();
     assert!(
-        zephyra_core::hit::hit_test(&na, req, ctx, &mut ra),
-        "未平移的树应当命中"
-    );
-    assert!(
         zephyra_core::hit::hit_test(&nb, req, ctx, &mut rb),
-        "带绘制位移的树也应当命中 —— 命中测试按布局盒判，与绘制无关"
+        "R2: translate moves visual rect; point inside translated visual should hit"
     );
-    assert_eq!(ra.path.len(), rb.path.len(), "两条命中路径长度应相同");
 }
 
 /// 子节点跟着父节点一起位移（累加，不是取最近一个）。
 #[test]
 fn translation_accumulates_along_parent_chain() {
     let child = box_el("child");
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&props::WIDTH, PropertyValue::float(200.0))
         .with(&props::HEIGHT, PropertyValue::float(200.0))
@@ -391,7 +377,7 @@ fn translation_accumulates_along_parent_chain() {
 fn zero_translation_does_not_reallocate_vertices() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme).with_icons(private_icons(0));
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with_key("icon")
         .with(&props::WIDTH, PropertyValue::float(16.0))
         .with(&props::HEIGHT, PropertyValue::float(16.0))
@@ -429,7 +415,7 @@ fn zero_translation_does_not_reallocate_vertices() {
 fn translation_moves_position_but_not_uv() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme).with_icons(private_icons(1));
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with_key("icon")
         .with(&props::WIDTH, PropertyValue::float(16.0))
         .with(&props::HEIGHT, PropertyValue::float(16.0))
@@ -439,7 +425,7 @@ fn translation_moves_position_but_not_uv() {
 
     let snapshot = |translate: f32| {
         let mut n = zephyra_core::node::Node::from_element(
-            &Element::new(NodeTag::Container)
+            &Element::new(NodeTag::Box)
                 .with_key("icon")
                 .with(&props::WIDTH, PropertyValue::float(16.0))
                 .with(&props::HEIGHT, PropertyValue::float(16.0))
@@ -662,13 +648,12 @@ fn scale_does_not_write_back_to_layout_box() {
     );
 }
 
-/// 命中测试按**布局盒**判 —— 缩放后的元素仍然可点。
-///
-/// scale = 0.5 ⇒ 绘制盒收窄到 25..75；点 (10, 10) 在绘制盒**外**、
-/// 布局盒**内**。若命中测试误读了绘制盒，这条会红。
+/// R2/D2: 命中按视觉矩形判。
 #[test]
-fn scale_does_not_affect_hit_testing() {
-    let scaled = box_el("b").with(&props::SCALE_X, PropertyValue::float(0.5));
+fn scale_affects_hit_testing_visual() {
+    let scaled = box_el("b")
+        .with(&props::SCALE_X, PropertyValue::float(0.5))
+        .with(&props::SCALE_Y, PropertyValue::float(0.5));
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
 
@@ -677,12 +662,12 @@ fn scale_does_not_affect_hit_testing() {
 
     let req = HitTestRequest {
         point: Point::new(10.0, 10.0),
-        ignore_above: None,
     };
     let mut result = HitResult::default();
+    let hit = zephyra_core::hit::hit_test(&node, req, ctx, &mut result);
     assert!(
-        zephyra_core::hit::hit_test(&node, req, ctx, &mut result),
-        "带绘制缩放的树也应当命中 —— 命中测试按布局盒判，与绘制无关"
+        !hit || result.target().is_none(),
+        "R2: scale 后视觉缩小，布局内但视觉外的点不应命中"
     );
 }
 
@@ -699,7 +684,7 @@ fn scale_does_not_propagate_to_children() {
     // 单独 build 子节点不行 —— 直接子节点作根时会被帧拉满，矩形就不是
     // "它在父节点里该画的样子"。
     let reference_root = || {
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_key("root")
             .with(&props::WIDTH, PropertyValue::float(200.0))
             .with(&props::HEIGHT, PropertyValue::float(200.0))
@@ -708,7 +693,7 @@ fn scale_does_not_propagate_to_children() {
     let (_, reference_list) = build(&reference_root());
     let expected = first_quad_rect(&reference_list);
 
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&props::WIDTH, PropertyValue::float(200.0))
         .with(&props::HEIGHT, PropertyValue::float(200.0))
@@ -794,7 +779,7 @@ fn scale_scales_icon_vertices_around_the_center() {
 
     let snapshot = |scale: f32| {
         let mut n = zephyra_core::node::Node::from_element(
-            &Element::new(NodeTag::Container)
+            &Element::new(NodeTag::Box)
                 .with_key("icon")
                 .with(&props::WIDTH, PropertyValue::float(16.0))
                 .with(&props::HEIGHT, PropertyValue::float(16.0))
@@ -903,7 +888,7 @@ fn container_scale_does_not_scale_text_glyphs() {
 fn transparent_fill_with_filter_still_emits_a_quad() {
     use zephyra_core::filter::{Filter, FilterChain};
 
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with_key("knob")
         .with(&props::WIDTH, PropertyValue::float(40.0))
         .with(&props::HEIGHT, PropertyValue::float(24.0))
@@ -926,4 +911,178 @@ fn transparent_fill_with_filter_still_emits_a_quad() {
     );
     // 填充仍然是全透明：不能为了让命令存在就把 fill 改成不透明。
     assert_eq!(first_quad_fill(&list).a, 0.0);
+}
+
+// ---------------------------------------------------------------- R0 目标行为（D2/D8）：命中跟随视觉
+//
+// 计划 D2：translate/scale 是 layout-inert，但影响 paint + hit + damage。
+// 当前命中测试读布局盒（Node::rect），与 paint 的视觉变换不一致。
+// 以下测试断言目标行为，R2 实现后取消 ignore。
+
+/// R2 目标（D2/D8）：translate-y 移动视觉矩形后，命中应跟随视觉。
+///
+/// 布局盒仍在 (0,0)-(400,300)；视觉向下移动 150。点 (10,10) 在布局盒内、
+/// 视觉盒外，目标语义下不应命中。
+#[test]
+fn translate_y_affects_hit_testing_target_d2() {
+    let shifted = box_el("b").with(&props::TRANSLATE_Y, PropertyValue::float(150.0));
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    let mut node = zephyra_core::node::Node::from_element(&shifted);
+    zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);
+
+    let req = HitTestRequest {
+        point: Point::new(10.0, 10.0),
+    };
+    let mut result = HitResult::default();
+    let hit = zephyra_core::hit::hit_test(&node, req, ctx, &mut result);
+    assert!(
+        !hit || result.target().is_none(),
+        "D2 目标：translate 后命中应按视觉矩形判，(10,10) 不应命中已下移 150 的元素"
+    );
+}
+
+/// R2 目标（D2/D8）：scale 缩小视觉矩形后，命中应跟随视觉。
+///
+/// 布局盒仍是 400x300；scale 0.5 绕中心收窄视觉。点 (10,10) 在布局盒内、
+/// 视觉盒外，目标语义下不应命中（与当前 `scale_does_not_affect_hit_testing` 相反）。
+#[test]
+fn scale_affects_hit_testing_target_d2() {
+    let scaled = box_el("b")
+        .with(&props::SCALE_X, PropertyValue::float(0.5))
+        .with(&props::SCALE_Y, PropertyValue::float(0.5));
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    let mut node = zephyra_core::node::Node::from_element(&scaled);
+    zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);
+
+    let req = HitTestRequest {
+        point: Point::new(10.0, 10.0),
+    };
+    let mut result = HitResult::default();
+    let hit = zephyra_core::hit::hit_test(&node, req, ctx, &mut result);
+    assert!(
+        !hit || result.target().is_none(),
+        "D2 目标：scale 后命中应按视觉矩形判，(10,10) 不应命中已缩小的元素"
+    );
+}
+
+#[test]
+fn root_position_clears_ancestor_translate_for_hit_testing_d11() {
+    use zephyra_core::context::dark_context;
+    use zephyra_core::core::{Point, Rect};
+    use zephyra_core::element::Element;
+    use zephyra_core::hit::{hit_test, HitResult, HitTestRequest};
+    use zephyra_core::id::{ElementKey, NodeTag};
+    use zephyra_core::layout::layout;
+    use zephyra_core::node::Node;
+    use zephyra_core::property::PropertyValue;
+    use zephyra_core::props;
+
+    let root = Element::new(NodeTag::Box)
+        .with(&props::TRANSLATE_X, PropertyValue::float(50.0))
+        .with(&props::WIDTH, PropertyValue::float(200.0))
+        .with(&props::HEIGHT, PropertyValue::float(100.0))
+        .with_children([Element::new(NodeTag::Box)
+            .with_key(ElementKey::from("manual"))
+            .with(
+                &props::POSITION,
+                PropertyValue::position(zephyra_core::layout::Position::Root),
+            )
+            .with(&props::LEFT, PropertyValue::float(5.0))
+            .with(&props::TOP, PropertyValue::float(7.0))
+            .with(&props::WIDTH, PropertyValue::float(10.0))
+            .with(&props::HEIGHT, PropertyValue::float(10.0))
+            .with(&props::INTERACTIVE, PropertyValue::Bool(true))]);
+    let mut node = Node::from_element(&root);
+    layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), dark_context());
+    let mut hit = HitResult::default();
+    assert!(hit_test(
+        &node,
+        HitTestRequest {
+            point: Point::new(6.0, 8.0),
+        },
+        dark_context(),
+        &mut hit,
+    ));
+    assert_eq!(
+        hit.target()
+            .and_then(|n| n.id.as_ref())
+            .and_then(|k| k.as_name()),
+        Some("manual")
+    );
+    hit.clear();
+    let _ = hit_test(
+        &node,
+        HitTestRequest {
+            point: Point::new(56.0, 8.0),
+        },
+        dark_context(),
+        &mut hit,
+    );
+    assert_ne!(
+        hit.target()
+            .and_then(|n| n.id.as_ref())
+            .and_then(|k| k.as_name()),
+        Some("manual")
+    );
+}
+
+#[test]
+fn popup_layer_propagates_to_subtree_for_hit_d18() {
+    use zephyra_core::context::dark_context;
+    use zephyra_core::core::{Point, Rect};
+    use zephyra_core::element::Element;
+    use zephyra_core::hit::{hit_test, HitResult, HitTestRequest};
+    use zephyra_core::id::{ElementKey, NodeTag};
+    use zephyra_core::layout::layout;
+    use zephyra_core::node::Node;
+    use zephyra_core::paint::Layer;
+    use zephyra_core::property::PropertyValue;
+    use zephyra_core::props;
+
+    let root = Element::new(NodeTag::Box)
+        .with(&props::WIDTH, PropertyValue::float(200.0))
+        .with(&props::HEIGHT, PropertyValue::float(100.0))
+        .with_children([
+            Element::new(NodeTag::Box)
+                .with_key(ElementKey::from("base"))
+                .with(&props::WIDTH, PropertyValue::float(200.0))
+                .with(&props::HEIGHT, PropertyValue::float(100.0))
+                .with(&props::INTERACTIVE, PropertyValue::Bool(true)),
+            Element::new(NodeTag::Box)
+                .with(
+                    &props::POSITION,
+                    PropertyValue::position(zephyra_core::layout::Position::Root),
+                )
+                .with(&props::LEFT, PropertyValue::float(0.0))
+                .with(&props::TOP, PropertyValue::float(0.0))
+                .with(&props::WIDTH, PropertyValue::float(200.0))
+                .with(&props::HEIGHT, PropertyValue::float(100.0))
+                .with(&props::LAYER, PropertyValue::layer(Layer::Popup))
+                .with_children([Element::new(NodeTag::Box)
+                    .with_key(ElementKey::from("popup-child"))
+                    .with(&props::WIDTH, PropertyValue::float(200.0))
+                    .with(&props::HEIGHT, PropertyValue::float(100.0))
+                    .with(&props::INTERACTIVE, PropertyValue::Bool(true))]),
+        ]);
+    let mut node = Node::from_element(&root);
+    layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), dark_context());
+    let mut hit = HitResult::default();
+    assert!(hit_test(
+        &node,
+        HitTestRequest {
+            point: Point::new(10.0, 10.0),
+        },
+        dark_context(),
+        &mut hit,
+    ));
+    assert_eq!(
+        hit.target()
+            .and_then(|n| n.id.as_ref())
+            .and_then(|k| k.as_name()),
+        Some("popup-child")
+    );
 }

@@ -11,7 +11,7 @@ use crate::element::Element;
 use crate::id::NodeTag;
 use crate::layout::layout;
 use crate::layout::{
-    AlignContent, AlignItems, AlignSelf, Direction, FlexDirection, FlexWrap, MainAxisAlign,
+    AlignContent, AlignItems, AlignSelf, Anchor, Direction, FlexDirection, FlexWrap, MainAxisAlign,
     Position,
 };
 use crate::node::Node;
@@ -29,7 +29,7 @@ fn ctx() -> Context<'static> {
 // ============================== 辅助 ==============================
 
 fn quad(color: Color) -> Element {
-    Element::new(NodeTag::Container).with(&props::BACKGROUND, PropertyValue::color(color))
+    Element::new(NodeTag::Box).with(&props::BACKGROUND, PropertyValue::color(color))
 }
 
 fn sized(w: f32, h: f32) -> impl Fn(Element) -> Element {
@@ -55,7 +55,7 @@ fn laid_out(element: &Element, bounds: Rect) -> Node {
 ///
 /// 所以凡是断言某个节点自身尺寸的用例，都必须把它放进容器里当子项。
 fn as_child(element: Element, bounds: Rect) -> Node {
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -109,7 +109,7 @@ fn image(src: Option<UvRect>) -> Element {
 
 #[test]
 fn horizontal_stack_places_children_left_to_right_with_spacing() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -133,7 +133,7 @@ fn horizontal_stack_places_children_left_to_right_with_spacing() {
 
 #[test]
 fn vertical_stack_stacks_downward() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Vertical),
@@ -175,7 +175,7 @@ fn the_root_always_fills_the_bounds_it_is_given() {
 #[test]
 fn content_never_exceeds_the_constraint_maximum() {
     // 子项要 1000px 宽，但只给了 200 ——必须被裁到 200，否则一个长列表会把窗口顶出去。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -191,7 +191,7 @@ fn content_never_exceeds_the_constraint_maximum() {
 
 #[test]
 fn padding_insets_the_children() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(&props::PADDING, PropertyValue::float(8.0))
         .with_children([sized(20.0, 20.0)(Element::new(NodeTag::Control))]);
     let node = laid_out(&e, Rect::new(100.0, 50.0, 300.0, 200.0));
@@ -203,7 +203,7 @@ fn padding_insets_the_children() {
 #[test]
 fn cross_align_stretch_makes_children_fill_the_cross_axis() {
     // 工具栏的"组容器撑满高度"就是这个。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -223,7 +223,7 @@ fn cross_align_stretch_makes_children_fill_the_cross_axis() {
 
 #[test]
 fn cross_align_center_centers_on_the_cross_axis() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -239,7 +239,7 @@ fn cross_align_center_centers_on_the_cross_axis() {
 
 #[test]
 fn main_align_space_between_pushes_the_ends_apart() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -262,7 +262,7 @@ fn main_align_space_between_pushes_the_ends_apart() {
 fn collapsed_children_take_no_space_at_all() {
     // 与"宽度为 0"不同：折叠的子项连间距都不占。工具栏在图片模式下少一个按钮时，
     // 间距必须跟着消失，而不是留下一个 10px 的空洞。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -300,7 +300,7 @@ fn collapsed_children_take_no_space_at_all() {
 fn a_zero_width_sibling_still_occupies_its_spacing() {
     // 与上一条严格对照：折叠（不占位）与"宽度为 0"（仍占一个间距位）是两件事。
     // 混淆二者会让"隐藏一项"在界面上留下一个空洞。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -324,10 +324,7 @@ fn a_zero_width_sibling_still_occupies_its_spacing() {
 
 #[test]
 fn transparent_nodes_produce_no_commands() {
-    let node = laid_out(
-        &Element::new(NodeTag::Container),
-        Rect::new(0.0, 0.0, 10.0, 10.0),
-    );
+    let node = laid_out(&Element::new(NodeTag::Box), Rect::new(0.0, 0.0, 10.0, 10.0));
     assert!(
         commands(&node).is_empty(),
         "全透明的树应产出空 DisplayList——否则一层空容器会挡住下面的一切"
@@ -417,7 +414,7 @@ fn image_fills_the_node_when_no_size_is_given() {
 #[test]
 fn children_render_after_their_parents_background() {
     // 顺序即 z 序：父背景必须在子内容之前，否则子内容被自己的父盖住。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::BACKGROUND,
             PropertyValue::color(Color::rgb(0.2, 0.2, 0.2)),
@@ -457,7 +454,7 @@ fn resource_keys_resolve_to_concrete_theme_values() {
     // "切主题"链路的最小闭环：属性存键 → 按当前主题解析 → 驱动绘制。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let e = sized(10.0, 10.0)(Element::new(NodeTag::Container).with(
+    let e = sized(10.0, 10.0)(Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::Resource(roles::SURFACE.into()),
     ));
@@ -479,7 +476,7 @@ fn resolving_a_resource_key_leaves_the_key_in_place() {
     // 视觉空操作，而代码读起来完全正常。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let e = Element::new(NodeTag::Container).with(
+    let e = Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::Resource(roles::SURFACE.into()),
     );
@@ -499,7 +496,7 @@ fn resolving_a_resource_key_leaves_the_key_in_place() {
 fn switching_theme_changes_the_resolved_color() {
     let dark_theme = Theme::dark();
     let light_theme = Theme::light();
-    let e = Element::new(NodeTag::Container).with(
+    let e = Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::Resource(roles::SURFACE.into()),
     );
@@ -520,7 +517,7 @@ fn a_literal_value_ignores_the_theme_entirely() {
     // 字面量不该被主题影响——否则"局部覆盖"这个能力不存在。
     let dark_theme = Theme::dark();
     let light_theme = Theme::light();
-    let e = Element::new(NodeTag::Container).with(
+    let e = Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::color(Color::rgb(0.3, 0.6, 0.9)),
     );
@@ -536,7 +533,7 @@ fn unknown_resource_key_resolves_to_nothing_rather_than_black() {
     // 拼错角色名时必须"解析不出"，而不是静默变成黑色——黑是合法颜色，回退成它
     // 会把一个拼写错误变成看不出成因的视觉偏差。
     let theme = Theme::dark();
-    let node = Node::from_element(&Element::new(NodeTag::Container).with(
+    let node = Node::from_element(&Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::Resource("no_such_role".into()),
     ));
@@ -556,7 +553,7 @@ fn spacing_resources_resolve_to_dip_values() {
     // 间距也是资源，验证 resource_value 不只认颜色。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let node = Node::from_element(&Element::new(NodeTag::Container).with(
+    let node = Node::from_element(&Element::new(NodeTag::Box).with(
         &props::SPACING,
         PropertyValue::Resource("spacing.small".into()),
     ));
@@ -574,7 +571,7 @@ fn changing_a_paint_property_does_not_force_relayout() {
     layout(&mut node, Rect::new(0.0, 0.0, 100.0, 100.0), ctx());
     crate::node::clear_dirty(&mut node);
 
-    let changed = Element::new(NodeTag::Container).with(
+    let changed = Element::new(NodeTag::Box).with(
         &props::BACKGROUND,
         PropertyValue::color(Color::rgb(0.9, 0.0, 0.0)),
     );
@@ -589,7 +586,7 @@ fn changing_a_paint_property_does_not_force_relayout() {
 
 #[test]
 fn changing_spacing_forces_relayout() {
-    let before = Element::new(NodeTag::Container)
+    let before = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -604,7 +601,7 @@ fn changing_spacing_forces_relayout() {
     layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx());
     crate::node::clear_dirty(&mut node);
 
-    let after = Element::new(NodeTag::Container)
+    let after = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -624,7 +621,7 @@ fn changing_spacing_forces_relayout() {
 #[test]
 fn layout_is_stable_across_repeated_calls() {
     // 同一输入两次布局必须产出完全相同的矩形——否则"静止时零重建"无从谈起。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -734,7 +731,7 @@ fn nested_containers_each_get_their_own_rect() {
         ))
     };
     let group = |children: Vec<Element>| {
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with(
                 &props::DIRECTION,
                 PropertyValue::direction(Direction::Horizontal),
@@ -747,7 +744,7 @@ fn nested_containers_each_get_their_own_rect() {
             )
             .with_children(children)
     };
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -783,7 +780,7 @@ fn child_rects(node: &Node) -> Vec<Rect> {
 
 #[test]
 fn a_container_without_flex_declarations_ignores_flex_grow() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Horizontal),
@@ -806,7 +803,7 @@ fn a_container_without_flex_declarations_ignores_flex_grow() {
 
 #[test]
 fn flex_grow_takes_the_remaining_main_space() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Row),
@@ -835,7 +832,7 @@ fn flex_grow_takes_the_remaining_main_space() {
 fn flex_shrink_uses_the_scaled_shrink_factor() {
     // 视觉收缩率 = `shrink × basis`：两个 120 挤进 200，`shrink = 0` 的那侧冻结，
     // 40 的缺口全由 `shrink = 1` 的那侧按它的 basis 补上。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Row),
@@ -863,7 +860,7 @@ fn flex_shrink_uses_the_scaled_shrink_factor() {
 fn flex_wrap_breaks_the_line_and_the_next_line_returns_to_the_cross_start() {
     // 这条同时钉两件事：只声明 `flex-wrap`（不写 flex-direction）也是进入 flex 的
     // 开关且方向回落到 `direction`；以及折行后第二行回到交叉轴起点。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(&props::FLEX_WRAP, PropertyValue::flex_wrap(FlexWrap::Wrap))
         .with(
             &props::ALIGN_CONTENT,
@@ -890,7 +887,7 @@ fn flex_wrap_breaks_the_line_and_the_next_line_returns_to_the_cross_start() {
 
 #[test]
 fn order_reorders_arrangement_but_not_the_document() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Row),
@@ -910,7 +907,7 @@ fn order_reorders_arrangement_but_not_the_document() {
 
 #[test]
 fn align_self_overrides_the_container_align_items() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Row),
@@ -937,7 +934,7 @@ fn align_self_overrides_the_container_align_items() {
 
 #[test]
 fn flex_direction_column_grows_children_down_the_main_axis() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Column),
@@ -961,7 +958,7 @@ fn flex_direction_column_grows_children_down_the_main_axis() {
 
 #[test]
 fn row_reverse_mirrors_main_offsets_without_reversing_the_item_order() {
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::RowReverse),
@@ -981,7 +978,7 @@ fn row_reverse_mirrors_main_offsets_without_reversing_the_item_order() {
 fn flex_basis_replaces_the_measured_main_size() {
     // CSS 同义：basis 非 auto 时，主轴尺寸由 basis 决定，width / 内容都不再插手
     // —— 项测量出 40，摆出来却是 100。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(
             &props::FLEX_DIRECTION,
             PropertyValue::flex_direction(FlexDirection::Row),
@@ -1002,7 +999,7 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
     // 两趟折行必须用同一个数：容器声明 `width: 100`，父上限却是 300。
     // 测量趟若按 300 折行 → 单行 → 高度 10；排列趟按 100 折行 → 两行 →
     // 第二行落到 10px 高的盒子外面 —— 症状（文字压在一起）离原因很远。
-    let e = Element::new(NodeTag::Container)
+    let e = Element::new(NodeTag::Box)
         .with(&props::FLEX_WRAP, PropertyValue::flex_wrap(FlexWrap::Wrap))
         .with(&props::WIDTH, PropertyValue::float(100.0))
         .with(&props::SPACING, PropertyValue::float(10.0))
@@ -1011,7 +1008,7 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
             sized(40.0, 10.0)(Element::new(NodeTag::Control)),
             sized(40.0, 10.0)(Element::new(NodeTag::Control)),
         ]);
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Vertical),
@@ -1039,55 +1036,46 @@ fn flex_wrap_breaks_lines_against_the_container_own_width_not_the_parent_max() {
     );
 }
 
-// ============================== 绝对定位 ==============================
+// ============================== 手动定位（R2: parent/root） ==============================
 
-/// `position: absolute` 的 `left` / `top` 是**中心**窗口坐标。
 #[test]
-fn absolute_child_uses_window_coords() {
-    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
-        .with(
-            &props::POSITION,
-            PropertyValue::position(Position::Absolute),
-        )
+fn root_manual_uses_anchor_point_coords() {
+    let root = Element::new(NodeTag::Box).with_children([Element::new(NodeTag::Box)
+        .with(&props::POSITION, PropertyValue::position(Position::Root))
+        .with(&props::ANCHOR, PropertyValue::anchor(Anchor::Center))
         .with(&props::LEFT, PropertyValue::float(120.0))
         .with(&props::TOP, PropertyValue::float(40.0))
         .with(&props::WIDTH, PropertyValue::float(30.0))
         .with(&props::HEIGHT, PropertyValue::float(20.0))]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
     let r = node.children()[0].rect();
-    // 中心 (120,40) + 30×20 ⇒ 左上角 (105,30)。
     assert!(
         (r.x - 105.0).abs() < 1e-3,
-        "中心 x=120 ⇒ 左上角 105，实得 {}",
+        "中心 x=120 => 左上角 105，实得 {}",
         r.x
     );
     assert!(
         (r.y - 30.0).abs() < 1e-3,
-        "中心 y=40 ⇒ 左上角 30，实得 {}",
+        "中心 y=40 => 左上角 30，实得 {}",
         r.y
     );
-    assert!((r.width - 30.0).abs() < 1e-3);
-    assert!((r.height - 20.0).abs() < 1e-3);
 }
 
 /// 绝对定位子项**不占正常流**：后继兄弟紧贴前一个，不因它下移。
 #[test]
 fn absolute_child_does_not_push_siblings() {
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Vertical),
         )
         .with_children([
-            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(20.0)),
-            Element::new(NodeTag::Container)
-                .with(
-                    &props::POSITION,
-                    PropertyValue::position(Position::Absolute),
-                )
+            Element::new(NodeTag::Box).with(&props::HEIGHT, PropertyValue::float(20.0)),
+            Element::new(NodeTag::Box)
+                .with(&props::POSITION, PropertyValue::position(Position::Root))
                 .with(&props::LEFT, PropertyValue::float(200.0))
                 .with(&props::HEIGHT, PropertyValue::float(500.0)),
-            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(20.0)),
+            Element::new(NodeTag::Box).with(&props::HEIGHT, PropertyValue::float(20.0)),
         ]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
     let third = node.children()[2].rect();
@@ -1101,11 +1089,8 @@ fn absolute_child_does_not_push_siblings() {
 /// 未设 `left` / `top` 的绝对子项落在窗口左上角（0, 0）。
 #[test]
 fn absolute_without_offsets_falls_back_to_flow() {
-    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
-        .with(
-            &props::POSITION,
-            PropertyValue::position(Position::Absolute),
-        )
+    let root = Element::new(NodeTag::Box).with_children([Element::new(NodeTag::Box)
+        .with(&props::POSITION, PropertyValue::position(Position::Root))
         .with(&props::WIDTH, PropertyValue::float(10.0))
         .with(&props::HEIGHT, PropertyValue::float(10.0))]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
@@ -1114,26 +1099,21 @@ fn absolute_without_offsets_falls_back_to_flow() {
     assert!((r.y - 0.0).abs() < 1e-3);
 }
 
-/// 默认 `position` 是 `static`：`is_absolute` 为假。
+/// 默认 `position` 是 `flow`。
 #[test]
-fn default_position_is_static() {
-    let mut node = Node::from_element(&Element::new(NodeTag::Container));
-    assert!(!node.is_absolute(ctx()));
-    node.set_prop(
-        &props::POSITION,
-        PropertyValue::position(Position::Absolute),
-    );
-    assert!(node.is_absolute(ctx()));
+fn default_position_is_flow() {
+    let mut node = Node::from_element(&Element::new(NodeTag::Box));
+    assert!(!node.is_manual(ctx()));
+    node.set_prop(&props::POSITION, PropertyValue::position(Position::Root));
+    assert!(node.is_manual(ctx()));
 }
 
 /// 绝对定位的子项仍然进绘制列表，且画在它的窗口坐标上。
 #[test]
-fn absolute_child_draws_at_window_coords() {
-    let root = Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Control)
-        .with(
-            &props::POSITION,
-            PropertyValue::position(Position::Absolute),
-        )
+fn manual_root_child_draws_at_window_coords() {
+    let root = Element::new(NodeTag::Box).with_children([Element::new(NodeTag::Control)
+        .with(&props::POSITION, PropertyValue::position(Position::Root))
+        .with(&props::ANCHOR, PropertyValue::anchor(Anchor::Center))
         .with(&props::LEFT, PropertyValue::float(50.0))
         .with(&props::TOP, PropertyValue::float(60.0))
         .with(&props::WIDTH, PropertyValue::float(10.0))
@@ -1166,7 +1146,7 @@ fn absolute_child_draws_at_window_coords() {
 /// 按 key 深搜元素并读它的**窗口矩形**——这就是「可定位元素、窗口相对位置」。
 #[test]
 fn find_rect_by_key_returns_window_rect() {
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with(&props::PADDING, PropertyValue::float(10.0))
         .with_children([Element::new(NodeTag::Control)
             .with_key("anchor")
@@ -1189,64 +1169,60 @@ fn find_rect_by_key_returns_window_rect() {
 
 /// 只设 `left` 时，X 直接赋值、Y 沿用正常流位置（逐轴独立）。
 #[test]
-fn absolute_x_only_keeps_flow_y() {
-    let root = Element::new(NodeTag::Container)
+fn manual_x_only_falls_back_to_reference_origin_on_y() {
+    let root = Element::new(NodeTag::Box)
         .with(
             &props::DIRECTION,
             PropertyValue::direction(Direction::Vertical),
         )
         .with_children([
-            Element::new(NodeTag::Container).with(&props::HEIGHT, PropertyValue::float(70.0)),
-            Element::new(NodeTag::Container)
-                .with(
-                    &props::POSITION,
-                    PropertyValue::position(Position::Absolute),
-                )
-                .with(&props::LEFT, PropertyValue::float(120.0))
-                .with(&props::WIDTH, PropertyValue::float(30.0))
-                .with(&props::HEIGHT, PropertyValue::float(20.0)),
+            Element::new(NodeTag::Box).with(&props::HEIGHT, PropertyValue::float(70.0)),
+            Element::new(NodeTag::Box)
+                .with(&props::POSITION, PropertyValue::position(Position::Root))
+                .with(&props::ANCHOR, PropertyValue::anchor(Anchor::Center))
+                .with(&props::LEFT, PropertyValue::float(90.0))
+                .with(&props::WIDTH, PropertyValue::float(20.0))
+                .with(&props::HEIGHT, PropertyValue::float(10.0)),
         ]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
     let r = node.children()[1].rect();
-    // left=120 是中心 x ⇒ 左上角 120-15=105；Y 未设 ⇒ 沿用正常流位置 70。
     assert!(
-        (r.x - 105.0).abs() < 1e-3,
-        "中心 X=120 ⇒ 左上角 105，实得 {}",
+        (r.x - 80.0).abs() < 1e-3,
+        "center X=90 w=20 => left 80, got {}",
         r.x
     );
     assert!(
-        (r.y - 70.0).abs() < 1e-3,
-        "Y 未设 ⇒ 沿用正常流位置 70，实得 {}",
+        (r.y - 0.0).abs() < 1e-3,
+        "D6 missing Y => ref origin, got {}",
         r.y
     );
 }
 
 /// 只设 `top` 时，Y 直接赋值、X 沿用正常流位置（逐轴独立）。
 #[test]
-fn absolute_y_only_keeps_flow_x() {
-    let root = Element::new(NodeTag::Container).with_children([
-        Element::new(NodeTag::Container).with(&props::WIDTH, PropertyValue::float(50.0)),
-        Element::new(NodeTag::Container)
-            .with(
-                &props::POSITION,
-                PropertyValue::position(Position::Absolute),
-            )
-            .with(&props::TOP, PropertyValue::float(80.0))
-            .with(&props::WIDTH, PropertyValue::float(30.0))
-            .with(&props::HEIGHT, PropertyValue::float(20.0)),
-    ]);
+fn manual_y_only_falls_back_to_reference_origin_on_x() {
+    let root = Element::new(NodeTag::Box)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with_children([Element::new(NodeTag::Box)
+            .with(&props::POSITION, PropertyValue::position(Position::Root))
+            .with(&props::ANCHOR, PropertyValue::anchor(Anchor::Center))
+            .with(&props::TOP, PropertyValue::float(33.0))
+            .with(&props::WIDTH, PropertyValue::float(20.0))
+            .with(&props::HEIGHT, PropertyValue::float(10.0))]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
-    let r = node.children()[1].rect();
-    // top=80 是中心 y ⇒ 左上角 80-10=70；X 未设 ⇒ 沿用正常流位置 50。
+    let r = node.children()[0].rect();
     assert!(
-        (r.y - 70.0).abs() < 1e-3,
-        "中心 Y=80 ⇒ 左上角 70，实得 {}",
-        r.y
+        (r.x - 0.0).abs() < 1e-3,
+        "D6 missing X => ref origin, got {}",
+        r.x
     );
     assert!(
-        (r.x - 50.0).abs() < 1e-3,
-        "X 未设 ⇒ 沿用正常流位置 50，实得 {}",
-        r.x
+        (r.y - 28.0).abs() < 1e-3,
+        "center Y=33 h=10 => top 28, got {}",
+        r.y
     );
 }
 
@@ -1255,27 +1231,24 @@ fn absolute_y_only_keeps_flow_x() {
 /// 这条直接对应「DComp 时所有元素坐标转为窗口绝对坐标」：视觉树若按父-子相对
 /// 偏移叠加，嵌套一深就会偏；本仓把 `left` / `top` 当作窗口坐标直接落位。
 #[test]
-fn absolute_in_nested_container_is_window_coords() {
-    let inner = Element::new(NodeTag::Container)
+fn manual_root_in_nested_container_uses_window_coords() {
+    let inner = Element::new(NodeTag::Box)
         .with(&props::PADDING, PropertyValue::float(30.0))
-        .with_children([Element::new(NodeTag::Container)
-            .with(
-                &props::POSITION,
-                PropertyValue::position(Position::Absolute),
-            )
+        .with_children([Element::new(NodeTag::Box)
+            .with(&props::POSITION, PropertyValue::position(Position::Root))
             .with(&props::LEFT, PropertyValue::float(10.0))
             .with(&props::TOP, PropertyValue::float(10.0))
             .with(&props::WIDTH, PropertyValue::float(10.0))
             .with(&props::HEIGHT, PropertyValue::float(10.0))]);
-    let root = Element::new(NodeTag::Container)
+    let root = Element::new(NodeTag::Box)
         .with(&props::PADDING, PropertyValue::float(50.0))
         .with_children([inner]);
     let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
     // 根 padding 50 ⇒ inner 在 (50,50)；inner padding 30 ⇒ 正常流子项在 (80,80)。
     // 绝对子项的中心 left/top=10、尺寸 10×10 ⇒ 左上角 (5,5)，不被父偏移叠加。
     let r = node.children()[0].children()[0].rect();
-    assert!((r.x - 5.0).abs() < 1e-3, "实得 {}", r.x);
-    assert!((r.y - 5.0).abs() < 1e-3, "实得 {}", r.y);
+    assert!((r.x - 10.0).abs() < 1e-3, "got {}", r.x);
+    assert!((r.y - 10.0).abs() < 1e-3, "got {}", r.y);
 }
 
 /// 后代的布局属性变化必须让**祖先**的测量缓存失效。
@@ -1286,13 +1259,12 @@ fn absolute_in_nested_container_is_window_coords() {
 /// 这正是「下拉菜单收起后按钮塌成 0×0，只有 resize 才自愈」的成因。
 #[test]
 fn nested_size_change_invalidates_ancestor_measure_cache() {
-    let root_el =
-        Element::new(NodeTag::Container).with_children([Element::new(NodeTag::Container)
-            .with_key("outer")
-            .with_children([Element::new(NodeTag::Control)
-                .with_key("inner")
-                .with(&props::WIDTH, PropertyValue::float(30.0))
-                .with(&props::HEIGHT, PropertyValue::float(10.0))])]);
+    let root_el = Element::new(NodeTag::Box).with_children([Element::new(NodeTag::Box)
+        .with_key("outer")
+        .with_children([Element::new(NodeTag::Control)
+            .with_key("inner")
+            .with(&props::WIDTH, PropertyValue::float(30.0))
+            .with(&props::HEIGHT, PropertyValue::float(10.0))])]);
     let mut node = Node::from_element(&root_el);
     layout(&mut node, Rect::new(0.0, 0.0, 200.0, 200.0), ctx());
     assert!(
@@ -1307,4 +1279,34 @@ fn nested_size_change_invalidates_ancestor_measure_cache() {
         (w - 70.0).abs() < 1e-3,
         "后代改宽后祖先缓存必须失效，实得 {w}（0 说明父级命中了旧测量）"
     );
+}
+
+// ============================== R0 目标行为（D6）：手动缺轴回落到参照原点
+//
+// 计划 D6：手动模式未给坐标的轴 = 参照系原点；取消 static-position 回落。
+// 当前 Stack 路径对 absolute 子项用 flow 位置作为未设轴回落。
+
+/// R2 目标（D6）：absolute（未来 `parent`/`root` 手动模式）未设 left/top 时，
+/// 缺轴回落到参照原点，不回落到正常流位置。
+///
+/// 当前行为：第二个子项是 absolute 且无 left/top，会落在第一个兄弟之后的 flow 位置。
+/// 目标行为：缺轴回落到参照系原点（v1a 具体参照系由 R1 冻结；本测试先钉“不得回落到 flow”）。
+#[test]
+fn manual_without_offsets_falls_back_to_reference_origin_d6() {
+    let root = Element::new(NodeTag::Box)
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with_children([
+            Element::new(NodeTag::Box).with(&props::HEIGHT, PropertyValue::float(70.0)),
+            Element::new(NodeTag::Box)
+                .with(&props::POSITION, PropertyValue::position(Position::Root))
+                .with(&props::WIDTH, PropertyValue::float(10.0))
+                .with(&props::HEIGHT, PropertyValue::float(10.0)),
+        ]);
+    let node = laid_out(&root, Rect::new(0.0, 0.0, 400.0, 300.0));
+    let r = node.children()[1].rect();
+    assert!((r.x - 0.0).abs() < 1e-3, "D6: x ref origin, got {}", r.x);
+    assert!((r.y - 0.0).abs() < 1e-3, "D6: y ref origin, got {}", r.y);
 }

@@ -33,8 +33,8 @@ use zephyra_style::SheetStyler;
 /// 基类**必须**显式声明 `padding: 0px`：否则折叠时那个键无人提及，
 /// 走的是 `retain_styled_props` 的拆键路径，而两条路径（写 / 拆）都该被测到。
 const CSS: &str = r#"
-    Container { padding: 0px; }
-    Container.grown { padding: 20px; }
+    box { padding: 0px; }
+    box.grown { padding: 20px; }
 "#;
 
 /// 装好样式表的缓存。
@@ -54,11 +54,11 @@ fn cache_with(name: &str) -> FrameCache {
 /// 子节点是必须的 —— `padding` 的效果只能在**子项矩形**上观察到，
 /// 而 [`Node::rect`] 是 arrange 给的外盒，含 padding 前后不变。
 fn chip(grown: bool) -> Element {
-    let inner = Element::new(NodeTag::Container)
+    let inner = Element::new(NodeTag::Box)
         .with_key("inner")
         .with(&props::WIDTH, PropertyValue::float(30.0))
         .with(&props::HEIGHT, PropertyValue::float(30.0));
-    let mut el = Element::new(NodeTag::Container)
+    let mut el = Element::new(NodeTag::Box)
         .with_key("outer")
         .with(&props::WIDTH, PropertyValue::float(120.0))
         .with(&props::HEIGHT, PropertyValue::float(60.0))

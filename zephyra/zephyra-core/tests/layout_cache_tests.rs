@@ -81,14 +81,14 @@ impl TextRender for CountingEngine {
 fn vertical_stack(n: usize) -> Element {
     let children: Vec<Element> = (0..n)
         .map(|i| {
-            Element::new(NodeTag::Container)
+            Element::new(NodeTag::Box)
                 .with_key_by_index(i)
                 .with(&props::HEIGHT, PropertyValue::float(40.0))
                 .with(&props::PADDING, PropertyValue::float(4.0))
                 .with(&props::TEXT, PropertyValue::static_str("item text here"))
         })
         .collect();
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key("root")
         .style_hint("vertical")
         .with_children(children)
@@ -133,20 +133,17 @@ impl Fixture {
 /// 子项数量。
 const N: usize = 6;
 
-/// 改**高度**时，子树应当整体跳过测量（官方 StackPanel 的无穷约束）。
-///
-/// 这条在修好之前是红的：子项拿到的是父的有限约束，改高度 ⇒ 每个子项的
-/// `measure_cache` 键都变 ⇒ 整段子树重排。
+/// R2/D15：measure 缓存键包含视口。窗口尺寸变化会改变视口，因此会重测。
 #[test]
-fn height_only_change_does_not_remeasure_subtree() {
+fn viewport_change_remeasures_subtree() {
     let mut f = Fixture::new(N);
     let first = f.layout((800.0, 600.0));
     assert!(first > 0, "首趟必然要测量（实际 {first}）");
 
     let second = f.layout((800.0, 700.0));
     assert_eq!(
-        second, 0,
-        "只改高度时子项约束一个字都没变（堆叠轴是无穷），应当 0 次整形；实际 {second}"
+        second, first,
+        "R2/D15: 视口变化使缓存键变化，应重测；实际 {second}，首趟 {first}"
     );
 }
 
@@ -177,17 +174,14 @@ fn steady_state_does_not_remeasure() {
     assert_eq!(again, 0, "尺寸不变时应当 0 次整形");
 }
 
-/// 高度**来回**改也不该重测（不只��"第一次改"有效）。
-///
-/// 守住"缓存键真的与高度无关"这件事。只测一次的话，一个"第一次看见高度变化
-/// 就把子树标脏"的实现也能过。
+/// R2/D15：视口变化重测；同一视口不重测。
 #[test]
-fn height_changes_do_not_remeasure() {
+fn same_viewport_does_not_remeasure_across_relayout() {
     let mut f = Fixture::new(N);
     f.layout((800.0, 600.0));
-    for h in [700.0, 500.0, 900.0, 600.0] {
-        let n = f.layout((800.0, h));
-        assert_eq!(n, 0, "高度 {h} 不该引起任何重测，实际 {n}");
+    for _ in 0..3 {
+        let n = f.layout((800.0, 600.0));
+        assert_eq!(n, 0, "同视口重排应 0 次整形，实际 {n}");
     }
 }
 
@@ -220,7 +214,12 @@ fn size_is_finite_under_unbounded_constraints() {
     let ctx = Context::with_engine(&theme, &engine);
     let mut node = Node::from_element(&vertical_stack(3));
     // 整个窗口无界（模拟"在滚动容器里测内容"）。
-    let size = crate::layout::measure(&mut node, Constraints::unbounded(), ctx);
+    let size = crate::layout::measure(
+        &mut node,
+        Constraints::unbounded(),
+        &zephyra_core::layout::LayoutEnv::default(),
+        ctx,
+    );
     assert!(
         size.width.is_finite() && size.height.is_finite(),
         "无界约束下测出来的尺寸必须是有限的，实际 {size:?}"

@@ -344,6 +344,7 @@ fn display_list_sorts_by_layer_then_z_then_order() {
     let quad = Command::Quad {
         rect: Rect::new(0.0, 0.0, 1.0, 1.0),
         radius: CornerRadius { radius: 0.0 },
+        shape: crate::core::CornerShape::ROUND,
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
         filter: crate::filter::FilterChain::none(),
@@ -402,6 +403,7 @@ fn display_list_sort_is_stable_for_equal_keys() {
     let q = |w: f32| Command::Quad {
         rect: Rect::new(0.0, 0.0, w, 1.0),
         radius: CornerRadius { radius: 0.0 },
+        shape: crate::core::CornerShape::ROUND,
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
         filter: crate::filter::FilterChain::none(),
@@ -431,6 +433,7 @@ fn layers_are_reported_deduplicated_and_ordered() {
     let quad = Command::Quad {
         rect: Rect::default(),
         radius: CornerRadius { radius: 0.0 },
+        shape: crate::core::CornerShape::ROUND,
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
         filter: crate::filter::FilterChain::none(),
@@ -467,6 +470,7 @@ fn clear_preserves_capacity_for_steady_state_reuse() {
     let quad = Command::Quad {
         rect: Rect::default(),
         radius: CornerRadius { radius: 0.0 },
+        shape: crate::core::CornerShape::ROUND,
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
         filter: crate::filter::FilterChain::none(),
@@ -513,12 +517,10 @@ use crate::node::{Dirty, Node};
 use crate::paint::render;
 
 fn sample() -> Element {
-    Element::new(NodeTag::Container)
-        .with_key("root")
-        .with_children([
-            Element::new(NodeTag::Text).with_key("title"),
-            Element::new(NodeTag::Control).with_key("ok"),
-        ])
+    Element::new(NodeTag::Box).with_key("root").with_children([
+        Element::new(NodeTag::Text).with_key("title"),
+        Element::new(NodeTag::Control).with_key("ok"),
+    ])
 }
 
 #[test]
@@ -545,13 +547,11 @@ fn adding_a_child_is_detected_as_layout_work() {
     let mut node = Node::from_element(&sample());
     crate::node::clear_dirty(&mut node);
 
-    let wider = Element::new(NodeTag::Container)
-        .with_key("root")
-        .with_children([
-            Element::new(NodeTag::Text).with_key("title"),
-            Element::new(NodeTag::Control).with_key("ok"),
-            Element::new(NodeTag::Control).with_key("cancel"),
-        ]);
+    let wider = Element::new(NodeTag::Box).with_key("root").with_children([
+        Element::new(NodeTag::Text).with_key("title"),
+        Element::new(NodeTag::Control).with_key("ok"),
+        Element::new(NodeTag::Control).with_key("cancel"),
+    ]);
     let stats = diff(&mut node, &wider);
     assert!(!stats.is_noop());
     assert_eq!(stats.inserted, 1);
@@ -562,7 +562,7 @@ fn adding_a_child_is_detected_as_layout_work() {
 #[test]
 fn removing_a_child_is_detected() {
     let mut node = Node::from_element(&sample());
-    let narrower = Element::new(NodeTag::Container)
+    let narrower = Element::new(NodeTag::Box)
         .with_key("root")
         .with_children([Element::new(NodeTag::Text).with_key("title")]);
     let stats = diff(&mut node, &narrower);
@@ -616,7 +616,7 @@ fn render_draws_nothing_when_no_node_has_a_background() {
 #[test]
 fn render_produces_a_sorted_stable_display_list() {
     // 必须给出背景色，否则按上一条断言就该是空的。
-    let element = Element::new(NodeTag::Container)
+    let element = Element::new(NodeTag::Box)
         .with_key("root")
         .with(
             &crate::props::BACKGROUND,
@@ -790,7 +790,12 @@ mod text_pipeline {
         let theme = Theme::dark();
         let ctx = Context::with_engine(&theme, &engine);
         let mut n = Node::from_element(&node);
-        let size = crate::layout::measure(&mut n, crate::layout::Constraints::unbounded(), ctx);
+        let size = crate::layout::measure(
+            &mut n,
+            crate::layout::Constraints::unbounded(),
+            &crate::layout::LayoutEnv::default(),
+            ctx,
+        );
 
         assert!(
             (size.width - 50.0).abs() < 1e-3,
@@ -808,11 +813,16 @@ mod text_pipeline {
     fn text_grows_the_container_it_lives_in() {
         let engine = engine();
         // 把文本放进容器里，容器的尺寸必须被文本撑开 —— 否则文本会被压成零高。
-        let host = Element::new(NodeTag::Container).with_children([text_node("Hi", 20.0)]);
+        let host = Element::new(NodeTag::Box).with_children([text_node("Hi", 20.0)]);
         let theme = Theme::dark();
         let ctx = Context::with_engine(&theme, &engine);
         let mut n = Node::from_element(&host);
-        let size = crate::layout::measure(&mut n, crate::layout::Constraints::unbounded(), ctx);
+        let size = crate::layout::measure(
+            &mut n,
+            crate::layout::Constraints::unbounded(),
+            &crate::layout::LayoutEnv::default(),
+            ctx,
+        );
 
         assert!(
             size.height >= 24.0,
@@ -903,7 +913,12 @@ mod text_pipeline {
         let theme = Theme::dark();
         let ctx = Context::new(&theme);
         let mut node = Node::from_element(&text_node("Hello", 20.0));
-        let size = crate::layout::measure(&mut node, crate::layout::Constraints::unbounded(), ctx);
+        let size = crate::layout::measure(
+            &mut node,
+            crate::layout::Constraints::unbounded(),
+            &crate::layout::LayoutEnv::default(),
+            ctx,
+        );
         assert_eq!(size, Size::new(0.0, 0.0), "无引擎时文本应为零尺寸");
 
         let mut list = DisplayList::new();
@@ -971,6 +986,7 @@ mod text_pipeline {
         let default_h = crate::layout::measure(
             &mut default_node,
             crate::layout::Constraints::unbounded(),
+            &crate::layout::LayoutEnv::default(),
             ctx,
         )
         .height;
@@ -985,6 +1001,7 @@ mod text_pipeline {
         let loose_h = crate::layout::measure(
             &mut loose_node,
             crate::layout::Constraints::unbounded(),
+            &crate::layout::LayoutEnv::default(),
             ctx,
         )
         .height;
@@ -1127,7 +1144,7 @@ mod effect_contract {
     }
 
     fn blurred_rect(sigma: f32) -> Element {
-        Element::new(NodeTag::Container)
+        Element::new(NodeTag::Box)
             .with_key("root")
             .with(
                 &crate::props::BACKGROUND,
@@ -1164,7 +1181,7 @@ mod effect_contract {
         use crate::filter::Material;
 
         let rect = || {
-            Element::new(NodeTag::Container).with_key("root").with(
+            Element::new(NodeTag::Box).with_key("root").with(
                 &crate::props::BACKGROUND,
                 PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
             )
@@ -1220,7 +1237,7 @@ mod effect_contract {
     #[test]
     fn material_and_filter_coexist() {
         use crate::filter::Material;
-        let el = Element::new(NodeTag::Container)
+        let el = Element::new(NodeTag::Box)
             .with_key("root")
             .with(
                 &crate::props::BACKGROUND,
@@ -1323,13 +1340,13 @@ mod effect_contract {
         });
         // ⚠ 图标必须**嵌在**根容器里：根节点自身会被拉伸铺满可用区，图标直接当根
         // 时拿到的是 100×100 而不是声明的 24×24（这个坑我自己踩了一次）。
-        let icon = Element::new(NodeTag::Container)
+        let icon = Element::new(NodeTag::Box)
             .with_key("icon")
             .with(&crate::props::ICON_NAME, PropertyValue::static_str("sq"))
             .with(&crate::props::WIDTH, PropertyValue::float(24.0))
             .with(&crate::props::HEIGHT, PropertyValue::float(24.0))
             .with(&crate::props::FILTER, PropertyValue::filter(chain.clone()));
-        let root = Element::new(NodeTag::Container)
+        let root = Element::new(NodeTag::Box)
             .with_key("root")
             .with_children([icon]);
 
@@ -1394,12 +1411,12 @@ mod effect_contract {
         let icons: &'static IconSet = Box::leak(Box::new(
             IconSet::new().with("sq", IconSource::Path("M8 8L16 8L16 16L8 16Z")),
         ));
-        let e = Element::new(NodeTag::Container)
+        let e = Element::new(NodeTag::Box)
             .with_key("icon")
             .with(&crate::props::ICON_NAME, PropertyValue::static_str("sq"))
             .with(&crate::props::WIDTH, PropertyValue::float(24.0))
             .with(&crate::props::HEIGHT, PropertyValue::float(24.0));
-        let root = Element::new(NodeTag::Container)
+        let root = Element::new(NodeTag::Box)
             .with_key("root")
             .with_children([e]);
         let list = render_with_icons(&root, icons);
@@ -1417,7 +1434,7 @@ mod effect_contract {
     /// 不设滤镜时是空链 —— 这是零回归的前提（否则每条命令都要开 RT）。
     #[test]
     fn command_without_filter_carries_empty_chain() {
-        let list = render_of(&Element::new(NodeTag::Container).with(
+        let list = render_of(&Element::new(NodeTag::Box).with(
             &crate::props::BACKGROUND,
             PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
         ));
@@ -1436,7 +1453,7 @@ mod effect_contract {
     #[test]
     fn blend_mode_property_reaches_command() {
         let list = render_of(
-            &Element::new(NodeTag::Container)
+            &Element::new(NodeTag::Box)
                 .with(
                     &crate::props::BACKGROUND,
                     PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),

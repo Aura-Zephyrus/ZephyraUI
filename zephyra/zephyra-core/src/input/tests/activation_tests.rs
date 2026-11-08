@@ -20,22 +20,20 @@ use super::ActivationState;
 ///   box  (FOCUSABLE，不 ACTIVATABLE)     —— 文本框（Space 打空格）
 /// ```
 fn tree() -> Node {
-    let el = Element::new(NodeTag::Container)
-        .with_key("root")
-        .with_children([
-            Element::new(NodeTag::Control)
-                .with_key("btn")
-                .with(&FOCUSABLE, PropertyValue::bool(true))
-                .with(&ACTIVATABLE, PropertyValue::bool(true)),
-            Element::new(NodeTag::Control)
-                .with_key("dead")
-                .with(&FOCUSABLE, PropertyValue::bool(true))
-                .with(&ACTIVATABLE, PropertyValue::bool(true))
-                .with(&DISABLED, PropertyValue::bool(true)),
-            Element::new(NodeTag::Control)
-                .with_key("box")
-                .with(&FOCUSABLE, PropertyValue::bool(true)),
-        ]);
+    let el = Element::new(NodeTag::Box).with_key("root").with_children([
+        Element::new(NodeTag::Control)
+            .with_key("btn")
+            .with(&FOCUSABLE, PropertyValue::bool(true))
+            .with(&ACTIVATABLE, PropertyValue::bool(true)),
+        Element::new(NodeTag::Control)
+            .with_key("dead")
+            .with(&FOCUSABLE, PropertyValue::bool(true))
+            .with(&ACTIVATABLE, PropertyValue::bool(true))
+            .with(&DISABLED, PropertyValue::bool(true)),
+        Element::new(NodeTag::Control)
+            .with_key("box")
+            .with(&FOCUSABLE, PropertyValue::bool(true)),
+    ]);
     Node::from_element(&el)
 }
 

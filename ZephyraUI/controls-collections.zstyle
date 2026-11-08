@@ -6,56 +6,59 @@
 
 /* ---- ListView ---- */
 
-Container.list-view {
+box.list-view {
     direction: vertical;
     spacing: 4px;
     padding: 6px;
     width: 280px;
     cross-align: stretch;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Control.list-row {
+control.list-row {
     height: 44px;
     padding: 10px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
     background: transparent;
 }
 
-Control.list-row.hovered {
+control.list-row.hovered {
     background: @control_secondary;
 }
 
-Control.list-row.selected {
+control.list-row.selected {
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Text.list-label {
+text.list-label {
     text-size: 15px;
     text-color: @content;
 }
 
 /* ---- TableView ---- */
 
-Container.table-view {
+box.table-view {
     direction: vertical;
     spacing: 0px;
     width: 440px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.table-head-row {
+box.table-head-row {
     direction: horizontal;
     spacing: 14px;
     height: 40px;
@@ -64,12 +67,12 @@ Container.table-head-row {
     background: @surface_alt;
 }
 
-Text.table-head {
+text.table-head {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
-Container.table-row {
+box.table-row {
     direction: horizontal;
     spacing: 14px;
     height: 44px;
@@ -79,110 +82,116 @@ Container.table-row {
     border-color: @divider;
 }
 
-Text.table-cell {
+text.table-cell {
     text-size: 14px;
     text-color: @content;
 }
 
-Text.table-cell.hovered {
+text.table-cell.hovered {
     background: @control_secondary;
-    corner-radius: 4px;
+    corner-radius: 6.4px;
+    corner-shape: superellipse(1.5);
 }
 
-Text.table-cell.pressed {
+text.table-cell.pressed {
     background: @control_tertiary;
-    corner-radius: 4px;
+    corner-radius: 6.4px;
+    corner-shape: superellipse(1.5);
 }
 
 /* ---- SwipeView ---- */
 
-Container.swipe-view {
+box.swipe-view {
     direction: vertical;
     spacing: 14px;
     width: 340px;
 }
 
-Container.swipe-card {
+box.swipe-card {
     direction: vertical;
     spacing: 10px;
     padding: 18px;
     height: 110px;
-    corner-radius: 12px;
+    corner-radius: 19.2px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Text.swipe-title {
+text.swipe-title {
     text-size: 17px;
     text-color: @content;
 }
 
-Text.swipe-desc {
+text.swipe-desc {
     text-size: 14px;
     text-color: @content_secondary;
 }
 
-Container.swipe-pips {
+box.swipe-pips {
     direction: horizontal;
     spacing: 8px;
     main-align: center;
 }
 
-Container.swipe-pip {
+box.swipe-pip {
     width: 7px;
     height: 7px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_strong;
 }
 
-Container.swipe-pip.hovered {
+box.swipe-pip.hovered {
     background: @accent_fill;
 }
 
-Container.swipe-pip.pressed {
+box.swipe-pip.pressed {
     background: @accent_fill;
     opacity: 0.7;
 }
 
-Container.swipe-pip.selected {
+box.swipe-pip.selected {
     width: 18px;
     background: @accent_fill;
 }
 
 /* ---- Avatar ---- */
 
-Container.avatar {
+box.avatar {
     width: 36px;
     height: 36px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_strong;
     direction: horizontal;
     main-align: center;
     cross-align: center;
 }
 
-Container.avatar.accent {
+box.avatar.accent {
     background: @accent_fill;
 }
 
-Text.avatar-text {
+text.avatar-text {
     text-size: 13px;
     text-color: @content;
 }
 
-Text.avatar-text.accent {
+text.avatar-text.accent {
     text-color: #ffffff;
 }
 
 /* ---- SettingItem / SettingExpander ---- */
 
-Container.setting-item {
+box.setting-item {
     direction: horizontal;
     cross-align: center;
     spacing: 14px;
     padding: 14px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
@@ -190,22 +199,23 @@ Container.setting-item {
     width: 440px;
 }
 
-Container.setting-icon {
+box.setting-icon {
     width: 22px;
     height: 22px;
     icon-color: @accent_fill;
 }
 
-Container.setting-expander {
+box.setting-expander {
     direction: vertical;
     width: 440px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.setting-header {
+box.setting-header {
     direction: horizontal;
     main-align: space-between;
     cross-align: center;
@@ -213,17 +223,17 @@ Container.setting-header {
     padding: 14px;
 }
 
-Container.setting-chevron {
+box.setting-chevron {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
 }
 
-Container.setting-chevron.open {
+box.setting-chevron.open {
     icon-color: @content;
 }
 
-Container.setting-content {
+box.setting-content {
     direction: vertical;
     spacing: 10px;
     padding: 14px;

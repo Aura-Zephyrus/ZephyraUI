@@ -2,7 +2,6 @@
 // 模块路径不变（src 里的声明用 #[path] 指过来），所以 use super::* 与私有可见性都照旧。
 
 use super::*;
-
 /// 一个 `Command::Path` 批次：画布中央那个三角形。
 ///
 /// ⚠️ [`zephyra_core::paint::Vertex::position`] 是 **DIP 屏幕坐标**（不是
@@ -90,6 +89,7 @@ fn image_batch(dst: zephyra_core::core::Rect, radius: f32) -> quad::QuadBatch {
             src: Some(zephyra_core::core::UvRect::FULL),
             dst,
             radius: zephyra_core::core::CornerRadius { radius },
+            shape: zephyra_core::core::CornerShape::ROUND,
             tint: zephyra_core::core::Color::rgb(1.0, 1.0, 1.0),
             filter: Default::default(),
             blend: Default::default(),
@@ -123,6 +123,7 @@ fn a_solid_drawn_after_an_image_covers_it() {
             src: Some(zephyra_core::core::UvRect::FULL),
             dst,
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             tint: zephyra_core::core::Color::rgb(0.0, 0.0, 1.0),
             filter: Default::default(),
             blend: Default::default(),
@@ -138,6 +139,7 @@ fn a_solid_drawn_after_an_image_covers_it() {
         zephyra_core::paint::Command::Quad {
             rect: dst,
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: zephyra_core::core::Color::rgb(1.0, 0.0, 0.0),
             stroke: None,
             filter: Default::default(),
@@ -229,7 +231,7 @@ fn sdf_coverage_monotonic_in_distance() {
     ];
     let mut prev = 2.0f32;
     for (p, expect) in samples {
-        let cov = sdf_coverage(p, half, [0.0, 0.0]);
+        let cov = sdf_coverage(p, half, [0.0, 0.0], 1.0);
         println!("  local={p:?}  cov={cov:.4}（期望约 {expect}）");
         assert!(
             cov <= prev + 1e-6,
@@ -255,9 +257,9 @@ fn sdf_coverage_monotonic_in_distance() {
 #[test]
 fn sdf_coverage_depends_on_distance_not_quad_size() {
     // 20×20，边界在 x=20，往里 0.25 → x=19.75
-    let small = sdf_coverage([19.75, 10.0], [10.0, 10.0], [0.0, 0.0]);
+    let small = sdf_coverage([19.75, 10.0], [10.0, 10.0], [0.0, 0.0], 1.0);
     // 100×100，边界在 x=100，往里 0.25 → x=99.75
-    let big = sdf_coverage([99.75, 50.0], [50.0, 50.0], [0.0, 0.0]);
+    let big = sdf_coverage([99.75, 50.0], [50.0, 50.0], [0.0, 0.0], 1.0);
     assert!(
         (small - big).abs() < 1e-5,
         "同样距边界 0.25 像素，覆盖率必须一致，实际 {small} vs {big} —— \
@@ -269,7 +271,7 @@ fn sdf_coverage_depends_on_distance_not_quad_size() {
 #[test]
 fn sdf_center_full_and_radius_actually_cuts_corner() {
     for (name, half) in [("20×20", [10.0f32, 10.0]), ("100×100", [50.0, 50.0])] {
-        let center = sdf_coverage(half, half, [0.0, 0.0]);
+        let center = sdf_coverage(half, half, [0.0, 0.0], 1.0);
         assert!(
             center > 0.99,
             "{name} 的中心覆盖率应为 1，实际 {center} —— \
@@ -280,8 +282,8 @@ fn sdf_center_full_and_radius_actually_cuts_corner() {
     // 角上：20×20、半径 8。取 local=(0.5,0.5)，即离左上和上边各 0.5 像素。
     let half = [10.0, 10.0];
     let p = [0.5, 0.5];
-    let sharp = sdf_coverage(p, half, [0.0, 0.0]);
-    let rounded = sdf_coverage(p, half, [8.0, 0.0]);
+    let sharp = sdf_coverage(p, half, [0.0, 0.0], 1.0);
+    let rounded = sdf_coverage(p, half, [8.0, 0.0], 1.0);
     println!("  方角 {sharp:.4} → 圆角8 {rounded:.4}");
     assert!(
         sharp > 0.9,
@@ -301,16 +303,16 @@ fn sdf_stroke_draws_only_ring() {
     let half = [10.0, 10.0];
     let stroke = [0.0, 2.0]; // 无圆角，描边 2 像素
     assert!(
-        sdf_coverage([10.0, 10.0], half, stroke) < 0.05,
+        sdf_coverage([10.0, 10.0], half, stroke, 1.0) < 0.05,
         "描边模式下中心应当透明（环带只贴边）"
     );
     assert!(
-        sdf_coverage([19.5, 10.0], half, stroke) > 0.5,
+        sdf_coverage([19.5, 10.0], half, stroke, 1.0) > 0.5,
         "描边模式下贴近边界处应当不透明"
     );
     // 比描边宽度更深的内侧应当空 —— 环带只有那么宽。
     assert!(
-        sdf_coverage([17.0, 10.0], half, stroke) < 0.05,
+        sdf_coverage([17.0, 10.0], half, stroke, 1.0) < 0.05,
         "描边宽度 2 像素，所以 d = -3（x=17）处应当已经在环带之外"
     );
 }
@@ -351,7 +353,7 @@ fn quad_reserves_aa_margin_so_upper_half_of_band_is_sampleable() {
     // 这正是「原本该被裁掉的那半边」—— 它现在可被采样，所以读到 0.5 而不是 1。
     // 若四边形又缩回矩形大小，这里会读到 1.0（AA 又丢了）。
     let on_outer_band = [2.0 * half[0], half[1]];
-    let cov = sdf_coverage(on_outer_band, half, [0.0, 0.0]);
+    let cov = sdf_coverage(on_outer_band, half, [0.0, 0.0], 1.0);
     assert!(
         (cov - 0.5).abs() < 0.05,
         "四边形外沿（d ≈ +{band}）覆盖率应约 0.5，实际 {cov} —— \
@@ -364,7 +366,7 @@ fn quad_reserves_aa_margin_so_upper_half_of_band_is_sampleable() {
     // 关键对比：修之前这里是 1.0（环带外侧饱和），于是描边多出一圈没有
     // 抗锯齿的实色，比设定值粗一圈。
     let stroke = [0.0, 2.0];
-    let stroke_outer = sdf_coverage(on_outer_band, half, stroke);
+    let stroke_outer = sdf_coverage(on_outer_band, half, stroke, 1.0);
     assert!(
         (stroke_outer - 0.5).abs() < 0.05,
         "描边模式下四边形外沿应是过渡带中点（约 0.5），实际 {stroke_outer} —— \
@@ -379,7 +381,7 @@ fn quad_reserves_aa_margin_so_upper_half_of_band_is_sampleable() {
     // 正落在 `smoothstep(-0.75, 0.75, ·)` 的上升段。判据是「远低于中点
     // 0.5」—— 修之前这里读到 1.0（饱和实色）。
     let beyond = [2.0 * half[0] + band * 0.5, half[1]];
-    let beyond_cov = sdf_coverage(beyond, half, stroke);
+    let beyond_cov = sdf_coverage(beyond, half, stroke, 1.0);
     assert!(
         beyond_cov < 0.25,
         "四边形之外应明显淡出（读到 {beyond_cov}），\
@@ -390,9 +392,9 @@ fn quad_reserves_aa_margin_so_upper_half_of_band_is_sampleable() {
     // 上，填充必须是满的 —— AA 不该啃掉形状本身。
     let real_edge = [half[0] + band, half[1]];
     assert!(
-        sdf_coverage(real_edge, half, [0.0, 0.0]) > 0.99,
+        sdf_coverage(real_edge, half, [0.0, 0.0], 1.0) > 0.99,
         "矩形真实边界（d==0）填充应满，实际 {} —— AA 余量把形状啃小了",
-        sdf_coverage(real_edge, half, [0.0, 0.0])
+        sdf_coverage(real_edge, half, [0.0, 0.0], 1.0)
     );
 }
 

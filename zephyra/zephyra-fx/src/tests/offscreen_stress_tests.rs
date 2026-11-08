@@ -142,6 +142,7 @@ fn random_command(rng: &mut Rng) -> Command {
             radius: CornerRadius {
                 radius: rng.f32_in(0.0, 24.0),
             },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
             filter: random_chain(rng),
@@ -167,6 +168,7 @@ fn random_command(rng: &mut Rng) -> Command {
             tint: Color::rgb(1.0, 1.0, 1.0),
             texture: zephyra_core::paint::TextureRef(std::borrow::Cow::Borrowed("atlas")),
             radius: CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             filter: random_chain(rng),
             blend: random_blend(rng),
         },
@@ -177,6 +179,7 @@ fn random_command(rng: &mut Rng) -> Command {
         _ => Command::Custom {
             bounds: random_rect(rng),
             source: zephyra_core::paint::RenderSource::new("stress:custom", rng.below(u32::MAX)),
+            resource_key: None,
             filter: random_chain(rng),
             blend: random_blend(rng),
         },
@@ -206,6 +209,7 @@ fn quad(filter: FilterChain, blend: BlendMode, rect: Rect) -> Command {
     Command::Quad {
         rect,
         radius: CornerRadius { radius: 0.0 },
+        shape: zephyra_core::core::CornerShape::ROUND,
         fill: Color::rgb(1.0, 1.0, 1.0),
         stroke: None,
         filter,
@@ -697,6 +701,7 @@ fn stress_a_two_thousand_command_frame_plans_instantly() {
             Command::Quad {
                 rect: Rect::new((i % 100) as f32 * 8.0, (i / 100) as f32 * 8.0, 6.0, 6.0),
                 radius: CornerRadius { radius: 2.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(1.0, 1.0, 1.0),
                 stroke: None,
                 filter,

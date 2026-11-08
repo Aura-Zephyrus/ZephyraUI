@@ -240,7 +240,7 @@ impl<V: View> HostWindow<V> {
             }
         };
 
-        let platform = zephyra_platform_linux::current();
+        let platform = platform_current();
         let system_languages = platform.system_languages();
 
         Self {
@@ -302,9 +302,19 @@ impl<V: View> HostWindow<V> {
         self.theme.variant
     }
 
+    /// 扩展上下文句柄：外部纹理/Hook 注册。
+    pub fn ext_context(&self) -> zephyra_ext::ExtContextHandle {
+        self.renderer.ext_handle()
+    }
+
     /// 图像纹理表。
     pub fn textures(&self) -> &crate::renderer::TextureTable {
         self.renderer.textures()
+    }
+
+    /// 已注册纹理数量（与 D3D12 宿主 API 对齐，便于共享 demo 代码）。
+    pub fn texture_count(&self) -> usize {
+        self.renderer.textures().len()
     }
 
     /// 注册 / 重传一张图像纹理。
@@ -348,8 +358,7 @@ impl<V: View> HostWindow<V> {
         &self,
         chrome: zephyra_platform::WindowChrome,
     ) -> zephyra_platform::ApplyOutcome {
-        zephyra_platform_linux::current()
-            .apply_window_chrome(window_handle_of(&self.window), chrome)
+        platform_current().apply_window_chrome(window_handle_of(&self.window), chrome)
     }
 
     /// 一帧什么都没做时返回的东西。
@@ -1035,12 +1044,27 @@ fn trace_enabled() -> bool {
 fn window_handle_of(window: &Window) -> zephyra_platform::WindowHandle {
     use raw_window_handle::HasWindowHandle;
     let raw = window.window_handle().expect("window handle").as_raw();
-    // RawWindowHandle -> usize（X11/Wayland 句柄转换）
     let usize_handle = match raw {
+        raw_window_handle::RawWindowHandle::Win32(h) => h.hwnd.get() as usize,
         raw_window_handle::RawWindowHandle::Xlib(h) => h.window as usize,
         raw_window_handle::RawWindowHandle::Xcb(h) => h.window.get() as usize,
         raw_window_handle::RawWindowHandle::Wayland(h) => h.surface.as_ptr() as usize,
         _ => 0,
     };
     zephyra_platform::WindowHandle::from_raw(usize_handle)
+}
+
+fn platform_current() -> &'static dyn zephyra_platform::Platform {
+    #[cfg(windows)]
+    {
+        zephyra_platform_win::current()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        platform_current()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        zephyra_platform::current()
+    }
 }

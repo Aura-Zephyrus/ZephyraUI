@@ -108,6 +108,7 @@ fn random_list(rng: &mut Rng) -> DisplayList {
                 radius: CornerRadius {
                     radius: rng.f32_in(0.0, 16.0),
                 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgba(rng.f32_in(0.0, 1.0), 0.5, 0.5, rng.f32_in(0.0, 1.0)),
                 stroke: None,
                 filter: random_chain(rng),
@@ -325,6 +326,7 @@ fn stress_a_four_thousand_command_batch_is_internally_consistent() {
             Command::Quad {
                 rect: Rect::new((i % 64) as f32 * 16.0, (i / 64) as f32 * 16.0, 12.0, 12.0),
                 radius: CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(1.0, 1.0, 1.0),
                 stroke: None,
                 filter,
@@ -383,6 +385,7 @@ fn stress_mixed_commands_keep_displaylist_order() {
             Command::Quad {
                 rect: Rect::new((i % 30) as f32 * 16.0, (i / 30) as f32 * 16.0, 12.0, 12.0),
                 radius: CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(1.0, 1.0, 1.0),
                 stroke: None,
                 filter: FilterChain::none(),
@@ -395,6 +398,7 @@ fn stress_mixed_commands_keep_displaylist_order() {
                 src: None,
                 dst: Rect::new((i % 30) as f32 * 16.0, (i / 30) as f32 * 16.0, 12.0, 12.0),
                 radius: CornerRadius { radius: 0.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 tint: Color::rgb(1.0, 1.0, 1.0),
                 filter: FilterChain::none(),
                 blend: BlendMode::SrcOver,

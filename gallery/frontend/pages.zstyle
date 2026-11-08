@@ -20,30 +20,42 @@
 
 /* ---- 通用编排 ---- */
 
-Container.section {
+box.section {
     direction: vertical;
     spacing: 6px;
 }
 
-Container.section-body {
+box.section-body {
     direction: vertical;
     spacing: 6px;
 }
 
-Container.demo-row {
+box.demo-row {
     direction: horizontal;
     cross-align: center;
     spacing: 16px;
 }
 
-Container.demo-slot {
+box.demo-slot {
     direction: horizontal;
     main-align: start;
     cross-align: center;
     spacing: 10px;
 }
 
-Text.demo-label {
+/* 下拉菜单的槽位要**保留按钮尺寸**，并把形变锚在左上角。
+ *
+ * 展开时控件仍在流里长高；默认 `cross-align: center` 会让 36px 的槽位
+ * 把 114px 的菜单上下均分（顶边比按钮高 39px，即“菜单出现在按钮上方”）。
+ * `cross-align: start` 把顶边钉在原按钮顶边，形变从左上角向右下长。
+ * 72×36 是收起态按钮的外盒（工件 `layout` 实测）。 */
+box.demo-slot.dd-slot {
+    width: 72px;
+    height: 36px;
+    cross-align: start;
+}
+
+text.demo-label {
     width: 132px;
     text-size: 13px;
     text-color: @content_secondary;
@@ -51,50 +63,50 @@ Text.demo-label {
 
 /* ---- 每页根容器 ---- */
 
-Container.page-guide {
+box.page-guide {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-state {
+box.page-state {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-styling {
+box.page-styling {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-theme {
+box.page-theme {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-testing {
+box.page-testing {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-reference {
+box.page-reference {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
 /* 参考层两族：不再是路由，但各族的 page() 仍发这些分类名（嵌在
  * reference 页里）。少一条就是「那一族嵌进来没有间距」。 */
-Container.page-buttons {
+box.page-buttons {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
-Container.page-checkbox {
+box.page-checkbox {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
 }
 /* 第三族（开关族）与另两族同形。 */
-Container.page-switches {
+box.page-switches {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;
@@ -104,19 +116,19 @@ Container.page-switches {
  * 800px 高的客户区 —— 而那正好撞上这一页自己教的那条边界：掉出去就是
  * 掉出去，没有滚动条可以救。门禁 `hit_test_agrees_with_the_painted_rects`
  * 钉住这个：按钮矩形掉出客户区就红。 */
-Container.page-layout {
+box.page-layout {
     direction: vertical;
     spacing: 16px;
     cross-align: stretch;
 }
 /* 材质页（材质专区 + 液态玻璃合并在一页）的根容器分类名。 */
-Container.page-materials {
+box.page-materials {
     direction: vertical;
     spacing: 8px;
     cross-align: stretch;
 }
-/* ⚠ 这里**没有**旧 `home` 页的样式（`Container.hero` / `Text.hero-*` /
- * `Control.button.category` / `Container.category-row`）。home 页随
+/* ⚠ 这里**没有**旧 `home` 页的样式（`box.hero` / `text.hero-*` /
+ * `control.button.category` / `box.category-row`）。home 页随
  * 「示例项目」重写一起删除——它被指南层的 `guide` 章取代，那些规则成了
  * 死规则，由 `every_stylesheet_rule_matches_something` 抓出来整块删除。
  *
@@ -157,7 +169,7 @@ Container.page-materials {
  * 上下各留 48 是给「照片在玻璃块**外面**也露着」用的：只有玻璃块盖住的
  * 那一小块照片，看不出「有没有被掰弯」。
  */
-Container.material-board {
+box.material-board {
     direction: vertical;
     main-align: center;
     cross-align: center;
@@ -165,7 +177,9 @@ Container.material-board {
     padding: 20px;
     width: 732px;
     height: 480px;
-    corner-radius: 12px;
+    /* 液态玻璃用的**大圆角**（这块底板承载整排玻璃样板）。 */
+    corner-radius: 32px;
+    corner-shape: superellipse(1.5);
     image-texture: "bg-mountain";
 }
 
@@ -174,7 +188,7 @@ Container.material-board {
  * 宽 512 = 3 × 160 + 2 × 16，比照片内容宽（692）**窄** —— 于是左右各露出
  * 90px 的照片，实心 / 磨砂 / 玻璃三者的差别才有着落：没有照片做背景，
  * 「磨砂」与「玻璃」都只是一块说不清是什么的半透明板。 */
-Container.material-swatches {
+box.material-swatches {
     direction: horizontal;
     spacing: 16px;
     cross-align: start;
@@ -182,13 +196,15 @@ Container.material-swatches {
 
 /* 一块材质样板。160 × 120：比玻璃块小一号 —— 尺寸差就是「样板 vs 样品」的
  * 直觉差别，两者混成一样大时，一眼看去分不清哪排是材质选型、哪排是可调样品。 */
-Container.material-swatch {
+box.material-swatch {
     width: 160px;
     height: 120px;
     direction: vertical;
     main-align: center;
     cross-align: center;
-    corner-radius: 12px;
+    /* 液态玻璃样板：大圆角。 */
+    corner-radius: 32px;
+    corner-shape: superellipse(1.5);
     border-color: #ffffffb3;
     border-width: 1px;
 }
@@ -197,7 +213,7 @@ Container.material-swatch {
  *
  * 底色给的是**浅色半透**（#e6edf7d9）而不是不透明 —— 不透明的话这块板就
  * 完全盖住照片，读者看不到「同一张照片在三种材质下的三种样子」这件事本身。 */
-Container.material-swatch.material-solid {
+box.material-swatch.material-solid {
     background: #e6edf7d9;
 }
 
@@ -207,7 +223,7 @@ Container.material-swatch.material-solid {
  *   （`g_dst`），而**元素自己的底色会被丢掉** —— 离屏合成趟的输出就是
  *   「模糊后的背景」，元素原本的填充不在其中。所以这块样板只有一圈描边
  *   定形，中间全是模糊后的照片。 */
-Container.material-swatch.material-frosted {
+box.material-swatch.material-frosted {
     material: frosted;
 }
 
@@ -216,7 +232,7 @@ Container.material-swatch.material-frosted {
  * 参数用**材质自带默认**（厚度 20 / 倒角带 16 / IOR 1.5）—— 这块样板讲的是
  * 「材质种类」，不是「参数怎么调」；参数那一摊在下面的玻璃块行，
  * 由面板逐帧调。 */
-Container.material-swatch.material-glass {
+box.material-swatch.material-glass {
     material: glass;
 }
 
@@ -230,16 +246,17 @@ Container.material-swatch.material-glass {
  *
  *   这一条规则**玻璃块那排的标签也用**（`.glass-chip` 是同一个类）——
  *   两排标签压在同一张照片上，用两套规则就会出现「一排看得清一排看不清」。 */
-Container.photo-chip {
+box.photo-chip {
     background: #0b1220b3;
     /* ⚠ 单值：`padding: 3px 8px` 这种多值写法 zstylec **解析不了**，而且失败
      *   的后果不是「这条规则被跳过」而是**整份 pages.zstyle 被丢弃** ——
      *   屏幕上会看到「所有页面都退回默认排版」。 */
     padding: 4px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
 }
 
-Text.photo-chip-text {
+text.photo-chip-text {
     text-size: 13px;
     text-color: #f2f6ff;
 }
@@ -251,14 +268,14 @@ Text.photo-chip-text {
  *   于是玻璃块「画在哪里」与「布局在哪里」分了家，几何断言全得折算。
  *   现在照片**铺满整块板**，玻璃块本来就在照片上面，不需要任何位移。
  */
-Container.glass-panes {
+box.glass-panes {
     direction: horizontal;
     spacing: 16px;
     cross-align: stretch;
 }
 
 /* 玻璃块与它的标签。标签在**下面** —— 标签压在玻璃块上面会挡住折射的主体。 */
-Container.glass-cell {
+box.glass-cell {
     direction: vertical;
     spacing: 8px;
     /* ⚠ 必须 `center`：竖排容器的默认交叉轴是**拉伸**，不给的话标签小牌会被
@@ -270,7 +287,7 @@ Container.glass-cell {
  *
  * ⚠ 浅色字压在照片上读不出来（照片明暗跨度极大）—— 所以标签自带一块
  *   **深色小牌**，靠自己的底色保证可读。理由与 `.photo-chip` 相同。 */
-Text.glass-title {
+text.glass-title {
     text-size: 13px;
     text-color: #f2f6ff;
 }
@@ -299,10 +316,12 @@ Text.glass-title {
 /* ⚠ 宽度必须写死：玻璃块**没有子节点**，而 core 的容器不给宽度就按内容测量 ——
  * 空容器量出来是 0，于是这块玻璃在画面上根本不存在（实测过一次：标题在、块没了）。
  * 写死宽度不是「外观写进源码」，它仍然在这张表里。 */
-Container.glass-pane {
+box.glass-pane {
     width: 220px;
     height: 120px;
-    corner-radius: 12px;
+    /* 液态玻璃本体：大圆角。 */
+    corner-radius: 32px;
+    corner-shape: superellipse(1.5);
     border-color: #ffffffb3;
     border-width: 1px;
 }
@@ -330,26 +349,26 @@ Container.glass-pane {
  *
  * ⚠ core 没有折行，所以「一行放不下」不是「自动换到下一行」，
  * 而是**溢出被裁掉**。病状是右侧一组不见了，且不报错。 */
-Container.glass-params {
+box.glass-params {
     direction: horizontal;
     spacing: 20px;
     cross-align: center;
 }
 
-Container.glass-param {
+box.glass-param {
     direction: horizontal;
     spacing: 8px;
     cross-align: center;
 }
 
-Text.glass-param-label {
+text.glass-param-label {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
 /* 数值给固定宽度：不给的话一位数→两位数时右侧的 `[+]` 会左右挪，
  * 而「按钮在动」很容易被误读成「点它有效」。 */
-Text.glass-param-value {
+text.glass-param-value {
     text-size: 14px;
     text-color: @content;
     width: 44px;
@@ -357,7 +376,7 @@ Text.glass-param-value {
 
 /* 装饰开关行：一行一个开关，与上面的四组步进器隔开 ——
  * 「装饰」是「玻璃周围画什么」，不是第五个折射参数。 */
-Container.glass-decor-row {
+box.glass-decor-row {
     direction: horizontal;
     spacing: 10px;
     cross-align: center;
@@ -370,15 +389,15 @@ Container.glass-decor-row {
  * 那一章要教「颜色走令牌」—— 而最好的教法是**现场给一条**：
  * `@content_secondary` 的值由当前主题给，换主题时这行字自己变色，
  * 源码一个字不用改。删掉这条规则，示例就变成「说了但不做」。 */
-Text.styling-note {
+text.styling-note {
     text-size: 15px;
     text-color: @content_secondary;
 }
 
 /* ⚠ 这里**没有**步进按钮的尺寸覆写，走控件层 `.round` 的默认 44px 见方。
  *
- * 曾经写过 `Control.button.round { width: 28px; height: 28px; }` —— 它一个元素
- * 都选不中：`controls::round_button` 发的是 `NodeTag::Control` + 分类名 `round`，
+ * 曾经写过 `control.button.round { width: 28px; height: 28px; }` —— 它一个元素
+ * 都选不中：`controls::round_button` 发的是 `NodeTag::control` + 分类名 `round`，
  * **没有** `button` 这个分类名（那是别的控件用的）。尺寸纹丝不动，而
  * 「分类名存在」「元素有分类名」那两条门禁全绿 —— 这正是新门禁
  * `every_stylesheet_rule_matches_something` 要抓的形状。
@@ -398,7 +417,7 @@ Text.styling-note {
  *
  * `gap` 是 `spacing` 的 CSS 别名（同一条属性，编译器里映射到同一个键）。
  * 这一页同时示范别名，省得读者以为要记两套名字。 */
-Container.fx-row {
+box.fx-row {
     flex-direction: row;
     gap: 10px;
     /* 行宽定死才有 grow 可演示：右格拿走 420 − 100 − 10 = 310。
@@ -407,7 +426,7 @@ Container.fx-row {
 }
 
 /* 折行演示：340 装得下 100+10+100+10+100 = 330，装不下第四个 → 折行。 */
-Container.fx-wrap {
+box.fx-wrap {
     flex-direction: row;
     flex-wrap: wrap;
     gap: 10px;
@@ -416,20 +435,20 @@ Container.fx-wrap {
 
 /* 格子：宽 100 让折行位置可预测；高 56 是为了装下 `.card` 的 14px 内边距
  * 加一行 12px 文字（44 会把文字压出下沿）。 */
-Container.fx-cell {
+box.fx-cell {
     width: 100px;
     height: 56px;
 }
 
 /* 填充格：基数仍是 100，`flex-grow: 1` 让它吃掉行内余下的全部宽度。
  * 与 `.fx-cell` 分开成两条规则，因为一个元素只在这两格里二选一。 */
-Container.fx-grow {
+box.fx-grow {
     width: 100px;
     height: 56px;
     flex-grow: 1;
 }
 
-Container.page-slider {
+box.page-slider {
     direction: vertical;
     spacing: 24px;
     cross-align: stretch;

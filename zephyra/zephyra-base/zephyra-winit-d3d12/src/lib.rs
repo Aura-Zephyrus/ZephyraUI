@@ -90,6 +90,7 @@
 //! 再读代码是浪费时间。
 #![cfg(windows)]
 
+pub mod ext;
 pub mod host;
 pub mod renderer;
 pub mod shader;

@@ -31,7 +31,7 @@ use zephyra_core::core::{Point, Rect};
 use zephyra_core::decoration::Decorations;
 use zephyra_core::filter::FilterChain;
 use zephyra_core::paint::{command_content_rect, command_filter, Command, DisplayList, SortKey};
-use zephyra_core::paint::{command_corner_radius, command_decorations};
+use zephyra_core::paint::{command_corner_radius, command_corner_shape, command_decorations};
 
 /// 一帧的回放计划：普通段与离屏段按 `DisplayList` 顺序**交替**。
 ///
@@ -345,6 +345,8 @@ pub struct OffscreenPass {
     pub element_rect: Rect,
     /// 元素圆角半径（SDF 用）。四角同径（`CornerRadius::uniform` 的读法）。
     pub corner_radius: f32,
+    /// 角形状 `superellipse(K)` 的 `K`（CSS `corner-shape`）；`1.0`=round，`2.0`=squircle。
+    pub corner_shape_k: f32,
     /// 外投影要不要用**挖洞**合成入口（`PSHollowShadow`）。
     pub hollow_shadow: bool,
     /// 高光 overlay 趟；`None` = 不画。
@@ -360,6 +362,8 @@ pub struct HollowShadow {
     pub element: Rect,
     /// 元素圆角半径。
     pub corner_radius: f32,
+    /// 角形状 `superellipse(K)` 的 `K`。
+    pub corner_shape_k: f32,
 }
 
 /// 高光 overlay 趟的执行参数（纯 SDF，零纹理采样）。
@@ -369,6 +373,8 @@ pub struct HighlightOverlay {
     pub element: Rect,
     /// 元素圆角半径。
     pub corner_radius: f32,
+    /// 角形状 `superellipse(K)` 的 `K`。
+    pub corner_shape_k: f32,
     /// 描边宽度（像素，已含"居中于边界 ×2"换算，见
     /// [`zephyra_core::decoration::Highlight::stroke_width`]）。
     pub stroke_width: f32,
@@ -389,6 +395,8 @@ pub struct InnerShadowOverlay {
     pub element: Rect,
     /// 元素圆角半径。
     pub corner_radius: f32,
+    /// 角形状 `superellipse(K)` 的 `K`。
+    pub corner_shape_k: f32,
     /// 模糊 σ（像素）。
     pub sigma: f32,
     /// 偏移（像素）—— 阴影形状 = 元素形状被平移这一份之后**挖掉**。
@@ -490,23 +498,36 @@ pub fn plan_pass(cmd: &Command) -> Option<OffscreenPass> {
     {
         return None;
     }
-    Some(pass_for_chain(
+    let shape = command_corner_shape(cmd);
+    Some(pass_for_chain_shaped(
         filter,
         content,
         &decorations,
         command_corner_radius(cmd),
+        shape.k,
     ))
 }
 
-/// 按内容矩形、滤镜链与玻璃装饰算计划。[`plan_pass`] 的纯计算内核，测试可直接调。
-///
-/// `decorations` / `corner_radius` 是玻璃装饰的承载：外投影要并进模糊管线，
-/// 高光与内阴影要展开成 overlay 趟 —— SDF 用 `corner_radius`。
+/// 按内容矩形、滤镜链与玻璃装饰算计划（`corner-shape: round`）。[`pass_for_chain_shaped`] 的兼容包装。
 pub fn pass_for_chain(
     filter: &FilterChain,
     content: Rect,
     decorations: &Decorations,
     corner_radius: f32,
+) -> OffscreenPass {
+    pass_for_chain_shaped(filter, content, decorations, corner_radius, 1.0)
+}
+
+/// 按内容矩形、滤镜链与玻璃装饰算计划。[`plan_pass`] 的纯计算内核，测试可直接调。
+///
+/// `decorations` / `corner_radius` / `corner_shape_k` 是玻璃装饰的承载：外投影要并进模糊管线，
+/// 高光与内阴影要展开成 overlay 趟 —— SDF 用 `corner_radius` + `superellipse(K)`。
+pub fn pass_for_chain_shaped(
+    filter: &FilterChain,
+    content: Rect,
+    decorations: &Decorations,
+    corner_radius: f32,
+    corner_shape_k: f32,
 ) -> OffscreenPass {
     // 滤镜外扩与装饰外扩（只有外投影要）取**逐边并集**。
     let decor_outset = decorations.outsets();
@@ -630,6 +651,7 @@ pub fn pass_for_chain(
         HighlightOverlay {
             element: content,
             corner_radius,
+            corner_shape_k,
             stroke_width: h.stroke_width(min_side),
             blur: h.blur_radius,
             alpha: h.alpha,
@@ -647,6 +669,7 @@ pub fn pass_for_chain(
         .map(|s| InnerShadowOverlay {
             element: content,
             corner_radius,
+            corner_shape_k,
             sigma: s.radius,
             offset: s.offset,
             alpha: s.color.a * s.alpha,
@@ -666,6 +689,7 @@ pub fn pass_for_chain(
         decorations: *decorations,
         element_rect: content,
         corner_radius,
+        corner_shape_k,
         hollow_shadow,
         highlight,
         inner_shadow,
@@ -716,6 +740,17 @@ pub fn pass_quad(
     corner: [f32; 2],
     color: [f32; 4],
 ) -> [crate::quad::Vertex; 4] {
+    pass_quad_shaped(dst_size, src_size, corner, color, 1.0)
+}
+
+/// 同 [`pass_quad`]，但可指定角形状 `superellipse(K)` 的 `K`。
+pub fn pass_quad_shaped(
+    dst_size: (f32, f32),
+    src_size: (f32, f32),
+    corner: [f32; 2],
+    color: [f32; 4],
+    shape_k: f32,
+) -> [crate::quad::Vertex; 4] {
     let w = dst_size.0.max(1e-6);
     let h = dst_size.1.max(1e-6);
     let sw = src_size.0.max(1e-6);
@@ -738,6 +773,7 @@ pub fn pass_quad(
         corner,
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: shape_k,
     };
     [
         v([x0, y0], [0.0, 0.0]),
@@ -849,6 +885,7 @@ pub fn refraction_composite_quad(
     element_screen: Rect,
     dst_size: (f32, f32),
     corner_radius: f32,
+    corner_shape_k: f32,
     refraction: Refraction,
 ) -> [crate::quad::Vertex; 4] {
     let ew = element_screen.width.max(1e-6);
@@ -877,6 +914,7 @@ pub fn refraction_composite_quad(
         corner: [corner_radius, refraction.strength],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: corner_shape_k,
     };
     [
         v([x0, y0], [0.0, 0.0]),
@@ -904,6 +942,7 @@ pub fn lens_composite_quad(
     element_screen: Rect,
     dst_size: (f32, f32),
     corner_radius: f32,
+    corner_shape_k: f32,
     lens: Lens,
 ) -> [crate::quad::Vertex; 4] {
     let ew = element_screen.width.max(1e-6);
@@ -929,6 +968,7 @@ pub fn lens_composite_quad(
         corner: [corner_radius, lens.refraction_amount],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: corner_shape_k,
     };
     [
         v([x0, y0], [0.0, 0.0]),
@@ -951,6 +991,7 @@ pub fn backdrop_blur_composite_quad(
     element_screen: Rect,
     dst_size: (f32, f32),
     corner_radius: f32,
+    corner_shape_k: f32,
     sigma: f32,
 ) -> [crate::quad::Vertex; 4] {
     let ew = element_screen.width.max(1e-6);
@@ -976,6 +1017,7 @@ pub fn backdrop_blur_composite_quad(
         corner: [corner_radius, sigma],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: corner_shape_k,
     };
     [
         v([x0, y0], [0.0, 0.0]),
@@ -1009,6 +1051,7 @@ pub fn hollow_shadow_composite_quad(
     element_screen: Rect,
     dst_size: (f32, f32),
     corner_radius: f32,
+    corner_shape_k: f32,
     tint: Option<zephyra_core::core::Color>,
 ) -> [crate::quad::Vertex; 4] {
     let ew = element_screen.width.max(1e-6);
@@ -1036,6 +1079,7 @@ pub fn hollow_shadow_composite_quad(
         corner: [corner_radius, tint.map_or(0.0, |c| c.a)],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: corner_shape_k,
     };
     // local 覆盖**元素坐标系**下的 bounds 区域（元素左上为原点，外侧为负）。
     let lx0 = bounds_screen.x - element_screen.x;
@@ -1093,6 +1137,7 @@ pub fn highlight_overlay_quad(
         corner: [p.corner_radius, p.kind],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: p.corner_shape_k,
     };
     let lx0 = -margin;
     let ly0 = -margin;
@@ -1136,6 +1181,7 @@ pub fn inner_shadow_overlay_quad(
         corner: [p.corner_radius, p.sigma],
         half_size: half,
         kind: crate::quad::kind::BLUR,
+        shape: p.corner_shape_k,
     };
     [
         v([x0, y0], [0.0, 0.0]),

@@ -32,7 +32,7 @@ const ACCENT_FILL: &PropertyKey =
 
 /// 声明一棵界面：标题 + 两个按钮。
 fn ui_element() -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key("root")
         // 必须给根一个背景色。真实管线里"没有背景"意味着**不画任何东西**，所以一棵
         // 全透明的树会产出空的 DisplayList——`tests::render_draws_nothing_when_no_node_has_a_background`
@@ -118,7 +118,7 @@ fn main() {
     );
 
     // ---- 5. 属性变化才标脏 ----
-    let changed = Element::new(NodeTag::Container)
+    let changed = Element::new(NodeTag::Box)
         .with_key("root")
         .with(
             CONTENT,

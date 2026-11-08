@@ -122,6 +122,17 @@ pub enum Easing {
     ///
     /// 实际形状是**先慢后快**（t=0.5 处 0.11）。
     SoftExit,
+    /// iOS 风格的连续流畅曲线：`cubic-bezier(0.22, 1.0, 0.36, 1.0)`。
+    ///
+    /// # 它不是微软 motion 表里的一条
+    ///
+    /// 应用层为菜单开合选的曲线，模仿 iOS 的平滑减速感：起步即有动量、
+    /// 全程连续、尾段细腻收束，无回弹。它不替代上面四条官方曲线，
+    /// 也不用于页面切换 —— 需要官方动效语义的地方仍按 `docs/developer/animation.md`
+    /// §1 取 `Direct` / `PointToPoint` / `SoftExit`。
+    ///
+    /// 实测形状：t=0.5 处约 0.94，前段平滑加速进入、后段长而连续地收敛到 1。
+    AppleMenu,
 }
 
 impl Easing {
@@ -144,6 +155,8 @@ impl Easing {
             Self::PointToPoint => Some(Bezier::new(0.55, 0.55, 0.0, 1.0)),
             // 官方「平缓退出」cubic-bezier(1,0,1,1)
             Self::SoftExit => Some(Bezier::new(1.0, 0.0, 1.0, 1.0)),
+            // 应用层菜单曲线：iOS 风格连续流畅减速 0.22,1.0,0.36,1.0（见枚举文档）
+            Self::AppleMenu => Some(Bezier::new(0.22, 1.0, 0.36, 1.0)),
         }
     }
 
@@ -185,9 +198,24 @@ pub fn progress(elapsed: f32, dur: f32, easing: Easing) -> f32 {
 /// 意思是"这一档没有任何外观差异，不要白发一个分类名" ——
 /// 多发一个分类名会让样式表多一条永不命中的规则，而门禁会要求它存在。
 pub fn step(p: f32) -> Option<u32> {
-    if !p.is_finite() || p <= 0.0 {
+    step_with(p, STEPS)
+}
+
+/// 与 [`step`] 相同，但档位数由调用方给。
+///
+/// # 为什么需要第二个档位密度
+///
+/// [`STEPS`] 是页面入场用的密度（333 ms ÷ 8 ≈ 41 ms/档）。短动画
+/// （例如 200 ms 上下的菜单开合）按同一个 8 档量化会出现明显的
+/// 阶梯，而把全局 `STEPS` 改大又会改变 `.enter-N` 的既有规则数量。
+/// 于是这里只给调用方一个**局部**密度，默认密度仍是 [`STEPS`]。
+///
+/// `steps == 0` 与 `p <= 0` 都返回 `None`（没有档位可发）；
+/// 合法输入的范围恒为 `1..=steps`。
+pub fn step_with(p: f32, steps: u32) -> Option<u32> {
+    if steps == 0 || !p.is_finite() || p <= 0.0 {
         return None;
     }
-    let n = (p * STEPS as f32).ceil() as u32;
-    Some(n.clamp(1, STEPS))
+    let n = (p * steps as f32).ceil() as u32;
+    Some(n.clamp(1, steps))
 }

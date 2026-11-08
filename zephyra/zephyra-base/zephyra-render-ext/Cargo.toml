@@ -7,9 +7,7 @@ rust-version.workspace = true
 description = "渲染扩展契约：能力声明、生命周期、注册表、报告、Hook 上下文。零系统 API，三后端共用。"
 
 [dependencies]
-zephyra-core = { path = "../../zephyra-core" }
-zephyra-fx = { path = "../../zephyra-fx" }
-bytemuck = { version = "1", features = ["derive"] }
+# 契约层：零平台依赖、零 wgpu（§17 P0-1/S5）。仅标准库 + 可选 serde 由后续阶段按需加入。
 
 [lints.rust]
 unsafe_code = "forbid"

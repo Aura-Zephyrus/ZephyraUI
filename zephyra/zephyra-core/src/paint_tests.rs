@@ -53,7 +53,7 @@ const BIG: Rect = Rect::new(0.0, 0.0, 48.0, 48.0);
 
 /// 一个带图标的节点。**尺寸由 [`render_of`] 的 `bounds` 决定**（见那里的说明）。
 fn icon_el(name: &'static str) -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key("root")
         .with(&crate::props::ICON_NAME, PropertyValue::static_str(name))
 }
@@ -248,7 +248,7 @@ fn icon_size_scales_with_node() {
 /// 而两者在 demo 里并排出现时，肉眼会以为「图像不支持圆角」而不是「接线漏了」。
 #[test]
 fn corner_radius_reaches_image_command() {
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"))
         .with(&crate::props::CORNER_RADIUS, PropertyValue::float(14.0));
     let list = render_of(&el, UNIT);
@@ -269,7 +269,7 @@ fn corner_radius_reaches_image_command() {
 /// 图像的 `radius` 缺省是 0（直角），且**与矩形共用同一个属性**。
 #[test]
 fn image_default_corner_radius_is_zero() {
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"));
     let list = render_of(&el, UNIT);
     let radii: Vec<f32> = list
@@ -284,7 +284,7 @@ fn image_default_corner_radius_is_zero() {
 
 #[test]
 fn image_wins_when_both_image_and_icon_are_set() {
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&crate::props::ICON_NAME, PropertyValue::static_str("gear"))
         .with(
@@ -314,7 +314,7 @@ fn image_wins_when_both_image_and_icon_are_set() {
 #[test]
 fn icon_colour_comes_from_icon_color_and_is_not_inherited() {
     // 显式给色。
-    let colored = Element::new(NodeTag::Container)
+    let colored = Element::new(NodeTag::Box)
         .with_key("root")
         .with(&crate::props::ICON_NAME, PropertyValue::static_str("gear"))
         .with(
@@ -540,7 +540,7 @@ use crate::paint::RenderSource;
 #[test]
 fn custom_source_is_carried_through_the_downgrade() {
     let src = RenderSource::new("test:fill", 42u32);
-    let el = Element::new(NodeTag::Container)
+    let el = Element::new(NodeTag::Box)
         .with_key("custom")
         .with(&crate::props::RENDER_SOURCE, PropertyValue::custom(src));
     let list = render_of(&el, UNIT);
@@ -563,7 +563,7 @@ fn custom_source_is_carried_through_the_downgrade() {
 /// 没挂源的节点零发射——绝大多数节点在这里必须零成本。
 #[test]
 fn no_custom_source_emits_no_custom_command() {
-    let el = Element::new(NodeTag::Container).with_key("plain");
+    let el = Element::new(NodeTag::Box).with_key("plain");
     let list = render_of(&el, UNIT);
     assert!(
         list.iter()
@@ -593,6 +593,7 @@ fn custom_command_helpers() {
     let cmd = Command::Custom {
         bounds: Rect::new(5.0, 6.0, 30.0, 40.0),
         source: RenderSource::new("k", ()),
+        resource_key: None,
         filter: crate::filter::FilterChain::single(crate::filter::Filter::Blur {
             sigma_x: 4.0,
             sigma_y: 4.0,

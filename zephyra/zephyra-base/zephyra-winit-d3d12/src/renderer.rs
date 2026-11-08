@@ -31,6 +31,7 @@ use crate::quad::{self, RenderReport, Vertex};
 use crate::shader::{self, ShaderError, Shaders};
 use crate::surface::{create_resource, heap_props, texture_desc, DescriptorHeap, SurfaceError};
 use zephyra_core::filter::{BlendMode, Coeff};
+use zephyra_render_ext::{registration::HookContext, types::Rect as ExtRect};
 
 /// 一张已上传的图像纹理。
 ///
@@ -156,6 +157,10 @@ pub struct Renderer {
     textures: Vec<UploadedTexture>,
     /// 下一个可用的 SRV 槽位。0 号恒给图集（见 [`Renderer::new`]）。
     next_texture_slot: u32,
+    /// 可复用的 SRV 槽位（纹理/ ext 卸载后回收）。
+    free_texture_slots: Vec<u32>,
+    /// ext 资源键 → SRV 槽位（用于卸载回收与重复分配检测）。
+    ext_srv_keys: std::collections::HashMap<String, u32>,
     /// 单窗口 / 测试用的默认目标。
     ///
     /// 多窗口宿主**不碰**它 —— 每个窗口把自己的 [`WindowTargets`] 传给
@@ -190,12 +195,6 @@ pub struct WindowTargets {
     /// 顶点缓冲已分配字节数，用于验证稳态不增长。
     vertex_capacity: u64,
     /// 跨帧复用的展开缓冲（顶点流 + 索引 + 分批）。
-    ///
-    /// 稳态下 `quad::expand_into` 一帧**零分配** —— 纯函数版每帧要新开六七个
-    /// `Vec` 并从 0 长到目标大小（实测 demo 每帧约 170 KB 的分配，69% 出在这里）。
-    ///
-    /// 复用不额外增加借用成本：`record_with` 先把它 `mem::take` 成局部变量，
-    /// 因为同时持有 `&scratch` 与 `&mut targets.xxx` 会撞上借用检查器。
     scratch: quad::Scratch,
     /// 上一次真正上传的顶点字节。逐字节比较后决定要不要重传（见 upload_geometry）。
     last_vertex_bytes: Vec<u8>,
@@ -204,14 +203,15 @@ pub struct WindowTargets {
     /// 离屏 pass 的两张乒乓 RT（E4.4 / E4.6）。见 [`OffscreenPair`]。
     offscreen: std::cell::RefCell<Option<OffscreenPair>>,
     /// 离屏 RT 专用的 RTV 描述符堆（2 槽）。
-    ///
-    /// 不能借交换链的那个 —— 它在 `ResizeBuffers` 时会重建，而离屏 RT 与窗口无关。
-    /// 借用它的症状是「窗口改大小之后第一帧带滤镜就崩」。
     offscreen_rtv_heap: DescriptorHeap,
     /// `g_dst`（目标副本）的懒建纹理，见 [`Renderer::refresh_dst_copy`]。
     dst_copy: std::cell::RefCell<Option<DstCopy>>,
     /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
+    /// ext 共享状态（与 ExtContextHandle 同步）。
+    pub(crate) ext_pool: std::rc::Rc<std::cell::RefCell<crate::ext::ExtPool>>,
+    pub(crate) ext_hooks: std::rc::Rc<std::cell::RefCell<crate::ext::HookTable>>,
+    pub(crate) ext_frame: std::rc::Rc<std::cell::Cell<u64>>,
 }
 
 impl WindowTargets {
@@ -239,12 +239,24 @@ impl WindowTargets {
             offscreen_rtv_heap,
             dst_copy: std::cell::RefCell::new(None),
             hooks: Vec::new(),
+            ext_pool: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::ExtPool::default())),
+            ext_hooks: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::HookTable::default())),
+            ext_frame: std::rc::Rc::new(std::cell::Cell::new(0)),
         })
     }
 
     /// 顶点缓冲容量（字节）。稳态下跨帧不变。
     pub fn vertex_capacity(&self) -> u64 {
         self.vertex_capacity
+    }
+
+    pub fn ext_handle(&self, device: &ID3D12Device) -> zephyra_ext::ExtContextHandle {
+        crate::ext::new_ext_handle(
+            device.clone(),
+            self.ext_pool.clone(),
+            self.ext_hooks.clone(),
+            self.ext_frame.clone(),
+        )
     }
 }
 
@@ -257,10 +269,10 @@ impl WindowTargets {
 /// 在上传堆资源上是非法的。
 ///
 /// 因此走 [`StreamBuffer`] 的「上传 → 拷贝 → 默认堆」三步。
-struct UploadBuffer {
-    resource: ID3D12Resource,
+pub(crate) struct UploadBuffer {
+    pub(crate) resource: ID3D12Resource,
     /// 已映射的 CPU 地址（`resource` 拥有底层内存，这里只是借一个指针）。
-    mapped: *mut u8,
+    pub(crate) mapped: *mut u8,
 }
 
 // 上传缓冲的所有权在 `resource` 上；`mapped` 是它的别名，Rust 不知道这层关系。
@@ -782,6 +794,8 @@ struct CmdEnv<'a> {
     /// 当前目标像素尺寸（离屏段会换成 RT 尺寸）。
     size: (u32, u32),
     textures: &'a TextureTable,
+    /// 扩展纹理 `resource_key` → SRV 槽位快照（避免与 `&mut WindowTargets` 冲突）。
+    ext_slots: Option<&'a std::collections::HashMap<String, u32>>,
     /// 目标的**资源**（`refresh_dst_copy` 拿它当拷贝**源**）。
     ///
     /// # 它**不**用于发目标的状态屏障
@@ -819,17 +833,6 @@ fn command_blend_mode(cmd: &zephyra_core::paint::Command) -> Option<usize> {
 }
 
 /// 外部渲染源在 **D3D12 后端**的接入点。
-///
-/// 与 D3D11 侧同名 trait 并列存在而不是抽到公共 crate：两个后端传给钩子的
-/// 上下文毫无共性（立即上下文 vs 记录中的命令列表），强行统一只会造出一层
-/// 只有类型擦除成本的间接。见 [`zephyra_core::paint::Command::Custom`] 的
-/// 契约文档——这里是该契约的 D3D12 侧落点。
-///
-/// # 状态纪律
-///
-/// 与 D3D11 侧同款：调用时目标 / 视口 / scissor 已设好；**混合状态自理**
-/// （D3D12 的混合烤在 PSO 里，钩子要什么就自己 `SetPipelineState` / 换
-/// 混合描述）。普通段自会重绑自己的 PSO，钩子不用恢复。
 pub trait RenderHook: Send + Sync {
     /// 在 `bounds`（屏幕像素坐标）处绘制自绘内容。
     fn draw(
@@ -838,6 +841,15 @@ pub trait RenderHook: Send + Sync {
         bounds: zephyra_core::core::Rect,
         source: &zephyra_core::paint::RenderSource,
     );
+    fn draw_with_key(
+        &mut self,
+        ctx: HookCtx<'_>,
+        bounds: zephyra_core::core::Rect,
+        source: &zephyra_core::paint::RenderSource,
+        _resource_key: Option<&str>,
+    ) {
+        self.draw(ctx, bounds, source);
+    }
 }
 
 /// 传给 [`RenderHook`] 的 D3D12 上下文。
@@ -850,6 +862,35 @@ pub struct HookCtx<'a> {
     pub rtv: D3D12_CPU_DESCRIPTOR_HANDLE,
     /// 目标像素尺寸（宽，高）。
     pub size: (f32, f32),
+    pub frame_index: u64,
+    pub ext_pool: Option<&'a crate::ext::ExtPool>,
+}
+
+impl HookContext for HookCtx<'_> {
+    fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+    fn size(&self) -> (f32, f32) {
+        self.size
+    }
+    fn damage(&self) -> Option<ExtRect> {
+        None
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        static UNIT: () = ();
+        &UNIT
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        fn placeholder() -> &'static mut () {
+            static mut P: () = ();
+            unsafe { &mut *std::ptr::addr_of_mut!(P) }
+        }
+        placeholder()
+    }
+}
+
+fn core_rect_to_ext(r: zephyra_core::core::Rect) -> ExtRect {
+    ExtRect::new(r.x, r.y, r.width, r.height)
 }
 
 /// 由脏区算出帧内 scissor。
@@ -1018,6 +1059,8 @@ impl Renderer {
             device: device.clone(),
             textures: Vec::new(),
             next_texture_slot: 1,
+            free_texture_slots: Vec::new(),
+            ext_srv_keys: std::collections::HashMap::new(),
             elements: shaders.elements,
             samples,
             default_targets: Some(default_targets),
@@ -1726,21 +1769,7 @@ impl Renderer {
                 ),
             ));
         }
-        let slot = self.next_texture_slot;
-        if slot >= self.srv_heap.count() {
-            // 静默覆盖别人的槽位 = 「图标随机变成另一张图」，几乎无法归因。直接报错。
-            return Err(SurfaceError::new(
-                "上传纹理",
-                windows::core::Error::new(
-                    E_FAIL,
-                    format!(
-                        "SRV 堆只有 {} 个槽位（0 号给图集），已用尽",
-                        self.srv_heap.count()
-                    ),
-                ),
-            ));
-        }
-        self.next_texture_slot = slot + 1;
+        let slot = self.alloc_srv_slot()?;
 
         let tex_desc = crate::surface::texture_desc((w, h), D3D12_RESOURCE_FLAG_NONE);
         let texture = create_resource(
@@ -1877,11 +1906,193 @@ impl Renderer {
     ///
     /// 与 [`Self::record`] 逐字节同路径，只是几何缓冲 / 离屏 RT / 目标副本 / 钩子
     /// 都取自 `targets` 而不是渲染器的默认那一套。多窗口宿主走这条。
+    /// 为 ext pool 中尚未分配 SRV 槽位的外部资源创建描述符（D3D12 通用采样路径）。
+    fn alloc_srv_slot(&mut self) -> Result<u32, SurfaceError> {
+        // 本后端 `begin_frame()` 对队列做全量 `wait_gpu()`，`sync_ext_texture_srvs` 在其后录制，
+        // 因此此前帧引用的 SRV 描述符已无在飞 GPU 读取；回收槽位可在此安全复用。
+        // 若未来改为 ring-buffer/多帧在飞，必须改为 fence 值延迟回收。
+        if let Some(slot) = self.free_texture_slots.pop() {
+            return Ok(slot);
+        }
+        // 跳过 DST/离屏保留槽（9/10/11）与 atlas(0)；若已进入保留区则推进。
+        while self.next_texture_slot >= DST_SRV_SLOT && self.next_texture_slot < 12 {
+            self.next_texture_slot += 1;
+        }
+        let slot = self.next_texture_slot;
+        if slot >= self.srv_heap.count() {
+            return Err(SurfaceError::new(
+                "SRV 槽位分配",
+                windows::core::Error::new(
+                    E_FAIL,
+                    format!(
+                        "SRV 堆只有 {} 个槽位（0 号给图集），已用尽",
+                        self.srv_heap.count()
+                    ),
+                ),
+            ));
+        }
+        self.next_texture_slot = slot + 1;
+        Ok(slot)
+    }
+
+    fn sync_ext_texture_srvs(
+        &mut self,
+        list: &ID3D12GraphicsCommandList,
+        ext_pool: &mut crate::ext::ExtPool,
+    ) -> Result<(), SurfaceError> {
+        // `begin_frame()` 已做全量 `wait_gpu()`，此处 GPU 空闲，可安全释放上一帧/卸载退役资源。
+        ext_pool.release_retired();
+        // 回收已卸载/替换的 ext SRV 槽位（131：与 ext 生命周期同步）。
+        let live: std::collections::HashSet<String> = ext_pool.textures.keys().cloned().collect();
+        let stale: Vec<String> = self
+            .ext_srv_keys
+            .keys()
+            .filter(|k| !live.contains(*k))
+            .cloned()
+            .collect();
+        for k in stale {
+            if let Some(slot) = self.ext_srv_keys.remove(&k) {
+                self.free_texture_slots.push(slot);
+            }
+        }
+        for (k, slot) in self.ext_srv_keys.clone() {
+            if let Some(res) = ext_pool.textures.get(&k) {
+                if res.srv_slot != Some(slot) {
+                    self.ext_srv_keys.remove(&k);
+                    self.free_texture_slots.push(slot);
+                }
+            }
+        }
+
+        let keys: Vec<String> = ext_pool.textures.keys().cloned().collect();
+        for key in keys {
+            let Some(res) = ext_pool.textures.get_mut(&key) else {
+                continue;
+            };
+            // CPU 挂起上传：创建默认堆纹理 + staging + 拷贝 + 屏障。
+            if res.resource.is_none() {
+                if let Some(cpu) = res.pending_cpu.take() {
+                    let w = cpu.width.max(1);
+                    let h = cpu.height.max(1);
+                    let tight = (w as usize) * 4;
+                    let tex_desc = texture_desc((w, h), D3D12_RESOURCE_FLAG_NONE);
+                    let texture = create_resource(
+                        &self.device,
+                        &heap_props(D3D12_HEAP_TYPE_DEFAULT),
+                        &tex_desc,
+                        D3D12_RESOURCE_STATE_COPY_DEST,
+                    )?;
+                    let mut footprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default();
+                    let mut total = 0u64;
+                    unsafe {
+                        self.device.GetCopyableFootprints(
+                            &tex_desc,
+                            0,
+                            1,
+                            0,
+                            Some(&mut footprint),
+                            None,
+                            None,
+                            Some(&mut total),
+                        );
+                    }
+                    let row_pitch = footprint.Footprint.RowPitch as usize;
+                    if row_pitch < tight {
+                        return Err(SurfaceError::new(
+                            "ext CPU texture: row pitch too small",
+                            windows::core::Error::from(E_FAIL),
+                        ));
+                    }
+                    let staging = UploadBuffer::new(
+                        &self.device,
+                        total.max((row_pitch * h as usize) as u64),
+                    )?;
+                    let src = &cpu.pixels;
+                    unsafe {
+                        for row in 0..h as usize {
+                            let dst_off = row * row_pitch;
+                            let src_off = row * (cpu.row_pitch.max(tight as u32) as usize);
+                            let copy = tight.min(src.len().saturating_sub(src_off));
+                            if copy > 0 {
+                                std::ptr::copy_nonoverlapping(
+                                    src.as_ptr().add(src_off),
+                                    staging.mapped.add(dst_off),
+                                    copy,
+                                );
+                            }
+                        }
+                        list.CopyTextureRegion(
+                            &D3D12_TEXTURE_COPY_LOCATION {
+                                pResource: std::mem::ManuallyDrop::new(Some(texture.clone())),
+                                Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                                Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                                    SubresourceIndex: 0,
+                                },
+                            },
+                            0,
+                            0,
+                            0,
+                            &D3D12_TEXTURE_COPY_LOCATION {
+                                pResource: std::mem::ManuallyDrop::new(Some(
+                                    staging.resource.clone(),
+                                )),
+                                Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                                Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                                    PlacedFootprint: footprint,
+                                },
+                            },
+                            None,
+                        );
+                        crate::surface::Gpu::barrier(
+                            list,
+                            &texture,
+                            D3D12_RESOURCE_STATE_COPY_DEST,
+                            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                        );
+                    }
+                    // 保持 staging 存活至 GPU 完成（简化策略；后续可接 fence 回收）。
+                    res.staging = Some(staging);
+                    res.resource = Some(texture);
+                }
+            }
+            if let Some(slot) = res.srv_slot {
+                self.ext_srv_keys.insert(key.clone(), slot);
+                continue;
+            }
+            let Some(resource) = &res.resource else {
+                continue;
+            };
+            let slot = match self.alloc_srv_slot() {
+                Ok(s) => s,
+                Err(_) => {
+                    zephyra_ext::debug::log_fallback(
+                        "d3d12 ext SRV heap full; skip auto-binding (use hook + ext_pool)",
+                    );
+                    break;
+                }
+            };
+            unsafe {
+                self.device
+                    .CreateShaderResourceView(resource, None, self.srv_heap.cpu(slot)?);
+            }
+            res.srv_slot = Some(slot);
+            self.ext_srv_keys.insert(key, slot);
+        }
+        Ok(())
+    }
+
     pub fn record_with(
         &mut self,
         targets: &mut WindowTargets,
         ctx: RenderCtx<'_>,
     ) -> Result<RenderReport, SurfaceError> {
+        targets
+            .ext_frame
+            .set(targets.ext_frame.get().wrapping_add(1));
+        {
+            let mut pool = targets.ext_pool.borrow_mut();
+            self.sync_ext_texture_srvs(ctx.list, &mut pool)?;
+        }
         let RenderCtx {
             device,
             list,
@@ -1894,10 +2105,12 @@ impl Renderer {
             damage,
         } = ctx;
 
+        let ext_slots = targets.ext_pool.borrow().srv_slots_snapshot();
         let env = CmdEnv {
             rtv,
             size,
             textures,
+            ext_slots: Some(&ext_slots),
             rt,
             damage,
             // 离屏那条命令的 `SortKey` 由 `plan_segments` 按下标给出并覆盖它；这个默认值
@@ -1998,28 +2211,100 @@ impl Renderer {
                 }
                 zephyra_fx::offscreen::Segment::Custom { index } => {
                     let item = display_list.iter().nth(index).expect("下标来自同一份列表");
-                    let zephyra_core::paint::Command::Custom { bounds, source, .. } = &item.command
+                    let zephyra_core::paint::Command::Custom {
+                        bounds,
+                        source,
+                        resource_key,
+                        ..
+                    } = &item.command
                     else {
                         unreachable!("Custom 段只由 Command::Custom 产出");
                     };
-                    match targets.hooks.iter_mut().find(|(k, _)| *k == source.kind) {
-                        Some((_, hook)) => {
-                            hook.draw(
-                                HookCtx {
-                                    device,
-                                    list,
-                                    rtv: env.rtv,
-                                    size: (env.size.0 as f32, env.size.1 as f32),
-                                },
-                                *bounds,
-                                source,
+                    let key_str = resource_key.as_deref();
+                    let hook_kind = source.kind.as_ref();
+                    let ext_pool = targets.ext_pool.borrow();
+                    let imported_payload = key_str
+                        .and_then(|k| ext_pool.get(k))
+                        .map(|r| r as &dyn std::any::Any);
+                    let payload = imported_payload
+                        .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
+                    let mut ctx = HookCtx {
+                        device,
+                        list,
+                        rtv: env.rtv,
+                        size: (env.size.0 as f32, env.size.1 as f32),
+                        frame_index: targets.ext_frame.get(),
+                        ext_pool: Some(&*ext_pool),
+                    };
+                    let mut handled = false;
+                    {
+                        let mut ext_hooks = targets.ext_hooks.borrow_mut();
+                        if let Some(h) = ext_hooks.global.get_mut(hook_kind) {
+                            let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                key_str,
+                                Some(payload),
                             );
-                            report.custom_passes += 1;
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                h(&mut ctx, core_rect_to_ext(*bounds), &ext_src);
+                            }));
+                            if r.is_ok() {
+                                handled = true;
+                            } else {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "ext hook panicked: kind={hook_kind} key={:?}",
+                                    key_str
+                                ));
+                            }
+                        } else if let Some((w, k)) = ext_hooks
+                            .window
+                            .keys()
+                            .find(|(_, k)| k.as_str() == hook_kind)
+                            .cloned()
+                        {
+                            if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                                let ext_src = zephyra_render_ext::registration::RenderSource::new(
+                                    key_str,
+                                    Some(payload),
+                                );
+                                let r =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        h(&mut ctx, core_rect_to_ext(*bounds), &ext_src);
+                                    }));
+                                if r.is_ok() {
+                                    handled = true;
+                                } else {
+                                    zephyra_ext::debug::log_hook(&format!(
+                                        "ext hook panicked: kind={hook_kind} key={:?}",
+                                        key_str
+                                    ));
+                                }
+                            }
                         }
-                        None => {
-                            // 没登记钩子：跳过并计数——"这块区域没画"而不是崩。
-                            report.unhandled_custom += 1;
+                    }
+                    if !handled {
+                        if let Some((_, hook)) = targets
+                            .hooks
+                            .iter_mut()
+                            .find(|(k, _)| k.as_ref() == hook_kind)
+                        {
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                hook.draw_with_key(ctx, *bounds, source, key_str);
+                            }));
+                            if r.is_ok() {
+                                handled = true;
+                            } else {
+                                zephyra_ext::debug::log_hook(&format!(
+                                    "internal hook panicked: kind={hook_kind} key={:?}",
+                                    key_str
+                                ));
+                            }
                         }
+                    }
+                    drop(ext_pool);
+                    if handled {
+                        report.custom_passes += 1;
+                    } else {
+                        report.unhandled_custom += 1;
                     }
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
@@ -2156,7 +2441,7 @@ impl Renderer {
         let mut report = quad::expand_range_translated_into(
             display_list,
             env.size,
-            &|n: &str| env.textures.contains(n),
+            &|n: &str| env.textures.contains(n) || env.ext_slots.is_some_and(|m| m.contains_key(n)),
             zephyra_core::core::Point::new(0.0, 0.0),
             Some(range.clone()),
             &mut scratch,
@@ -2362,11 +2647,18 @@ impl Renderer {
             // 纹理绑定。只有 `Command::Image` 逐段换；矩形 / 字形 / 多边形记 `None`，
             // 绑图集兜住（`g_tex` 在 PS 里被声明，`t0` 悬空会让某些驱动解除引用并崩溃）。
             let slot = match &run.texture {
-                Some(name) => match env.textures.slot(name) {
-                    Some(s) => s,
-                    // 顶点收集阶段已过滤掉未注册纹理，这里本不该发生。
-                    None => continue,
-                },
+                Some(name) => {
+                    if let Some(s) = env.textures.slot(name) {
+                        s
+                    } else if let Some(s) =
+                        env.ext_slots.and_then(|m| m.get(name.as_ref()).copied())
+                    {
+                        s
+                    } else {
+                        // 顶点收集阶段已过滤掉未注册纹理，这里本不该发生。
+                        continue;
+                    }
+                }
                 None => self.atlas_srv_slot,
             };
             // 段落定位：`runs` 记**顶点**下标，`DrawIndexedInstanced` 要**索引**下标。
@@ -2492,7 +2784,9 @@ impl Renderer {
         let mut inner_report = quad::expand_range_translated_into(
             &sub,
             rt_size,
-            &|n: &str| cmd_env.textures.contains(n),
+            &|n: &str| {
+                cmd_env.textures.contains(n) || cmd_env.ext_slots.is_some_and(|m| m.contains_key(n))
+            },
             zephyra_core::core::Point::new(pass.translate.0, pass.translate.1),
             None,
             &mut scratch,
@@ -2507,6 +2801,7 @@ impl Renderer {
             rtv: a_rtv,
             size: rt_size,
             textures: cmd_env.textures,
+            ext_slots: cmd_env.ext_slots,
             rt: Some(&a.resource),
             damage: zephyra_core::frame::Damage::Full,
             key: cmd_env.key,
@@ -2694,6 +2989,7 @@ impl Renderer {
                 pass.element_rect,
                 screen,
                 pass.corner_radius,
+                pass.corner_shape_k,
                 pass.tint,
             );
             self.draw_pass_quad(
@@ -2718,19 +3014,31 @@ impl Renderer {
         // 外投影则**叠加**。没有滤镜效果时退回普通合成（把 RT 内容贴回来）。
         let effect = match (pass.refraction, pass.lens, pass.backdrop_blur, dst_copy) {
             (Some(r), _, _, Some(srv)) => Some((
-                offscreen::refraction_composite_quad(content, screen, corner, r),
+                offscreen::refraction_composite_quad(
+                    content,
+                    screen,
+                    corner,
+                    pass.corner_shape_k,
+                    r,
+                ),
                 shader::PS_REFRACTION,
                 srv,
                 1u8,
             )),
             (_, Some(l), _, Some(srv)) => Some((
-                offscreen::lens_composite_quad(content, screen, corner, l),
+                offscreen::lens_composite_quad(content, screen, corner, pass.corner_shape_k, l),
                 shader::PS_LENS,
                 srv,
                 2,
             )),
             (_, _, Some(bb), Some(srv)) => Some((
-                offscreen::backdrop_blur_composite_quad(content, screen, corner, bb.sigma),
+                offscreen::backdrop_blur_composite_quad(
+                    content,
+                    screen,
+                    corner,
+                    pass.corner_shape_k,
+                    bb.sigma,
+                ),
                 shader::PS_BACKDROP_BLUR,
                 srv,
                 3,

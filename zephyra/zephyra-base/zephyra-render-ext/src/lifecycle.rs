@@ -1,6 +1,6 @@
 //! Lifecycle notifications for render extensions.
 
-use zephyra_core::core::Rect;
+use crate::types::Rect;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LifecycleContext {
@@ -33,5 +33,27 @@ mod tests {
         let s = format!("{:?}", ctx);
         assert!(s.contains("1920"));
         assert!(s.contains("1080"));
+    }
+
+    #[test]
+    fn render_lifecycle_defaults_are_noop() {
+        struct L(bool);
+        impl RenderLifecycle for L {
+            fn on_device_lost(&mut self) {
+                self.0 = true;
+            }
+        }
+        let mut l = L(false);
+        let ctx = LifecycleContext {
+            size: (1, 1),
+            damage: None,
+            is_first: false,
+        };
+        l.on_prepare(&ctx);
+        l.on_resize(&ctx);
+        l.on_device_restored(&ctx);
+        assert!(!l.0);
+        l.on_device_lost();
+        assert!(l.0);
     }
 }

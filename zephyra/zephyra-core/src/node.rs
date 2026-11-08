@@ -61,10 +61,9 @@ pub struct Node {
     children: Vec<Node>,
     /// 测量结果缓存（`Dirty >= Layout` 时失效）。
     ///
-    /// `pub(crate)`：写入方是 [`crate::layout`] 的测量趟，读取方是排列趟（它复用
-    /// 刚测出的尺寸而不重算）。对外只暴露 [`Node::cached_size`]，因为外部拿到
-    /// `MeasureResult` 也用不上——那会诱使调用方绕过 `pick_axis` 直接改矩形。
-    pub(crate) measure_cache: Option<(Constraints, MeasureResult)>,
+    /// 缓存键包含 `(Constraints, viewport)`（D15/R2）：`root` 手动项的视口约束
+    /// 依赖 viewport，避免 resize 时约束未变但视口变了导致错用旧测量。
+    pub(crate) measure_cache: Option<(Constraints, crate::core::Size, MeasureResult)>,
     /// 字形四边形缓存（局部坐标，原点在元素上）。
     ///
     /// # 为什么是 `RefCell`
@@ -276,25 +275,14 @@ impl Node {
     }
 
     /// 按事件身份查该元素的**窗口矩形**；不存在时返回 `None`。
-    ///
-    /// 要「定位坐标」时更常用 [`Self::find_center`]——`left` / `top` 指的是元素
-    /// **中心**，不是左上角。
     pub fn find_rect(&self, key: &ElementKey) -> Option<Rect> {
         self.find(key).map(|n| n.rect())
     }
 
-    /// 本元素矩形在窗口里的**中心点**。
-    ///
-    /// 与绝对定位的 `left` / `top` 同一坐标系、同一含义：把某个锚点的中心写进
-    /// 另一个元素的 `left` / `top`，后者就居中叠在锚点上。
+    /// 本元素矩形在窗口里的**中心点**（布局几何中心）。
     pub fn center(&self) -> crate::core::Point {
         let r = self.rect();
         crate::core::Point::new(r.x + r.width * 0.5, r.y + r.height * 0.5)
-    }
-
-    /// 按事件身份查该元素的**窗口中心坐标**；不存在时返回 `None`。
-    pub fn find_center(&self, key: &ElementKey) -> Option<crate::core::Point> {
-        self.find(key).map(|n| n.center())
     }
 
     /// 设置属性并按影响范围标脏。
@@ -429,20 +417,29 @@ impl Node {
     /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
     ///
     /// 排列趟用它复用刚测出的结果，而不是重跑一遍测量。
-    ///
-    /// ⚠ 这里**只**读尺寸。历史上它旁边还有一个读 `shaped` 的姊妹方法
-    /// （`cached_shaped()`），被绘制趟拿去复用排版结果 —— 已删除，原因见
-    /// [`crate::paint::text_command`]：测量缓存的键只有 [`Constraints`]，而
-    /// `ShapedText` 还依赖**文本内容**，`TEXT` 又被刻意判成只重绘属性，于是那条
-    /// 「省一次排版」的捷径会把旧文本的排版喂给新文本（症状：点按钮数值不变、
-    /// 画面不更新，resize 才自愈）。要省的话该按「排版输入指纹」缓存，不是按约束。
     pub(crate) fn cached_size(&self) -> Option<crate::core::Size> {
-        self.measure_cache.as_ref().map(|(_, r)| r.size)
+        self.measure_cache.as_ref().map(|(_, _, r)| r.size)
     }
 
-    /// 写入测量缓存。
-    pub(crate) fn cache_measure(&mut self, constraints: Constraints, result: MeasureResult) {
-        self.measure_cache = Some((constraints, result));
+    /// 命中缓存则返回尺寸（键：约束 + 视口，D15/R2）。
+    pub(crate) fn cached_measure(
+        &self,
+        constraints: Constraints,
+        viewport: crate::core::Size,
+    ) -> Option<crate::core::Size> {
+        self.measure_cache
+            .as_ref()
+            .and_then(|(c, vp, r)| (*c == constraints && *vp == viewport).then_some(r.size))
+    }
+
+    /// 写入测量缓存（键包含 viewport，D15/R2）。
+    pub(crate) fn cache_measure(
+        &mut self,
+        constraints: Constraints,
+        viewport: crate::core::Size,
+        result: MeasureResult,
+    ) {
+        self.measure_cache = Some((constraints, viewport, result));
     }
 
     /// 写入已摆放的矩形。只应由 [`crate::layout`] 的排列趟调用。

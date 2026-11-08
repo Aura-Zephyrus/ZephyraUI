@@ -302,12 +302,12 @@ impl CpuCanvas {
                         // `1 - smoothstep(-px, px, 0) == 0.5` —— 无条件施加会把
                         // 最外一圈像素压到 50%，两边就会分叉。
                         if a.corner[0] > 0.0 {
-                            sdf_coverage(local, half_size, a.corner)
+                            sdf_coverage(local, half_size, a.corner, a.shape)
                         } else {
                             1.0
                         }
                     }
-                    _ => sdf_coverage(local, half_size, a.corner),
+                    _ => sdf_coverage(local, half_size, a.corner, a.shape),
                 };
                 self.blend(px, py, color, coverage);
             }
@@ -346,41 +346,12 @@ impl AtlasBitmap {
     }
 }
 
-/// `zephyra.hlsl` 里 `PSMain` 的矩形分支：`sd_round_rect` + 抗锯齿 + 描边。
+/// `zephyra.hlsl` 里 `PSMain` 的矩形分支：shape-aware 圆角 SDF + 抗锯齿 + 描边。
 ///
-/// **逐行照抄 HLSL，且刻意不加任何"修正"。** 改 HLSL 时这里也该改 —— 两边不一致
-/// 会让「参考图」与「实际画面」在圆角处对不上，而那种差异极难归因。
-///
-/// # 这里曾经是"故意不照抄"的
-///
-/// 之前 HLSL 写的是：
-///
-/// ```hlsl
-/// float2 half_size = i.local * 0.5;      // local 是像素坐标 0..width
-/// float2 center    = i.local - half_size;
-/// float d = sd_round_rect(center, half_size, i.corner.x);
-/// ```
-///
-/// `half_size` 是从**逐片元**的 `local` 推的，于是它随片元变化，且恰好
-/// `center == half_size` —— `sd_round_rect` 里 `q = abs(center) - half_size + r = r`，
-/// `d` 退化成与位置**无关**的常数 `r(√2−1)`：
-///
-/// | 四边形 | `d` | GPU 上的结果 |
-/// |---|---|---|
-/// | 方角（r=0） | 0 | 整块均匀 alpha = 0.5，**没有形状** |
-/// | 圆角 12px | 4.97 | alpha = 0，**完全不可见** |
-///
-/// 当时 CPU 侧用**归一化坐标**（`half_size` 恒为 0.5）绕开了它，等于把两个实现的
-/// 差异藏起来。现在 `Vertex::half_size` 把真实的半宽半高送进来了，两边终于可以
-/// 用同一套坐标 —— 归一化那套也一并扔掉，因为它会让抗锯齿带宽随四边形尺寸变化。
-fn sdf_coverage(local: [f32; 2], half_size: [f32; 2], corner: [f32; 2]) -> f32 {
-    // `p` = 片元相对四边形中心的偏移。`local` 与 `half_size` 同单位（顶点里就是
-    // 什么单位这里就是什么单位），所以两者相减不需要任何换算。
-    let p = [local[0] - half_size[0], local[1] - half_size[1]];
-    let r = corner[0].min(half_size[0].min(half_size[1]));
-    let q = [p[0].abs() - half_size[0] + r, p[1].abs() - half_size[1] + r];
-    let (mx, my) = (q[0].max(0.0), q[1].max(0.0));
-    let d = (mx * mx + my * my).sqrt() + q[0].max(q[1]).min(0.0) - r;
+/// **与 HLSL/WGSL 的 SDF 保持同一套公式**（`shape_k` = CSS `superellipse(K)` 的 `K`）。
+/// 改一处必须同步另两处，否则 `--dump-cpu` 与 GPU 画面在圆角处对不上。
+fn sdf_coverage(local: [f32; 2], half_size: [f32; 2], corner: [f32; 2], shape_k: f32) -> f32 {
+    let d = sd_corner_shape(local, half_size, corner[0], shape_k);
 
     // 过渡带半宽。与 `quad::AA_BAND` 是同一个量 —— 写成两处独立的 `0.75`
     // 的话，改了一处会让本参考实现与 GPU 上的实际过渡带宽度分叉，
@@ -392,21 +363,101 @@ fn sdf_coverage(local: [f32; 2], half_size: [f32; 2], corner: [f32; 2]) -> f32 {
     }
     if corner[1] > 0.0 {
         // 描边：只画「离边界不超过 `corner[1]`」的环带，即 `d ∈ [-width, 0]`。
-        //
-        // 所以是**正**的 `smoothstep`：d=0（贴着边）→ 1，d=-width（环带内侧）→ 0。
-        //
-        // ⚠ HLSL 曾经写成 `1.0 - smoothstep(...)` —— 那个 `1.0 -` 把整条环带翻了个个儿：
-        // 结果变成「越靠里越实、越靠边越透明」，于是描边看起来是一块**实心**填充。
         let inner = -corner[1];
         let sa = smoothstep(inner - aa, inner + aa, d);
-        // 外侧必须**乘**一道淡出：`d > 0` 在环带之外，而 `smoothstep` 在那里饱和为 1。
-        // 四边形已按 AA_BAND 外扩，所以不乘这一道，描边外侧会多出一圈实色 ——
-        // 症状是「描边比边框设定值粗一圈，且那一圈没有抗锯齿」。
         let outer_fade = 1.0 - smoothstep(-aa, aa, d);
         let out = sa * outer_fade;
         return if out <= 0.0039 { 0.0 } else { out };
     }
     alpha
+}
+
+/// 角形状 SDF（CSS `corner-shape` / `superellipse(K)`）。
+///
+/// `K = 1.0` → `round`（圆弧，标准圆角矩形 SDF）；`K = 2.0` → `squircle`。
+/// 公式：在圆角区域使用 L^n 范数（`n = 2K`，`K>0`），
+/// `d = r * ((max(qx,0)/r)^n + (max(qy,0)/r)^n)^(1/n) + min(max(qx,qy),0) - r`，
+/// 与标准 `sd_round_rect` 在 `n=2` 时完全一致。
+fn sd_corner_shape(local: [f32; 2], half_size: [f32; 2], radius: f32, shape_k: f32) -> f32 {
+    let p = [local[0] - half_size[0], local[1] - half_size[1]];
+    let r = radius.min(half_size[0]).min(half_size[1]);
+    if r <= 0.0 {
+        // 直角矩形（含 `square`/无圆角）
+        let q = [p[0].abs() - half_size[0], p[1].abs() - half_size[1]];
+        return (q[0].max(0.0).powi(2) + q[1].max(0.0).powi(2)).sqrt() + q[0].max(q[1]).min(0.0);
+    }
+    let k = if shape_k.is_finite() {
+        shape_k
+    } else if shape_k.is_sign_positive() {
+        1e9
+    } else {
+        -1e9
+    };
+    // `square` (+∞) → 直角
+    if k > 1e6 {
+        let q = [p[0].abs() - half_size[0], p[1].abs() - half_size[1]];
+        return (q[0].max(0.0).powi(2) + q[1].max(0.0).powi(2)).sqrt() + q[0].max(q[1]).min(0.0);
+    }
+    let q = [p[0].abs() - half_size[0] + r, p[1].abs() - half_size[1] + r];
+    let qx = q[0].max(0.0);
+    let qy = q[1].max(0.0);
+    let inside = q[0].max(q[1]).min(0.0);
+
+    // `round` 快速路径（与历史公式逐位一致）
+    if (k - 1.0).abs() < 1e-6 {
+        return (qx * qx + qy * qy).sqrt() + inside - r;
+    }
+
+    // `bevel` (K=0) → L1 斜切
+    if k.abs() < 1e-6 {
+        return (qx + qy) + inside - r;
+    }
+
+    if k > 0.0 {
+        // 凸超椭圆（squircle K=2 → n=4 等）：L^n
+        let n = 2.0 * k;
+        let ax = (qx / r).max(0.0);
+        let ay = (qy / r).max(0.0);
+        // pow(0, n) 在部分平台上是 edge case；显式处理避免 NaN
+        let corner_d = if ax <= 0.0 && ay <= 0.0 {
+            0.0
+        } else {
+            r * (ax.powf(n) + ay.powf(n)).powf(1.0 / n)
+        };
+        return corner_d + inside - r;
+    }
+
+    // K < 0：`scoop`/凹形（CSS concave superellipse）与 `notch` 的近似。
+    // 使用翻转的凸超椭圆裁剪：在角区用 (r - L^n 距离) 形成内凹。
+    // notch (-∞) 近似为方形切口。
+    if k < -1e6 {
+        // notch 近似：角区完全切掉（内凹直角）
+        let d_outer = (qx * qx + qy * qy).sqrt() + inside - r;
+        // notch 语义：把圆角区域“反向”——用 max 形成内凹边界
+        let notch = -q[0].min(q[1]); // 正值表示深入角区
+        if qx > 0.0 && qy > 0.0 {
+            return notch.max(d_outer);
+        }
+        return d_outer;
+    }
+    // scoop (-1) 及一般凹形：用 n = 2*|k| 的凸曲线做内凹偏移
+    let n = 2.0 * (-k);
+    let ax = (qx / r).max(0.0);
+    let ay = (qy / r).max(0.0);
+    let convex = if ax <= 0.0 && ay <= 0.0 {
+        0.0
+    } else {
+        (ax.powf(n) + ay.powf(n)).powf(1.0 / n)
+    };
+    // 凹形：d = r * (1 - convex_inverted?) — 使用 2 - convex 的翻转近似，clamp 到合理范围
+    let scoop_d = r * (2.0 - convex) - r; // = r*(1-convex)
+                                          // 在角区外回落到标准边
+    let base = (qx * qx + qy * qy).sqrt() + inside - r;
+    if qx > 0.0 && qy > 0.0 {
+        // 凹形角：取更“外”的那个（max 产生内凹）
+        return scoop_d.max(inside - r).max(base.min(scoop_d + r) - r * 0.0) + 0.0;
+    }
+    base
 }
 
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {

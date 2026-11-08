@@ -269,6 +269,7 @@ fn quad(rect: Rect, filter: FilterChain, blend: BlendMode) -> DisplayList {
         Command::Quad {
             rect,
             radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.9, 0.9, 0.95),
             stroke: None,
             filter,
@@ -291,6 +292,7 @@ fn decorated_glass(rect: Rect, filter: FilterChain) -> DisplayList {
         Command::Quad {
             rect,
             radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             // 与开关把手同形：**背景全透明**，视觉全由玻璃滤镜 + 装饰承担。
             fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
             stroke: None,
@@ -333,6 +335,7 @@ fn glass_page() -> DisplayList {
             Command::Quad {
                 rect,
                 radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(0.9, 0.9, 0.95),
                 stroke: None,
                 filter,
@@ -812,6 +815,7 @@ fn stress_many_filtered_commands_record_no_illegal_commands() {
             Command::Quad {
                 rect: Rect::new(4.0 + col as f32 * 20.0, 4.0 + row as f32 * 20.0, 16.0, 16.0),
                 radius: zephyra_core::core::CornerRadius { radius: 3.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgba(0.9, 0.9, 0.95, 0.8),
                 stroke: None,
                 filter: chains[(i as usize) % chains.len()].clone(),
@@ -878,6 +882,7 @@ fn stress_filtered_ps_variant_blends_stay_counted() {
                     48.0,
                 ),
                 radius: zephyra_core::core::CornerRadius { radius: 6.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgba(0.9, 0.9, 0.95, 0.8),
                 stroke: None,
                 filter: FilterChain::single(Filter::Blur {
@@ -1001,6 +1006,7 @@ fn stress_alternating_pages_keep_resources_honest() {
         Command::Quad {
             rect: Rect::new(0.0, 0.0, SIZE.0 as f32, SIZE.1 as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.8, 0.8, 0.85),
             stroke: None,
             filter: FilterChain::single(Filter::Blur {
@@ -1028,6 +1034,7 @@ fn stress_alternating_pages_keep_resources_honest() {
                     100.0,
                 ),
                 radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+                shape: zephyra_core::core::CornerShape::ROUND,
                 fill: Color::rgb(0.9, 0.9, 0.95),
                 stroke: None,
                 filter: refraction_chain(),
@@ -1108,6 +1115,7 @@ fn composite_uses_the_commands_own_blend_mode() {
         Command::Quad {
             rect: Rect::new(0.0, 0.0, SIZE.0 as f32, SIZE.1 as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(0.5, 0.5, 0.5),
             stroke: None,
             filter: FilterChain::none(),
@@ -1124,6 +1132,7 @@ fn composite_uses_the_commands_own_blend_mode() {
         Command::Quad {
             rect: Rect::new(28.0, 28.0, 200.0, 200.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgba(1.0, 1.0, 1.0, 0.8),
             stroke: None,
             filter: FilterChain::single(Filter::Blur {

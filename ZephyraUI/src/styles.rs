@@ -22,7 +22,7 @@
 //! - 其余按控件族；
 //! - 每个控件族内部，源码侧的书写次序就是优先级（变体在前、状态在后）。
 //!
-//! ⚠ 别把 `base` 往后挪：`Container.glyph` / `Text.text-body` 这类基础规则
+//! ⚠ 别把 `base` 往后挪：`box.glyph` / `text.text-body` 这类基础规则
 //!     被几十个控件继承，挪到后面会让所有控件的图标与字号一起变。
 
 /// 全部控件样式表，按**加载顺序**返回 `(名字, 源码)`。
@@ -34,7 +34,7 @@ pub const STYLESHEETS: &[(&str, &str)] = &[
     ("button", include_str!("../controls-button.zstyle")),
     ("card", include_str!("../controls-card.zstyle")),
     // 复选框族（勾号 + 半选横杠 + 复选框组）。放在 `toggle` **之前**：
-    // 单选框与开关留在 `toggle` 里，而 `Text.check-label` 两族共用 ——
+    // 单选框与开关留在 `toggle` 里，而 `text.check-label` 两族共用 ——
     // 它只有一份定义（在 `toggle` 里），所以两张表的先后不影响它。
     ("checkbox", include_str!("../controls-checkbox.zstyle")),
     (

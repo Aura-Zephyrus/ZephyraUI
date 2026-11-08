@@ -105,6 +105,7 @@ pub mod style;
 pub mod styler;
 pub mod text;
 pub mod theme;
+pub mod visual;
 
 // 测试模块必须 gate 在 `cfg(test)` 下。不加的话它们会编进正式产物，而其中的
 // `#[test]` 函数在非测试构建里被剥掉，于是所有 `use` 变成"未使用"——

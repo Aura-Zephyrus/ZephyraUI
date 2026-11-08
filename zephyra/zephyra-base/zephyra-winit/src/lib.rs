@@ -60,6 +60,7 @@ use zephyra_window::{
     Backend, HostEventOutcome, HostTick, WindowHandle, WindowHost, WindowKey, WindowSpec,
 };
 
+pub mod ext;
 pub mod renderer;
 pub mod shader;
 pub mod surface;
@@ -455,7 +456,11 @@ impl<V: View> HostWindow<V> {
         // 快照来自**保留树**（画出来的那棵），所以它不会与画面漂移。
         if let Some(root) = self.cache.node() {
             let win = zephyra_uia::window_info(self.hwnd.unwrap_or(0));
-            zephyra_uia::publish(zephyra_uia::rules::build(root, &win));
+            zephyra_uia::publish(zephyra_uia::rules::build(
+                root,
+                &win,
+                Context::new(self.theme),
+            ));
         }
         // 2. 施加 UIA 侧排队的动作。
         let pumped = {
@@ -483,6 +488,12 @@ impl<V: View> HostWindow<V> {
     /// 图像纹理表（可变）。宿主在这里注册 / 更新纹理。
     pub fn textures_mut(&mut self) -> &mut TextureTable {
         &mut self.textures
+    }
+
+    /// 扩展上下文句柄（与渲染器共享纹理池/Hook 表；D3D11 最小闭环）。
+    pub fn ext_context(&self) -> zephyra_ext::ExtContextHandle {
+        let gpu = lock_gpu(&self.gpu);
+        self.renderer.ext_handle(&gpu.gpu.context)
     }
 
     /// 注册一张图像纹理，返回写进 `props::IMAGE_TEXTURE` 的句柄。
@@ -1470,7 +1481,7 @@ pub fn run_with_on<V: View + 'static>(
 
 /// 便捷构造：一个带背景、圆角与尺寸的元素。
 pub fn panel(key: &'static str, bg: Color, radius: f32) -> Element {
-    Element::new(NodeTag::Container)
+    Element::new(NodeTag::Box)
         .with_key(key)
         .with(&props::BACKGROUND, PropertyValue::color(bg))
         .with(&props::CORNER_RADIUS, PropertyValue::float(radius))

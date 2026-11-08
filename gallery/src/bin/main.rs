@@ -1057,7 +1057,7 @@ impl winit::application::ApplicationHandler for Bootstrap {
             return;
         }
         let view = self.view.take().expect("resumed 只应发生一次建窗");
-        // ⚠️ 必须按**画布**尺寸建窗：`gallery.zstyle` 的 `Container.window` 是
+        // ⚠️ 必须按**画布**尺寸建窗：`gallery.zstyle` 的 `box.window` 是
         // `width: 1400px / height: 800px`（core 没有 flex-grow，铺满靠定值），
         // 而宿主默认给 640×480 —— 窗口比画布小的时候，超出部分只是**被裁掉**：
         // 布局对、绘制对、屏幕上一片内容不见了，看起来像排版坏了。

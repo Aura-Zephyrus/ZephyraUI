@@ -6,59 +6,60 @@
 
 /* ---- Button ---- */
 
-Control.button {
+control.button {
     direction: horizontal;
     main-align: center;
     cross-align: center;
     spacing: 10px;
     padding: 10px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     height: 36px;
     border-width: 1px;
 }
 
-Control.button.standard {
+control.button.standard {
     background: @control_fill;
     border-color: @control_border;
 }
 
-Control.button.accent {
+control.button.accent {
     background: @accent_fill;
     border-color: @accent_fill;
 }
 
-Control.button.subtle {
+control.button.subtle {
     background: transparent;
     border-color: transparent;
 }
 
 /* 状态规则：只碰 border 这类与变体无关的量；background 全部走 3 名交叉规则。 */
-Control.button.hovered {
+control.button.hovered {
     border-color: @control_border_strong;
 }
 
-Control.button.standard.hovered {
+control.button.standard.hovered {
     background: @control_fill_hover;
 }
 
-Control.button.standard.pressed {
+control.button.standard.pressed {
     background: @control_fill_pressed;
 }
 
-Control.button.subtle.hovered {
+control.button.subtle.hovered {
     background: @control_secondary;
 }
 
-Control.button.subtle.pressed {
+control.button.subtle.pressed {
     background: @control_tertiary;
 }
 
 /* accent 的三个交叉态都保持强调底。 */
-Control.button.accent.hovered {
+control.button.accent.hovered {
     background: @accent_fill;
 }
 
-Control.button.accent.pressed {
+control.button.accent.pressed {
     background: @accent_fill;
 }
 
@@ -67,7 +68,7 @@ Control.button.accent.pressed {
  * 与 text-field 的 `.focused` 同一套度量（`@focus_ring` + 2px）。焦点环与
  * hovered/pressed 是**正交**的两维——一个按钮可以既被悬停又有焦点，所以
  * `focused` 不进 pressed/hovered 那条三元链，而是独立的一条规则。 */
-Control.button.focused {
+control.button.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
@@ -93,13 +94,13 @@ Control.button.focused {
  *
  * `material-params` 是**独立**于 `material` 的参数覆盖：这里把 σ 调到 10px
  * （默认 6px）—— 磨得更狠一点。不写它就吃默认值。 */
-Control.button.frosted {
+control.button.frosted {
     background: @surface_alt_translucent;
     material: frosted;
     material-params: 10;
 }
 
-Control.button.frosted.hovered {
+control.button.frosted.hovered {
     background: @control_fill_hover;
 }
 
@@ -111,41 +112,42 @@ Control.button.frosted.hovered {
  *
  * `material-params` 独立于 `material`：顺序 `<厚度> <倒角> <色散> <折射率>`，
  * 这里调成厚 26px（默认 20）、倒角 18px（默认 16）、无仍色散、IOR 1.5。 */
-Control.button.glass {
+control.button.glass {
     material: glass;
     material-params: 26 18 0 1.5;
     border-color: #ffffffb3;
 }
 
-Text.btn-label {
+text.btn-label {
     text-size: 15px;
     text-color: @content;
 }
 
-Text.btn-label.accent {
+text.btn-label.accent {
     text-color: @on_accent_fill;
 }
 
-Container.btn-icon {
+box.btn-icon {
     width: 18px;
     height: 18px;
     icon-color: @content_secondary;
 }
 
-Container.btn-icon.hovered {
+box.btn-icon.hovered {
     icon-color: @content;
 }
 
-Container.btn-icon.accent {
+box.btn-icon.accent {
     icon-color: @on_accent_fill;
 }
 
 /* ---- ToolButton（44×44） ---- */
 
-Control.tool-button {
+control.tool-button {
     width: 44px;
     height: 44px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     padding: 10px;
     direction: horizontal;
     main-align: center;
@@ -155,16 +157,16 @@ Control.tool-button {
     border-color: @control_border;
 }
 
-Control.tool-button.hovered {
+control.tool-button.hovered {
     background: @control_fill_hover;
     border-color: @control_border_strong;
 }
 
-Control.tool-button.pressed {
+control.tool-button.pressed {
     background: @control_fill_pressed;
 }
 
-Container.tool-icon {
+box.tool-icon {
     width: 22px;
     height: 22px;
     icon-color: @content;
@@ -172,56 +174,57 @@ Container.tool-icon {
 
 /* ---- PillButton ---- */
 
-Control.pill {
+control.pill {
     direction: horizontal;
     main-align: center;
     cross-align: center;
     spacing: 10px;
     padding: 12px;
     height: 36px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border;
 }
 
-Control.pill.checked {
+control.pill.checked {
     background: @accent_fill;
     border-color: @accent_fill;
 }
 
-Control.pill.hovered {
+control.pill.hovered {
     background: @control_fill_hover;
 }
 
-Control.pill.checked.hovered {
+control.pill.checked.hovered {
     background: @accent_fill;
 }
 
-Control.pill.pressed {
+control.pill.pressed {
     background: @control_fill_pressed;
 }
 
-Control.pill.checked.pressed {
+control.pill.checked.pressed {
     background: @accent_fill;
 }
 
-Text.pill-label {
+text.pill-label {
     text-size: 14px;
     text-color: @content;
 }
 
-Text.pill-label.checked {
+text.pill-label.checked {
     text-color: @on_accent_fill;
 }
 
-Container.pill-icon {
+box.pill-icon {
     width: 18px;
     height: 18px;
     icon-color: @content_secondary;
 }
 
-Container.pill-icon.checked {
+box.pill-icon.checked {
     icon-color: @on_accent_fill;
 }
 
@@ -233,43 +236,44 @@ Container.pill-icon.checked {
  * 径向 InteractiveHighlight 着色器无直接等价，用 decoration 近似。
  * Solid = 瞬变/无拖拽形变；Glass = 全套。 */
 
-Control.liquid-button {
+control.liquid-button {
     direction: horizontal;
     main-align: center;
     cross-align: center;
     spacing: 8px;
     padding: 16px;
     height: 48px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     border-width: 1px;
     border-color: @control_border;
     background: @control_fill;
 }
 
-Control.liquid-button.glass {
+control.liquid-button.glass {
     background: transparent;
     border-color: #ffffff66;
 }
 
-Control.liquid-button.hovered {
+control.liquid-button.hovered {
     border-color: @control_border_strong;
 }
 
-Control.liquid-button.focused {
+control.liquid-button.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
 
-Control.liquid-button.disabled {
+control.liquid-button.disabled {
     opacity: 0.45;
 }
 
-Text.liquid-btn-label {
+text.liquid-btn-label {
     text-size: 15px;
     text-color: @content;
 }
 
-Container.liquid-btn-icon {
+box.liquid-btn-icon {
     width: 18px;
     height: 18px;
     icon-color: @content;

@@ -208,6 +208,7 @@ fn custom_list(kind: &str) -> DisplayList {
         Command::Custom {
             bounds: BOUNDS,
             source: RenderSource::new(kind.to_owned(), 42_u32),
+            resource_key: None,
             filter: FilterChain::default(),
             blend: BlendMode::SrcOver,
         },

@@ -40,6 +40,8 @@ struct VsIn {
     @location(5) half_size: vec2f,
     /// 0 = SDF 矩形，1 = 字形，2 = 图像，3 = 多边形，4 = 模糊 pass。
     @location(6) kind: f32,
+    /// 角形状 K（CSS corner-shape / superellipse）：1=round, 2=squircle。
+    @location(7) shape: f32,
 };
 
 struct VsOut {
@@ -59,6 +61,8 @@ struct VsOut {
     @location(5) @interpolate(flat) half_size: vec2f,
     /// 原始 NDC 位置。用途只有一个：采样 `g_dst` 时需要**屏幕 uv**。
     @location(6) ndc: vec2f,
+    /// 角形状 K（corner-shape），flat。
+    @location(7) @interpolate(flat) shape: f32,
 };
 
 // group 0：主通道只需要「一张纹理 + 一个采样器」。模糊 / 合成 pass 也用同一个
@@ -80,6 +84,7 @@ fn vs_main(i: VsIn) -> VsOut {
     o.kind = i.kind;
     o.half_size = i.half_size;
     o.ndc = i.position;
+    o.shape = i.shape;
     return o;
 }
 
@@ -92,10 +97,53 @@ fn dst_uv(i: VsOut) -> vec2f {
 }
 
 /// 圆角矩形的有符号距离：矩形内为负，外部为正。
-fn sd_round_rect(p: vec2f, half_size: vec2f, radius: f32) -> f32 {
+/// shape_k = CSS corner-shape / superellipse(K)（1=round, 2=squircle）。
+fn sd_round_rect(p: vec2f, half_size: vec2f, radius: f32, shape_k: f32) -> f32 {
     let r = min(radius, min(half_size.x, half_size.y));
+    if (r <= 0.0 || shape_k > 1e6) {
+        let q = abs(p) - half_size;
+        return length(max(q, vec2f(0.0, 0.0))) + min(max(q.x, q.y), 0.0);
+    }
     let q = abs(p) - half_size + vec2f(r, r);
-    return length(max(q, vec2f(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+    let qx = max(q.x, 0.0);
+    let qy = max(q.y, 0.0);
+    let inside = min(max(q.x, q.y), 0.0);
+    let k = shape_k;
+    if (abs(k - 1.0) < 1e-4) {
+        return length(vec2f(qx, qy)) + inside - r;
+    }
+    if (abs(k) < 1e-4) {
+        return (qx + qy) + inside - r;
+    }
+    if (k > 0.0) {
+        let n = 2.0 * k;
+        let ax = max(qx / r, 0.0);
+        let ay = max(qy / r, 0.0);
+        var corner_d = 0.0;
+        if (ax > 0.0 || ay > 0.0) {
+            corner_d = r * pow(pow(max(ax, 1e-7), n) + pow(max(ay, 1e-7), n), 1.0 / n);
+        }
+        return corner_d + inside - r;
+    }
+    if (k < -1e6) {
+        let d_outer = length(vec2f(qx, qy)) + inside - r;
+        if (qx > 0.0 && qy > 0.0) {
+            let notch = -min(q.x, q.y);
+            return max(notch, d_outer);
+        }
+        return d_outer;
+    }
+    let n2 = 2.0 * (-k);
+    let ax2 = max(qx / r, 0.0);
+    let ay2 = max(qy / r, 0.0);
+    var convex = 0.0;
+    if (ax2 > 0.0 || ay2 > 0.0) {
+        convex = pow(pow(max(ax2, 1e-7), n2) + pow(max(ay2, 1e-7), n2), 1.0 / n2);
+    }
+    let scoop_d = r * (1.0 - convex);
+    let base = length(vec2f(qx, qy)) + inside - r;
+    if (qx > 0.0 && qy > 0.0) { return max(scoop_d, base); }
+    return base;
 }
 
 /// 算出这一片元的**预乘**源色（不含任何混合）。
@@ -142,7 +190,7 @@ fn shade_source(i: VsOut) -> vec4f {
         if (i.corner.x > 0.0) {
             let half_size = i.half_size;
             let p = i.local - half_size;
-            let d = sd_round_rect(p, half_size, i.corner.x);
+            let d = sd_round_rect(p, half_size, i.corner.x, i.shape);
             let px_img = 0.75;
             a = a * (1.0 - smoothstep(-px_img, px_img, d));
         }
@@ -153,7 +201,7 @@ fn shade_source(i: VsOut) -> vec4f {
     // kind == 0：SDF 圆角矩形。
     let half_size = i.half_size;
     let p = i.local - half_size;
-    let d = sd_round_rect(p, half_size, i.corner.x);
+    let d = sd_round_rect(p, half_size, i.corner.x, i.shape);
 
     // 1 像素过渡带：抗锯齿。带宽不随缩放变化，所以高 DPI 下边缘不会变毛糙。
     let px = 0.75;
@@ -537,19 +585,15 @@ fn glass_surface_height(t: f32) -> f32 {
 /// 不同，分支写错**不会报错**、只会让某一侧折射方向相反。4 次 SDF 求值无分支。
 /// 步长 0.75 与 `AA_BAND` 同量级 —— 再小被浮点噪声淹没，再大在 1px 边缘上
 /// 跨过整个直边区、梯度失真。
-fn sd_normal(p: vec2f, half_size: vec2f, radius: f32) -> vec2f {
+fn sd_normal(p: vec2f, half_size: vec2f, radius: f32, shape_k: f32) -> vec2f {
     let e = 0.75;
     var g: vec2f;
-    g.x = sd_round_rect(p + vec2f(e, 0.0), half_size, radius)
-        - sd_round_rect(p - vec2f(e, 0.0), half_size, radius);
-    g.y = sd_round_rect(p + vec2f(0.0, e), half_size, radius)
-        - sd_round_rect(p - vec2f(0.0, e), half_size, radius);
+    g.x = sd_round_rect(p + vec2f(e, 0.0), half_size, radius, shape_k)
+        - sd_round_rect(p - vec2f(e, 0.0), half_size, radius, shape_k);
+    g.y = sd_round_rect(p + vec2f(0.0, e), half_size, radius, shape_k)
+        - sd_round_rect(p - vec2f(0.0, e), half_size, radius, shape_k);
     let len = length(g);
-    // 元素**正中心**处梯度确实为 0（对称）—— 那里本来就没有「边缘方向」，
-    // 返回 0 让位移为 0 正是想要的。
-    if (len > 1e-5) {
-        return g / len;
-    }
+    if (len > 1e-5) { return g / len; }
     return vec2f(0.0, 0.0);
 }
 
@@ -566,7 +610,7 @@ fn fs_refraction(i: VsOut) -> @location(0) vec4f {
 
     // 元素内坐标 → SDF（矩形内为负）。
     let p = i.local - i.half_size;
-    let d = sd_round_rect(p, i.half_size, radius);
+    let d = sd_round_rect(p, i.half_size, radius, i.shape);
 
     // ⚠ 元素**外**（d > 0）必须完全不输出：那里的背景没有被任何东西遮挡，
     // 位移它只会凭空撕裂画面。
@@ -579,7 +623,7 @@ fn fs_refraction(i: VsOut) -> @location(0) vec4f {
     let edge = 1.0;
     let mask = saturate(-d / edge);
 
-    let n = sd_normal(p, i.half_size, radius);
+    let n = sd_normal(p, i.half_size, radius, i.shape);
 
     // 像素位移 → uv 位移。屏幕尺寸走 `dpdx/dpdy`，**不占顶点字段** ——
     // 加字段会让 `Vertex` 从 52 涨到 56 字节，进而要同步改两个后端的
@@ -654,13 +698,24 @@ fn fs_refraction(i: VsOut) -> @location(0) vec4f {
 // `(cx·cy)/(hx·hy)` 做 7 通道分色。
 
 /// `gradSdRoundedRect` 的逐字转译。
-fn grad_sd_rounded_rect(coord: vec2f, half_size: vec2f, radius: f32) -> vec2f {
-    let corner_coord = abs(coord) - (half_size - vec2f(radius, radius));
-    if (corner_coord.x >= 0.0 || corner_coord.y >= 0.0) {
-        return sign(coord) * normalize(max(corner_coord, vec2f(0.0, 0.0)));
+fn grad_sd_rounded_rect(coord: vec2f, half_size: vec2f, radius: f32, shape_k: f32) -> vec2f {
+    let k = shape_k;
+    if (abs(k - 1.0) < 1e-4) {
+        let corner_coord = abs(coord) - (half_size - vec2f(radius, radius));
+        if (corner_coord.x >= 0.0 || corner_coord.y >= 0.0) {
+            return sign(coord) * normalize(max(corner_coord, vec2f(0.0, 0.0)));
+        } else {
+            let grad_x = step(corner_coord.y, corner_coord.x);
+            return sign(coord) * vec2f(grad_x, 1.0 - grad_x);
+        }
     }
-    let grad_x = select(0.0, 1.0, corner_coord.x >= corner_coord.y);
-    return sign(coord) * vec2f(grad_x, 1.0 - grad_x);
+    let e = 0.5;
+    var g: vec2f;
+    g.x = sd_round_rect(coord + vec2f(e, 0.0), half_size, radius, shape_k)
+        - sd_round_rect(coord - vec2f(e, 0.0), half_size, radius, shape_k);
+    g.y = sd_round_rect(coord + vec2f(0.0, e), half_size, radius, shape_k)
+        - sd_round_rect(coord - vec2f(0.0, e), half_size, radius, shape_k);
+    return g;
 }
 
 fn circle_map(x: f32) -> f32 {
@@ -677,7 +732,7 @@ fn fs_lens(i: VsOut) -> @location(0) vec4f {
     // 原版以负数写入 uniform：沿外法线向内采样 = 放大。
     let refraction_amount = -i.corner.y;
 
-    let sd = sd_round_rect(centered_coord, half_size, radius);
+    let sd = sd_round_rect(centered_coord, half_size, radius, i.shape);
     let uv = dst_uv(i);
     if (-sd >= refraction_height) {
         return textureSampleLevel(g_dst, g_smp, uv, 0.0);
@@ -687,7 +742,7 @@ fn fs_lens(i: VsOut) -> @location(0) vec4f {
 
     let d = circle_map(1.0 - -sd_in / refraction_height) * refraction_amount;
     let grad_radius = min(radius * 1.5, min(half_size.x, half_size.y));
-    let grad = normalize(grad_sd_rounded_rect(centered_coord, half_size, grad_radius));
+    let grad = normalize(grad_sd_rounded_rect(centered_coord, half_size, grad_radius, i.shape));
     let px2uv = vec2f(dpdx(uv.x), dpdy(uv.y));
     let base = d * grad * px2uv;
     let dispersion_intensity =
@@ -753,7 +808,7 @@ fn fs_backdrop_blur(i: VsOut) -> @location(0) vec4f {
 
     // 元素内坐标 → SDF → 1px 抗锯齿遮罩（与折射同一条纪律：元素外不输出）。
     let p = i.local - i.half_size;
-    let d = sd_round_rect(p, i.half_size, radius);
+    let d = sd_round_rect(p, i.half_size, radius, i.shape);
     let mask = saturate(-d / 1.0);
 
     let uv = dst_uv(i);
@@ -811,7 +866,7 @@ fn fs_hollow_shadow(i: VsOut) -> @location(0) vec4f {
     let t = textureSampleLevel(g_tex, g_smp, i.uv, 0.0);
     let tint_amount = i.corner.y;
     let p = i.local - i.half_size;
-    let sd = sd_round_rect(p, i.half_size, i.corner.x);
+    let sd = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     let keep = saturate(sd / 1.0);
     if (tint_amount <= 0.0) {
         return t * keep;
@@ -831,7 +886,7 @@ fn fs_highlight(i: VsOut) -> @location(0) vec4f {
     let kind = i.corner.y;
 
     let p = i.local - i.half_size;
-    let d = sd_round_rect(p, i.half_size, i.corner.x);
+    let d = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     // ⚠ 原版 `HighlightNode` 把描边**裁到轮廓内**（`canvas.clipOutline`）：
     // 可见的是靠边的一条**内**带，形状外面一个像素都不画。
     // 这里曾经允许 `d <= 0.75`，于是 Ambient 的白色半圈画到形状**外面**，
@@ -845,7 +900,7 @@ fn fs_highlight(i: VsOut) -> @location(0) vec4f {
 
     // 边缘法线用 `grad_sd_rounded_rect`（与 `fs_lens` / 原版高光同一份）。
     let grad_radius = min(i.corner.x * 1.5, min(i.half_size.x, i.half_size.y));
-    let grad = grad_sd_rounded_rect(p, i.half_size, grad_radius);
+    let grad = grad_sd_rounded_rect(p, i.half_size, grad_radius, i.shape);
     let normal = vec2f(cos(angle), sin(angle));
     let dd = dot(grad, normal);
     let intensity = pow(abs(dd), 1.0);
@@ -872,12 +927,12 @@ fn fs_inner_shadow(i: VsOut) -> @location(0) vec4f {
     let alpha = i.color.z;
 
     let p = i.local - i.half_size;
-    let d = sd_round_rect(p, i.half_size, i.corner.x);
+    let d = sd_round_rect(p, i.half_size, i.corner.x, i.shape);
     let inside = saturate(-d / 1.0);
     if (inside <= 0.0039) { discard; }
 
     // 偏移形状的 SDF：阴影从"偏移形状之外"衰减进来。
-    let di = sd_round_rect(p - off, i.half_size, i.corner.x);
+    let di = sd_round_rect(p - off, i.half_size, i.corner.x, i.shape);
     let cover = soft_band(di, sigma) * inside;
     if (cover <= 0.0039) { discard; }
 

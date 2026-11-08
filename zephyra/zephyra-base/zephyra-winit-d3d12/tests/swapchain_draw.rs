@@ -856,6 +856,7 @@ fn one_red_quad(size: u32) -> DisplayList {
         Command::Quad {
             rect: Rect::new(inset, inset, side, side),
             radius: CornerRadius { radius: 0.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
             fill: Color::rgb(1.0, 0.0, 0.0),
             stroke: None,
             filter: zephyra_core::filter::FilterChain::none(),

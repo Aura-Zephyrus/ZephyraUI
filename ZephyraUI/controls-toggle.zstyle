@@ -4,21 +4,23 @@
  *
  * ⚠ CheckBox / CheckBoxGroup 的规则在 `controls-checkbox.zstyle` —— 它们
  * 是一族（指示器 + 勾号 + 半选横杠 + 组），与开关族不是一回事。
- * 但 `Text.check-label` **两边都用**（单选框的标签也用它），所以它留在
+ * 但 `text.check-label` **两边都用**（单选框的标签也用它），所以它留在
  * 本文件里，勾号族只在自己的表里。
  */
 
-Control.radio-box {
+control.radio-box {
     direction: horizontal;
     cross-align: center;
     spacing: 10px;
     height: 22px;
 }
 
-Container.radio-indicator {
+box.radio-indicator {
     width: 22px;
     height: 22px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    /* 单选钮指示器是**整圆**，不是柔和超椭圆 —— 超椭圆在半径=半宽时会偏方。 */
+    corner-shape: round;
     background: @control_fill;
     border-width: 1px;
     border-color: @control_border_strong;
@@ -28,58 +30,60 @@ Container.radio-indicator {
     cross-align: center;
 }
 
-Container.radio-indicator.checked {
+box.radio-indicator.checked {
     background: @accent_fill;
     border-color: @accent_fill;
 }
 
-Container.radio-indicator.hovered {
+box.radio-indicator.hovered {
     background: @control_secondary;
 }
 
-Container.radio-indicator.checked.hovered {
+box.radio-indicator.checked.hovered {
     background: @accent_fill;
 }
 
 /* 焦点环画在**指示器**上（不是整个控件）—— 焦点环是一圈描边，
    画在外层容器上会连标签一起框住，那读起来像「这一行被选中了」。 */
-Container.radio-indicator.focused {
+box.radio-indicator.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
 
 /* 禁用：整组一起变淡 —— 只灰指示器的话，标签还是正常色，
    读起来像「这颗不能点，但字还能选」。 */
-Control.radio-box.disabled {
+control.radio-box.disabled {
     opacity: 0.45;
 }
 
-Container.radio-dot {
+box.radio-dot {
     width: 10px;
     height: 10px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    /* 选中圆点同样是整圆。 */
+    corner-shape: round;
     background: transparent;
 }
 
-Container.radio-dot.checked {
+box.radio-dot.checked {
     background: @on_accent_fill;
 }
 
-Text.check-label {
+text.check-label {
     text-size: 15px;
     text-color: @content_secondary;
 }
 
-Text.check-label.checked {
+text.check-label.checked {
     text-color: @content;
 }
 
 /* 半选的组头与选中一样用正文色 —— 它同样是「有选择」的状态。 */
-Text.check-label.indeterminate {
+text.check-label.indeterminate {
     text-color: @content;
 }
 
-Text.check-label.hovered {
+text.check-label.hovered {
     text-color: @content;
 }
 
@@ -101,7 +105,7 @@ Text.check-label.hovered {
  * `Highlight.Ambient(alpha = press)`、`InnerShadow(4dp·press, alpha = press)`，
  * 详见 `.zypui` 的 ToggleSwitch 注释与 `zephyra_ui::ToggleSwitch` 模型。 */
 
-Control.switch {
+control.switch {
     direction: horizontal;
     cross-align: center;
     spacing: 10px;
@@ -109,10 +113,13 @@ Control.switch {
 }
 
 /* 静态兜底色：不绑定动画时的双色开关（旧行为）。绑定时被本地色覆盖。 */
-Container.switch-track {
+box.switch-track {
     width: 64px;
     height: 28px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    /* 开关左右两端要**半圆**（胶囊），不是柔和超椭圆 —— 超椭圆在半径=半高时
+     * 会显得偏方，就像把手/轨道的两端被削平。这里显式用 round。 */
+    corner-shape: round;
     padding: 2px;
     direction: horizontal;
     main-align: start;
@@ -120,7 +127,7 @@ Container.switch-track {
     background: @switch_track;
 }
 
-Container.switch-track.on {
+box.switch-track.on {
     main-align: end;
     background: @switch_accent;
 }
@@ -129,25 +136,25 @@ Container.switch-track.on {
    `translate-x = fraction * 20px` 决定 —— `main-align: end` 在这种形态下
    是**双倍位移**，所以强制回到 start。两者互斥，缺了这条会出现
    「开关一半位移」的症状。 */
-Container.switch-track.on.animated {
+box.switch-track.on.animated {
     main-align: start;
 }
 
 /* solid 材质（默认）：零动画——无白罩/透镜/装饰（宿主不绑），轨道纯色。
  * 分类词本身不携带额外外观；这条声明只为让 `.switch.solid` 是已知分类词
  * （与按钮一致，分类词不一定有样式差异）。 */
-Control.switch.solid {
+control.switch.solid {
     opacity: 1;
 }
 
 /* 焦点环画在**轨道**上（与单选钮同理：只框控件本身，不框标签）。 */
-Container.switch-track.focused {
+box.switch-track.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
 
 /* 禁用：轨道与把手一起变淡。 */
-Container.switch-track.disabled {
+box.switch-track.disabled {
     opacity: 0.45;
 }
 
@@ -155,26 +162,28 @@ Container.switch-track.disabled {
    绑定 via `knob_bg`）—— 静态 `.zstyle` 里只给兜底白。玻璃主体（模糊 +
    折射 + 高光/内阴影/投影）也由宿主绑定的 `knob_filter` / `knob_decoration`
    驱动，这条规则不表达它们。 */
-Container.switch-knob {
+box.switch-knob {
     width: 40px;
     height: 24px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    /* 把手两端同样半圆（与轨道一致）。 */
+    corner-shape: round;
     background: #ffffff;
 }
 
 /* 开关的标签。单独一份类名（不复用 check-label）——
    开关的标签在轨道**右侧**，字号与单选钮一致但语义不同，
    分开之后两族各自调字号不必互相牵连。 */
-Text.switch-label {
+text.switch-label {
     text-size: 15px;
     text-color: @content_secondary;
 }
 
-Text.switch-label.on {
+text.switch-label.on {
     text-color: @content;
 }
 
-Text.switch-label.hovered {
+text.switch-label.hovered {
     text-color: @content;
 }
 
@@ -185,80 +194,85 @@ Text.switch-label.hovered {
  *   blur(8*(1-p)) + lens(10*p,14*p)；White@(1-p)；scaleX/Y 欠阻尼 0.6/0.7 ω=√250 pressed=1.5。
  * material=solid 时宿主不绑玻璃动态，退回静态外观。 */
 
-Control.slider {
+control.slider {
     direction: horizontal;
     cross-align: center;
     spacing: 14px;
     height: 36px;
 }
 
-Control.slider.solid {
+control.slider.solid {
     opacity: 1;
 }
 
-Container.slider-track {
+box.slider-track {
     width: 240px;
     height: 6px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
     background: @control_strong;
 }
 
-Container.slider-fill {
+box.slider-fill {
     height: 6px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @accent_fill;
 }
 
-Container.slider-thumb {
+box.slider-thumb {
     width: 40px;
     height: 24px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: #ffffff;
 }
 
-Control.slider.focused {
+control.slider.focused {
     border-color: @focus_ring;
     border-width: 2px;
 }
 
-Control.slider.disabled {
+control.slider.disabled {
     opacity: 0.45;
 }
 
-Text.slider-value {
+text.slider-value {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
 /* ---- ProgressBar ---- */
 
-Control.progress {
+control.progress {
     width: 260px;
     height: 4px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
     background: @control_strong;
 }
 
-Container.progress-fill {
+box.progress-fill {
     height: 4px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @accent_fill;
 }
 
-Container.progress-fill.running {
+box.progress-fill.running {
     background: @accent_fill;
 }
 
-Container.progress-fill.paused {
+box.progress-fill.paused {
     background: @caution;
 }
 
-Container.progress-fill.error {
+box.progress-fill.error {
     background: @critical;
 }

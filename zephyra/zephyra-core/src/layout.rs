@@ -267,21 +267,103 @@ impl FlexDirection {
     }
 }
 
-/// 元素定位方式（CSS `position` 的简化子集）。
+/// 布局环境：measure/arrange 需要的根级上下文。
 ///
-/// - [`Position::Static`] —— 正常流（默认）。
-/// - [`Position::Absolute`] —— 脱离正常流，按 [`crate::props::LEFT`] /
-///   [`crate::props::TOP`] 定位到**窗口坐标**（等价于 CSS 的 `fixed`；
-///   本仓只有一个坐标空间，见 [`crate::frame`]）。
+/// `viewport` 是根/窗口客户端区尺寸（DIP）。`root` 定位与手动项的视口约束
+/// 依赖它；把它显式传入而不是读全局，是为了让同一棵树在不同视口下可测、
+/// 且 measure 缓存能正确失效。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutEnv {
+    /// 根/窗口客户端区尺寸（DIP）。
+    pub viewport: Size,
+}
+
+impl LayoutEnv {
+    /// 从视口尺寸构造。
+    pub const fn new(viewport: Size) -> Self {
+        Self { viewport }
+    }
+
+    /// 无界/测试默认视口。
+    pub const fn unbounded() -> Self {
+        Self {
+            viewport: Size::new(f32::INFINITY, f32::INFINITY),
+        }
+    }
+}
+
+impl Default for LayoutEnv {
+    fn default() -> Self {
+        Self::unbounded()
+    }
+}
+
+/// 元素在父布局中的定位模式（D1）。
 ///
-/// `relative` 暂不实现（`TRANSLATE_X` / `TRANSLATE_Y` 已覆盖其视觉效果，
-/// 且那两个只重绘不重排）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// - [`Position::Flow`]：参与父布局（Stack/Flex），位置由父布局决定。
+/// - [`Position::Parent`]：脱流，手动定位，参照**直接父内容区**左上角。
+/// - [`Position::Root`]：脱流，手动定位，参照**根/窗口客户端区** `(0,0)`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Position {
     /// 正常流（默认）。
-    Static,
-    /// 绝对定位：脱离正常流，按 `LEFT` / `TOP` 定位到窗口坐标。
-    Absolute,
+    #[default]
+    Flow,
+    /// 脱流，参照直接父内容区。
+    Parent,
+    /// 脱流，参照根/窗口客户端区。
+    Root,
+}
+
+impl Position {
+    /// 是否参与正常流。
+    pub const fn is_flow(self) -> bool {
+        matches!(self, Self::Flow)
+    }
+
+    /// 是否为手动定位（脱流）。
+    pub const fn is_manual(self) -> bool {
+        !self.is_flow()
+    }
+}
+
+/// 手动定位的自锚点（border box 9 点，D7）。
+///
+/// 默认 [`Anchor::TopLeft`]，此时 `left/top` 表示元素左上角在参考系中的位置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Anchor {
+    #[default]
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl Anchor {
+    /// 锚点在 border box 内的归一化坐标 `(ax, ay)`，`0 = 起始`，`1 = 末端`。
+    pub const fn factors(self) -> (f32, f32) {
+        match self {
+            Self::TopLeft => (0.0, 0.0),
+            Self::TopCenter => (0.5, 0.0),
+            Self::TopRight => (1.0, 0.0),
+            Self::CenterLeft => (0.0, 0.5),
+            Self::Center => (0.5, 0.5),
+            Self::CenterRight => (1.0, 0.5),
+            Self::BottomLeft => (0.0, 1.0),
+            Self::BottomCenter => (0.5, 1.0),
+            Self::BottomRight => (1.0, 1.0),
+        }
+    }
+
+    /// 给定 border box 尺寸，返回锚点相对左上角的偏移。
+    pub fn offset(self, size: Size) -> (f32, f32) {
+        let (ax, ay) = self.factors();
+        (size.width * ax, size.height * ay)
+    }
 }
 
 /// 一维堆叠布局（WinUI `StackPanel` / CSS flex）。
@@ -414,7 +496,7 @@ impl Stack {
     ///
     /// # 为什么这一行就是 resize 便宜的**全部**原因
     ///
-    /// 测量缓存按**约束精确匹配**（见 [`cached_for`]）。子项在堆叠轴上拿的是
+    /// 测量缓存按「约束 + 视口」精确匹配（见 `Node::cached_measure`）。子项在堆叠轴上拿的是
     /// 无穷，于是**只改窗口高度时，子项的约束一个字都没变** ⇒ 缓存命中 ⇒ 整段子树
     /// 跳过测量，也就不再重新整形那几百行文字。
     /// 门禁 `layout_cache_tests::height_only_change_does_not_remeasure_subtree` 钉的就是这一条。
@@ -882,6 +964,7 @@ pub fn align_box(content: Size, available: Size, horizontal: Align, vertical: Al
 /// 这是 [`crate::paint::render`] 的前置步骤——两者必须成对调用，因为 `render` 只读
 /// 已摆好的矩形，不再自己算几何。
 pub fn layout(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
+    let env = LayoutEnv::new(Size::new(bounds.width, bounds.height));
     // 用**上界**而非固定约束测量：固定约束的 min == max，会把每个节点都撑成
     // 窗口大小，于是所有 `Width` / `Height` 全部失效（子树内容再大也不缩）。
     // 根节点最终仍由 `arrange` 铺满 `bounds` —— 那是"填满窗口"的正确语义，
@@ -892,44 +975,32 @@ pub fn layout(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
             min: Size::new(0.0, 0.0),
             max: Size::new(bounds.width, bounds.height),
         },
+        &env,
         ctx,
     );
-    arrange(node, bounds, ctx);
+    arrange(node, bounds, &env, ctx);
 }
 
 /// 测量并在必要时重排节点树，返回整棵树的内容尺寸。
 ///
-/// 测量结果按「约束 → 结果」缓存：约束不变则直接命中，这是布局里最重要的一处
-/// 短路（静止时每帧都会调它）。
-pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> Size {
-    // ⚠ 命中缓存的**前提**是整棵子树都没有 `Layout` 脏标记，而不只是自己干净。
-    //
-    // 缓存键只有约束；祖先不知道自己脚下某个后代被改了尺寸。只清被改节点自己的
-    // 缓存时，父级仍会命中旧尺寸并直接返回 —— 那一帧 `arrange` 从
-    // `cached_size_or_zero` 拿到的是 0，于是节点被摆成 0×0，且因为没有新的
-    // 布局脏标记而永久停在那里（只有 resize 这种整树失效才会自愈）。
+/// 测量结果按「约束 + 视口 → 结果」缓存：约束与视口不变则直接命中。
+pub fn measure(
+    node: &mut Node,
+    constraints: Constraints,
+    env: &LayoutEnv,
+    ctx: Context<'_>,
+) -> Size {
     if !node.subtree_needs_layout() {
-        if let Some(size) = cached_for(node, constraints) {
+        if let Some(size) = node.cached_measure(constraints, env.viewport) {
             return size;
         }
     }
     let padding = node.padding(ctx);
-    // 分岔只有一处：声明了 flex 的容器走项表 + 行划分，其余（**全部既有布局**）
-    // 一个字不改地走 Stack 快路径。判据见 `style::Node::flex`。
     let mut content = match node.flex(ctx) {
-        Some(flex) => measure_flex(node, constraints, flex, ctx),
-        None => measure_stack(node, constraints.deflate(padding), ctx),
+        Some(flex) => measure_flex(node, constraints, flex, env, ctx),
+        None => measure_stack(node, constraints.deflate(padding), env, ctx),
     };
 
-    // 文本节点自己贡献内容尺寸。
-    //
-    // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
-    // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
-    // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
-    //
-    // ⚠ 排版只为了取**内容尺寸**（`shaped.size`），结果本身**不进** `MeasureResult`
-    // —— 见 `MeasureResult` 的文档：排版归绘制趟所有，存在测量缓存里会因
-    // `TEXT` 是只重绘属性而过期（点按钮值不更新的根因）。
     let shaped = node.shape(ctx);
     if let Some(shaped) = &shaped {
         content = shaped.size;
@@ -942,7 +1013,7 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         ),
     };
     let size = result.size;
-    node.cache_measure(constraints, result);
+    node.cache_measure(constraints, env.viewport, result);
     node.merge_dirty(Dirty::Layout);
     size
 }
@@ -972,12 +1043,12 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
 /// 尺寸取自测量缓存。缓存缺失时填 `0` **占位**而不是 `filter_map` 掉 ——
 /// 掉一个会让后面所有下标整体前移，那是 `paint` 侧一个真实踩过的坑
 /// （见 `docs/dev-log/task-resize.md` §完成情况）。
-pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
+pub fn arrange(node: &mut Node, bounds: Rect, env: &LayoutEnv, ctx: Context<'_>) {
     node.set_rect(bounds);
     let padding = node.padding(ctx);
     let inner = bounds.inset(padding);
     if let Some(flex) = node.flex(ctx) {
-        arrange_flex(node, inner, flex, ctx);
+        arrange_flex(node, inner, flex, env, ctx);
         return;
     }
     let stack = node.stack(ctx);
@@ -985,28 +1056,42 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     let available = Size::new(inner.width, inner.height);
     let origin = Point::new(inner.x, inner.y);
 
-    // ---- 第一趟：折叠主轴总长与项数（只读）----
-    // 绝对定位的子项不参与正常流——不占主轴空间、不影响总长。
     let mut main_sum = 0.0f32;
     let mut count = 0usize;
     for c in node.children().iter() {
-        if c.is_collapsed(ctx) || c.is_absolute(ctx) {
+        if c.is_collapsed(ctx) || c.is_manual(ctx) {
             continue;
         }
         main_sum += stack.main_of(cached_size_or_zero(c));
         count += 1;
     }
     if count == 0 {
-        // 正常流没有子项不代表没有事做：绝对子项仍需摆位。此时「正常流游标」
-        // 就在内容原点，于是未设的轴回落到原点。
-        arrange_flow(node, stack, cross_align, origin, available, 0.0, 0.0, ctx);
+        arrange_flow(
+            node,
+            stack,
+            cross_align,
+            origin,
+            available,
+            0.0,
+            0.0,
+            env,
+            ctx,
+        );
         return;
     }
     let content_main = main_sum + stack.spacing * (count as f32 - 1.0);
     let (start, gap) = stack.main_offset_rules(count, content_main, stack.main_of(available));
-
-    // ---- 第二趟：算矩形并递归（可变）----
-    arrange_flow(node, stack, cross_align, origin, available, start, gap, ctx);
+    arrange_flow(
+        node,
+        stack,
+        cross_align,
+        origin,
+        available,
+        start,
+        gap,
+        env,
+        ctx,
+    );
 }
 
 /// 第二趟：按正常流游标摆放子项；绝对子项逐轴赋值。
@@ -1033,6 +1118,7 @@ fn arrange_flow(
     available: Size,
     start: f32,
     gap: f32,
+    env: &LayoutEnv,
     ctx: Context<'_>,
 ) {
     let available_cross = match stack.direction {
@@ -1045,6 +1131,11 @@ fn arrange_flow(
             continue;
         }
         let size = cached_size_or_zero(child);
+        if child.is_manual(ctx) {
+            let rect = manual_rect(child, size, origin, ctx);
+            arrange(child, rect, env, ctx);
+            continue;
+        }
         let (cross_pos, cross_extent) = match (stack.direction, cross_align) {
             (Direction::Horizontal, AlignItems::Stretch) => (origin.y, available_cross),
             (Direction::Horizontal, AlignItems::Start) => (origin.y, size.height),
@@ -1064,7 +1155,6 @@ fn arrange_flow(
                 (origin.x + available_cross - size.width, size.width)
             }
         };
-        // 这个子项在**正常流里本会落到的矩形**（绝对子项拿它当未设轴的回落）。
         let flow = match stack.direction {
             Direction::Horizontal => {
                 Rect::new(origin.x + cursor, cross_pos, size.width, cross_extent)
@@ -1073,64 +1163,49 @@ fn arrange_flow(
                 Rect::new(cross_pos, origin.y + cursor, cross_extent, size.height)
             }
         };
-        if child.is_absolute(ctx) {
-            // 逐轴：设了的轴直接赋值**中心坐标**，没设的轴用 flow 的本位中心。
-            // 注意 `left` / `top` 指的是元素**中心**，不是左上角（见模块文档）。
-            let flow_cx = flow.x + size.width * 0.5;
-            let flow_cy = flow.y + size.height * 0.5;
-            let cx = child.number_or(&crate::props::LEFT, flow_cx, ctx);
-            let cy = child.number_or(&crate::props::TOP, flow_cy, ctx);
-            let rect = Rect::new(
-                cx - size.width * 0.5,
-                cy - size.height * 0.5,
-                size.width,
-                size.height,
-            );
-            arrange(child, rect, ctx);
-            // 绝对子项不推进游标。
-        } else {
-            arrange(child, flow, ctx);
-            cursor += stack.main_of(size) + gap;
-        }
+        arrange(child, flow, env, ctx);
+        cursor += stack.main_of(size) + gap;
     }
 }
 
-/// 摆放 flex 容器里的绝对定位子项：逐轴赋值，未设的轴回落到容器内容原点。
-///
-/// # 为什么是窗口坐标而不是父容器坐标
-///
-/// 本仓 `Node::rect()` 本来就是窗口绝对坐标（见 [`crate::frame`] 里那段说明），
-/// 整个 UI 只有**一个**坐标空间。于是「绝对定位」在这里的自然语义就是「直接给
-/// 窗口坐标」—— 等价于 CSS 的 `position: fixed`。这也正是真实用法：先查某个
-/// 锚点元素的窗口矩形（`Node::find_rect`），再把弹层放到那个坐标上。
-///
-/// # 逐轴回落
-///
-/// `left` / `top` 各自独立：设了就直接用，没设就用 `fallback`。flex 里绝对子项
-/// 不参与项表（拿不到「本该在哪一行」），所以未设的轴回落到容器内容原点，
-/// 而不是像栈路径那样回落到正常流游标。
-///
-/// # 坐标是**中心**
-///
-/// `left` / `top` 指元素**中心**，不是左上角，于是落位时要减半个尺寸。
-fn arrange_absolute_children(node: &mut Node, fallback: Point, ctx: Context<'_>) {
+fn manual_rect(child: &Node, size: Size, parent_content_origin: Point, ctx: Context<'_>) -> Rect {
+    let pos = child.position(ctx);
+    let anchor = child.anchor(ctx);
+    let (ax, ay) = anchor.factors();
+    let ref_origin = match pos {
+        Position::Root => Point::new(0.0, 0.0),
+        Position::Parent | Position::Flow => parent_content_origin,
+    };
+    let explicit_left = child.props().lookup(&crate::props::LEFT).is_some();
+    let explicit_top = child.props().lookup(&crate::props::TOP).is_some();
+    let x = if explicit_left {
+        let coord = child.number_or(&crate::props::LEFT, 0.0, ctx);
+        coord - size.width * ax
+    } else {
+        ref_origin.x
+    };
+    let y = if explicit_top {
+        let coord = child.number_or(&crate::props::TOP, 0.0, ctx);
+        coord - size.height * ay
+    } else {
+        ref_origin.y
+    };
+    Rect::new(x, y, size.width, size.height)
+}
+
+fn arrange_manual_children(
+    node: &mut Node,
+    parent_content_origin: Point,
+    env: &LayoutEnv,
+    ctx: Context<'_>,
+) {
     for child in node.children_mut().iter_mut() {
-        if child.is_collapsed(ctx) || !child.is_absolute(ctx) {
+        if child.is_collapsed(ctx) || !child.is_manual(ctx) {
             continue;
         }
         let size = cached_size_or_zero(child);
-        // 未设的轴回落到容器内容原点对应的「中心」。
-        let fallback_cx = fallback.x + size.width * 0.5;
-        let fallback_cy = fallback.y + size.height * 0.5;
-        let cx = child.number_or(&crate::props::LEFT, fallback_cx, ctx);
-        let cy = child.number_or(&crate::props::TOP, fallback_cy, ctx);
-        let rect = Rect::new(
-            cx - size.width * 0.5,
-            cy - size.height * 0.5,
-            size.width,
-            size.height,
-        );
-        arrange(child, rect, ctx);
+        let rect = manual_rect(child, size, parent_content_origin, ctx);
+        arrange(child, rect, env, ctx);
     }
 }
 
@@ -1146,16 +1221,18 @@ fn arrange_absolute_children(node: &mut Node, fallback: Point, ctx: Context<'_>)
 ///     : XSIZEF{ XFLOAT_INF, availableSize.height - combinedThickness.height };
 /// ```
 ///
-/// 而这个子项约束的缓存是**跨帧**存活的（见 [`cached_for`] 与
+/// 而这个子项约束的缓存是**跨帧**存活的（见 `Node::cached_measure` 与
 /// [`crate::node::clear_dirty`] 的文档）—— 两条合起来才是 resize 便宜的
 /// 全部原因：只改高度时约束一个字没变，于是整段子树跳过测量。
-fn measure_stack(node: &mut Node, deflated: Constraints, ctx: Context<'_>) -> Size {
+fn measure_stack(
+    node: &mut Node,
+    deflated: Constraints,
+    env: &LayoutEnv,
+    ctx: Context<'_>,
+) -> Size {
     let stack = node.stack(ctx);
     let child_constraints = stack.child_constraints(deflated);
 
-    // 折叠的子节点不参与测量，也不占间距。
-
-    // 一边测一边折叠，**不收集中间 Vec**（改之前每节点一次堆分配）。
     let mut main_sum = 0.0f32;
     let mut cross_max = 0.0f32;
     let mut n = 0usize;
@@ -1163,11 +1240,9 @@ fn measure_stack(node: &mut Node, deflated: Constraints, ctx: Context<'_>) -> Si
         if node.children()[i].is_collapsed(ctx) {
             continue;
         }
-        // 绝对定位子项**要测**（`arrange` 要读它的缓存尺寸），但**不占**父内容
-        // 尺寸 —— CSS 里 `position: absolute` 不参与父的 normal-flow 尺寸计算。
-        let absolute = node.children()[i].is_absolute(ctx);
-        let s = measure(&mut node.children_mut()[i], child_constraints, ctx);
-        if absolute {
+        let manual = node.children()[i].is_manual(ctx);
+        let s = measure(&mut node.children_mut()[i], child_constraints, env, ctx);
+        if manual {
             continue;
         }
         main_sum += stack.main_of(s);
@@ -1213,7 +1288,13 @@ fn measure_stack(node: &mut Node, deflated: Constraints, ctx: Context<'_>) -> Si
 /// 而症状（文字压到下一行上）离原因很远。所以显式主轴长优先，并且**先像
 /// [`pick_axis`] 那样夹进父给的区间再扣内边距**：父上限比 `width` 小时摆出来
 /// 就是父上限，按一个永远不会出现的宽度折行同样是错的。
-fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Context<'_>) -> Size {
+fn measure_flex(
+    node: &mut Node,
+    constraints: Constraints,
+    flex: Flex,
+    env: &LayoutEnv,
+    ctx: Context<'_>,
+) -> Size {
     let padding = node.padding(ctx);
     let deflated = constraints.deflate(padding);
     let child_constraints = flex.child_constraints(deflated);
@@ -1222,10 +1303,9 @@ fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Cont
         if node.children()[i].is_collapsed(ctx) {
             continue;
         }
-        // 绝对定位子项要测（`arrange` 读缓存尺寸），但不进 flex 项表。
-        let absolute = node.children()[i].is_absolute(ctx);
-        let size = measure(&mut node.children_mut()[i], child_constraints, ctx);
-        if absolute {
+        let manual = node.children()[i].is_manual(ctx);
+        let size = measure(&mut node.children_mut()[i], child_constraints, env, ctx);
+        if manual {
             continue;
         }
         items.push(flex.read_item(i, size, &node.children()[i], ctx));
@@ -1287,19 +1367,17 @@ fn measure_flex(node: &mut Node, constraints: Constraints, flex: Flex, ctx: Cont
 /// 只有**显式声明** flex 的容器走得到这里（见 `style::Node::flex`）：项表、
 /// 行、分配结果各一个。Stack 路径依旧逐节点零分配 —— 那条的记录见
 /// [`arrange`] 开头。
-fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
-    // 第一趟（只读）：从测量缓存 + 属性表重建项表。
-    // 绝对定位的子项不进项表——它们不参与 flex 分配。
+fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, env: &LayoutEnv, ctx: Context<'_>) {
     let mut items: Vec<FlexItem> = Vec::new();
     for i in 0..node.children().len() {
-        if node.children()[i].is_collapsed(ctx) || node.children()[i].is_absolute(ctx) {
+        if node.children()[i].is_collapsed(ctx) || node.children()[i].is_manual(ctx) {
             continue;
         }
         let size = cached_size_or_zero(&node.children()[i]);
         items.push(flex.read_item(i, size, &node.children()[i], ctx));
     }
     if items.is_empty() {
-        arrange_absolute_children(node, Point::new(inner.x, inner.y), ctx);
+        arrange_manual_children(node, Point::new(inner.x, inner.y), env, ctx);
         return;
     }
     items.sort_by_key(|it| it.order);
@@ -1309,8 +1387,6 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
     let available_cross = flex.cross_of(available);
     let lines = flex.lines(&items, available_main);
     let mut boxes = flex.line_boxes(&lines, available_cross);
-    // `wrap-reverse`：行序沿交叉轴反着铺（首行贴末端）。只翻坐标、不倒 `lines`
-    // —— 倒了的话行内项的主轴顺序会跟着错。
     if flex.wrap == FlexWrap::WrapReverse {
         for b in boxes.iter_mut() {
             *b = (available_cross - b.0 - b.1, b.1);
@@ -1320,7 +1396,6 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
     let stack = flex.stack();
     let horizontal = flex.main_is_horizontal();
 
-    // 第二趟（可变）：分配主轴 → justify 落位 → 递归。
     for (li, line) in lines.iter().enumerate() {
         let (line_start, line_extent) = boxes[li];
         let sizes = flex.resolve_main(&items, line, available_main);
@@ -1331,8 +1406,6 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
         for (k, &item_i) in line.items.iter().enumerate() {
             let item = &items[item_i];
             let main_size = sizes[k];
-            // `row-reverse` 是**翻转坐标**而不是倒着遍历：倒着走会把 justify 的
-            // 结果（space-between 的空隙落在哪一侧）一起摆反。
             let main_off = if flex.reverse {
                 available_main - cursor - main_size
             } else {
@@ -1354,12 +1427,11 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
                     main_size,
                 )
             };
-            arrange(&mut node.children_mut()[item.idx], rect, ctx);
+            arrange(&mut node.children_mut()[item.idx], rect, env, ctx);
             cursor += main_size + gap;
         }
     }
-    // 绝对定位子项在正常流之后摆位（CSS 同序：normal flow → out-of-flow）。
-    arrange_absolute_children(node, Point::new(inner.x, inner.y), ctx);
+    arrange_manual_children(node, Point::new(inner.x, inner.y), env, ctx);
 }
 
 /// 测量缓存里的尺寸；缺失时返回**零尺寸占位**。
@@ -1368,18 +1440,6 @@ fn arrange_flex(node: &mut Node, inner: Rect, flex: Flex, ctx: Context<'_>) {
 #[inline]
 fn cached_size_or_zero(node: &Node) -> Size {
     node.cached_size().unwrap_or(Size::new(0.0, 0.0))
-}
-
-/// 缓存命中且约束相同则返回尺寸。
-///
-/// 单独抽出来是因为要同时看两样东西：缓存存在，且**约束相等**。只判存在的话，
-/// 父容器尺寸一变就会拿旧结果继续用 —— 那正是 `Constraints` 必须参与相等比较的
-/// 原因。
-fn cached_for(node: &Node, constraints: Constraints) -> Option<Size> {
-    match node.measure_cache.as_ref() {
-        Some((cached, result)) if cached == &constraints => Some(result.size),
-        _ => None,
-    }
 }
 
 /// 显式尺寸（`None` = 由内容决定）。

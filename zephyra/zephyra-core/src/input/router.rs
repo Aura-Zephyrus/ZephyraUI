@@ -213,13 +213,14 @@ impl InputRouter {
             root,
             HitTestRequest {
                 point: Point::new(ev.x, ev.y),
-                ignore_above: None,
             },
             ctx,
             &mut self.hit,
         );
         let target = if hit_any {
-            self.hit.target().map(|n| (n.id.clone(), n.rect))
+            self.hit
+                .target()
+                .and_then(|n| n.id.clone().map(|id| (id, n.rect)))
         } else {
             None
         };
@@ -227,15 +228,8 @@ impl InputRouter {
         match ev.phase {
             PointerPhase::Down => {
                 if let Some((id, _)) = &target {
-                    // 按在不可交互的空白上时**不**清除已有的按下捕获：
-                    // 那属于"在空白处按下"，此时松开应当什么都不发生。
                     self.pressed = Some(id.clone());
                     out.push(RoutedEvent::Press(id.clone()));
-                    // ⚠️ `pressed` 变了就必须 `revision++`。
-                    //
-                    // 宿主靠 `revision` 变化决定「要不要重绘」，而按下态是**画出来的**
-                    // （`.pressed` 分类名 → 样式层换色）。漏了这一行，症状是
-                    // 「按钮按下时没有按下样式，直到鼠标动一下才出现」。
                     self.revision += 1;
                 }
             }

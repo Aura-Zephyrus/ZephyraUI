@@ -4,16 +4,17 @@
 
 /* ---- ProgressRing ---- */
 
-Container.progress-ring {
+box.progress-ring {
     direction: horizontal;
     main-align: center;
     cross-align: center;
 }
 
-Container.ring-track {
+box.ring-track {
     width: 60px;
     height: 60px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: transparent;
     border-width: 6px;
     border-color: @control_strong;
@@ -22,96 +23,98 @@ Container.ring-track {
     cross-align: center;
 }
 
-Container.ring-track.running {
+box.ring-track.running {
     border-color: @accent_fill;
 }
 
-Container.ring-track.paused {
+box.ring-track.paused {
     border-color: @caution;
 }
 
-Container.ring-track.error {
+box.ring-track.error {
     border-color: @critical;
 }
 
-Text.ring-value {
+text.ring-value {
     text-size: 13px;
     text-color: @content;
 }
 
 /* ---- InfoBar ---- */
 
-Container.info-bar {
+box.info-bar {
     direction: horizontal;
     main-align: start;
     cross-align: center;
     spacing: 14px;
     padding: 14px;
     width: 440px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @surface_alt;
 }
 
-Container.info-bar.success {
+box.info-bar.success {
     background: @success_bg;
 }
 
-Container.info-bar.caution {
+box.info-bar.caution {
     background: @caution_bg;
 }
 
-Container.info-bar.error {
+box.info-bar.error {
     background: @critical_bg;
 }
 
-Container.bar-icon {
+box.bar-icon {
     width: 18px;
     height: 18px;
     icon-color: @content;
 }
 
-Container.bar-icon.success {
+box.bar-icon.success {
     icon-color: @success;
 }
 
-Container.bar-icon.caution {
+box.bar-icon.caution {
     icon-color: @caution;
 }
 
-Container.bar-icon.error {
+box.bar-icon.error {
     icon-color: @critical;
 }
 
-Container.bar-texts {
+box.bar-texts {
     direction: vertical;
     spacing: 4px;
 }
 
-Text.bar-title {
+text.bar-title {
     text-size: 14px;
     text-color: @content;
 }
 
-Text.bar-text {
+text.bar-text {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
-Control.bar-close {
+control.bar-close {
     width: 28px;
     height: 24px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: center;
     cross-align: center;
     background: transparent;
 }
 
-Control.bar-close.hovered {
+control.bar-close.hovered {
     background: @control_secondary;
 }
 
-Container.bar-close-icon {
+box.bar-close-icon {
     width: 14px;
     height: 14px;
     icon-color: @content_secondary;
@@ -119,115 +122,119 @@ Container.bar-close-icon {
 
 /* ---- Toast ---- */
 
-Container.toast {
+box.toast {
     direction: horizontal;
     main-align: start;
     cross-align: center;
     spacing: 14px;
     padding: 14px;
     width: 340px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @accent_fill;
 }
 
-Container.toast.success {
+box.toast.success {
     background: @success;
 }
 
-Container.toast.caution {
+box.toast.caution {
     background: @caution;
 }
 
-Container.toast.error {
+box.toast.error {
     background: @critical;
 }
 
-Text.bar-title.success {
+text.bar-title.success {
     text-color: #ffffff;
 }
 
-Text.bar-title.caution {
+text.bar-title.caution {
     text-color: #ffffff;
 }
 
-Text.bar-title.error {
+text.bar-title.error {
     text-color: #ffffff;
 }
 
-Text.bar-text.success {
+text.bar-text.success {
     text-color: #ffffff;
 }
 
-Text.bar-text.caution {
+text.bar-text.caution {
     text-color: #ffffff;
 }
 
-Text.bar-text.error {
+text.bar-text.error {
     text-color: #ffffff;
 }
 
 /* ---- ToolTip ---- */
 
-Container.tool-tip {
+box.tool-tip {
     direction: horizontal;
     main-align: center;
     cross-align: center;
     padding: 10px;
-    corner-radius: 8px;
+    corner-radius: 12.8px;
+    corner-shape: superellipse(1.5);
     background: @layer;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Text.tip-text {
+text.tip-text {
     text-size: 13px;
     text-color: @content;
 }
 
 /* ---- BusyIndicator ---- */
 
-Container.busy {
+box.busy {
     direction: horizontal;
     cross-align: center;
     spacing: 10px;
 }
 
-Container.busy-dot {
-    corner-radius: 99px;
+box.busy-dot {
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @accent_fill;
 }
 
-Container.busy-dot.dot-lg {
+box.busy-dot.dot-lg {
     width: 14px;
     height: 14px;
 }
 
-Container.busy-dot.dot-md {
+box.busy-dot.dot-md {
     width: 10px;
     height: 10px;
 }
 
-Container.busy-dot.dot-sm {
+box.busy-dot.dot-sm {
     width: 7px;
     height: 7px;
 }
 
 /* ---- PageIndicator ---- */
 
-Container.page-indicator {
+box.page-indicator {
     direction: horizontal;
     cross-align: center;
     spacing: 8px;
 }
 
-Container.pip {
+box.pip {
     width: 7px;
     height: 7px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     background: @control_strong;
 }
 
-Container.pip.selected {
+box.pip.selected {
     width: 18px;
     background: @accent_fill;
 }

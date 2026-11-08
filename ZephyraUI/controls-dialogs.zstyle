@@ -6,12 +6,13 @@
 
 /* ---- AcrylicCard ---- */
 
-Container.acrylic-card {
+box.acrylic-card {
     direction: vertical;
     spacing: 10px;
     padding: 18px;
     width: 280px;
-    corner-radius: 12px;
+    corner-radius: 19.2px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
@@ -19,7 +20,7 @@ Container.acrylic-card {
 
 /* ---- RoundedCornerOverlay ---- */
 
-Container.corner-overlay {
+box.corner-overlay {
     direction: vertical;
     spacing: 10px;
     padding: 18px;
@@ -29,38 +30,41 @@ Container.corner-overlay {
     border-color: @card_border;
 }
 
-Container.corner-overlay.r7 {
-    corner-radius: 12px;
+box.corner-overlay.r7 {
+    corner-radius: 19.2px;
+    corner-shape: superellipse(1.5);
 }
 
-Container.corner-overlay.r3 {
-    corner-radius: 6px;
+box.corner-overlay.r3 {
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
 }
 
 /* ---- Dialog ---- */
 
-Container.dialog {
+box.dialog {
     direction: vertical;
     spacing: 14px;
     padding: 28px;
     width: 440px;
-    corner-radius: 14px;
+    corner-radius: 22.4px;
+    corner-shape: superellipse(1.5);
     background: @surface_alt;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Text.dialog-title {
+text.dialog-title {
     text-size: 22px;
     text-color: @content;
 }
 
-Text.dialog-text {
+text.dialog-text {
     text-size: 15px;
     text-color: @content_secondary;
 }
 
-Container.dialog-buttons {
+box.dialog-buttons {
     direction: horizontal;
     main-align: end;
     spacing: 10px;
@@ -68,33 +72,34 @@ Container.dialog-buttons {
 
 /* ---- DatePicker ---- */
 
-Container.date-picker {
+box.date-picker {
     direction: vertical;
     spacing: 6px;
     padding: 14px;
     width: 320px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.dp-heads {
+box.dp-heads {
     direction: horizontal;
     spacing: 6px;
 }
 
-Text.dp-head {
+text.dp-head {
     text-size: 13px;
     text-color: @content_secondary;
 }
 
-Container.dp-row {
+box.dp-row {
     direction: horizontal;
     spacing: 6px;
 }
 
-Container.dp-cell {
+box.dp-cell {
     width: 38px;
     height: 38px;
     direction: horizontal;
@@ -102,82 +107,85 @@ Container.dp-cell {
     cross-align: center;
 }
 
-Container.dp-cell.hovered .dp-day {
+box.dp-cell.hovered .dp-day {
     background: @control_secondary;
 }
 
-Container.dp-cell.pressed .dp-day {
+box.dp-cell.pressed .dp-day {
     background: @control_tertiary;
 }
 
-Container.dp-day {
+box.dp-day {
     width: 34px;
     height: 34px;
-    corner-radius: 99px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: center;
     cross-align: center;
     background: transparent;
 }
 
-Container.dp-day.selected {
+box.dp-day.selected {
     background: @accent_fill;
 }
 
-Text.dp-day-label {
+text.dp-day-label {
     text-size: 13px;
     text-color: @content;
 }
 
-Text.dp-day-label.selected {
+text.dp-day-label.selected {
     text-color: @on_accent_fill;
 }
 
 /* ---- TimePicker ---- */
 
-Container.time-picker {
+box.time-picker {
     direction: horizontal;
     spacing: 14px;
     padding: 14px;
-    corner-radius: 10px;
+    corner-radius: 16px;
+    corner-shape: superellipse(1.5);
     background: @card;
     border-width: 1px;
     border-color: @card_border;
 }
 
-Container.tp-col {
+box.tp-col {
     direction: vertical;
     spacing: 4px;
 }
 
-Container.tp-item {
+box.tp-item {
     width: 68px;
     height: 34px;
     padding: 10px;
-    corner-radius: 6px;
+    corner-radius: 9.6px;
+    corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: center;
     cross-align: center;
     background: transparent;
 }
 
-Container.tp-item.hovered {
+box.tp-item.hovered {
     background: @control_secondary;
 }
 
-Container.tp-item.pressed {
+box.tp-item.pressed {
     background: @control_tertiary;
 }
 
-Container.tp-item.selected {
+box.tp-item.selected {
     background: @accent_fill;
 }
 
-Text.tp-label {
+text.tp-label {
     text-size: 14px;
     text-color: @content;
 }
 
-Text.tp-label.selected {
+text.tp-label.selected {
     text-color: @on_accent_fill;
 }

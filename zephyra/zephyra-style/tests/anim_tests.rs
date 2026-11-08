@@ -4,7 +4,7 @@
 //! 移到集成测试后不需要改可见性。
 
 use zephyra_style::anim::{
-    progress, step, Easing, BOUNCE_MS, FADE_MS, MS_167, MS_250, MS_333, STEPS,
+    progress, step, step_with, Easing, BOUNCE_MS, FADE_MS, MS_167, MS_250, MS_333, STEPS,
 };
 
 /// 缓动必须满足不动点的基本性质，否则任何接入都会得到错的外观。
@@ -15,6 +15,7 @@ fn easing_closes_at_both_ends_and_total_duration() {
         Easing::Direct,
         Easing::PointToPoint,
         Easing::SoftExit,
+        Easing::AppleMenu,
     ] {
         assert_eq!(e.at(0.0), 0.0, "{e:?} 起点必须是 0");
         assert!(
@@ -69,6 +70,40 @@ fn official_curve_shapes_match_their_source() {
     // 线性就是线性（官方"最低限度"档明确线性，不是省事）。
     for i in 0..=10 {
         assert_eq!(Easing::Linear.at(i as f32 / 10.0), i as f32 / 10.0);
+    }
+}
+
+/// iOS 菜单曲线：连续流畅减速，无回弹、尾段细腻收束。
+///
+/// 数字由 `cubic-bezier(0.22, 1.0, 0.36, 1.0)` 实算。
+#[test]
+fn apple_menu_curve_is_smooth_and_continuous() {
+    let curve = Easing::AppleMenu;
+    let early = curve.at(0.1);
+    let mid = curve.at(0.5);
+    let late = curve.at(0.9);
+    assert!(early > 0.25, "0.1 处应平滑起步，实际 {early}");
+    assert!(
+        mid > 0.85 && mid < 0.99,
+        "中段应大幅推进但未突变到终点，实际 {mid}"
+    );
+    assert!(late > 0.97 && late <= 1.0, "末段连续收束，实际 {late}");
+    assert!(late > mid, "{late} 应 > {mid}");
+}
+
+/// `step_with` 是局部档位密度：默认密度仍由 `step` / [`STEPS`] 决定。
+#[test]
+fn local_step_density_keeps_default_untouched() {
+    assert_eq!(step_with(0.0, 16), None);
+    assert_eq!(step_with(f32::NAN, 16), None);
+    assert_eq!(step_with(0.5, 0), None, "0 档没有可发的分类名");
+    assert_eq!(step_with(1.0, 16), Some(16));
+    for i in 0..=160 {
+        let p = i as f32 / 160.0;
+        if let Some(n) = step_with(p, 16) {
+            assert!((1..=16).contains(&n));
+        }
+        assert_eq!(step(p), step_with(p, STEPS), "默认密度必须与 step 一致");
     }
 }
 
