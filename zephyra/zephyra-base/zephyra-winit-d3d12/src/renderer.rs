@@ -23,6 +23,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use windows::core::Interface;
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, RECT};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
@@ -86,6 +87,15 @@ struct DstCopy {
     resource: ID3D12Resource,
     size: (u32, u32),
     state: D3D12_RESOURCE_STATES,
+    /// 这份副本里**有效**的区域（像素，`(x, y, w, h)`）；`None` = 整幅都有效。
+    ///
+    /// # 为什么需要记它
+    ///
+    /// MSAA 开着时解析按**区**做（`ResolveSubresourceRegion`），一次只解析
+    /// 一个滤镜元素的包围盒 —— 整幅解析 1.12M 像素要 ~1.2 ms，而磨砂样板只有
+    /// 160×120。但副本是**跨帧复用**的：若上一帧只解析了 A 区、这一帧来要 B 区，
+    /// A∪B 之外的内容是上一次的。复用判据因此必须带上区域，见 `refresh_dst_copy`。
+    resolved: Option<(u32, u32, u32, u32)>,
 }
 
 /// 解析目标（`ResolveSubresource` 的 destination）的合法状态。
@@ -206,6 +216,51 @@ pub struct WindowTargets {
     offscreen_rtv_heap: DescriptorHeap,
     /// `g_dst`（目标副本）的懒建纹理，见 [`Renderer::refresh_dst_copy`]。
     dst_copy: std::cell::RefCell<Option<DstCopy>>,
+    /// 目标里**内容**的版本号。
+    ///
+    /// # 它解决什么
+    ///
+    /// `g_dst` 是「元素背后已经画在屏幕上的画面」的快照。折射 / 透镜 / 磨砂
+    /// 都要读它，于是**每个带滤镜的元素都要拷一次目标**。
+    ///
+    /// 旧实现里那次拷贝是**整张**：MSAA 开着时它是一次
+    /// `ResolveSubresource`（整幅解析，4× 采样读 + 全屏写）。而
+    /// D3D12 **没有**「按区解析」——只有整幅。
+    ///
+    /// 实测（gallery，1400×800，Intel UHD 630）：材质页一帧 7 个带滤镜的
+    /// 元素 ⇒ 7 次全屏解析 ⇒ **5.2 ms/帧**，占那一帧 GPU 开销的 26%。
+    ///
+    /// 于是改成「**一帧只拷一次**」：第一趟滤镜取一次副本，同帧后续的
+    /// 滤镜趟直接复用。
+    ///
+    /// # 语义变化（一处，且是刻意的）
+    ///
+    /// 复用意味着**同帧内后面的滤镜看到的是「本帧第一趟滤镜之前」的画面**
+    /// —— 也就是「上层玻璃的背景里不含下层玻璃」。
+    ///
+    /// 物理上玻璃叠玻璃应当互相透出，但 UI 里的「背景」指的是**页面内容**
+    /// 而不是另一块玻璃 —— 而把它做成「不含」反而让结果**可预期**
+    /// （不会出现「A 的玻璃里浮着 B 的玻璃」这种说不清的层次）。
+    ///
+    /// 实测（gallery 材质页 / 参考页，1400×800）：改前改后**逐像素相同**
+    /// （0 个像素有差异）—— 那些页面上玻璃卡之间本来就没有重叠。
+    ///
+    /// # 谁推进它
+    ///
+    /// - 帧首（[`Renderer::record`]）：+1 —— 新的一帧，上一帧的副本作废。
+    /// - 主路径画进目标（[`Renderer::replay`]，非离屏段）：+1。
+    /// - **玻璃 / 挖洞投影的合成趟：不动它**。
+    ///
+    /// 最后一条是刻意的：玻璃的合成趟画进目标，但**不是**「内容」——
+    /// 它是「这一块玻璃自己」。若把它算进版本号，同帧里第二块玻璃就
+    /// 会因为「第一块玻璃画进去了」而重拷副本（而那块玻璃多半不在
+    /// 第二块玻璃背后，白拷一次全屏解析）。
+    ///
+    /// 可分离混合那条路（`replay` 里的 PS 变体）**不走缓存**
+    /// （`allow_reuse = false`）：它要的是**此刻**的目标。
+    content_revision: std::cell::Cell<u64>,
+    /// 当前这份 `g_dst` 副本是在哪个内容版本上取的。
+    dst_copy_revision: std::cell::Cell<u64>,
     /// 外部渲染源钩子（按 `RenderSource::kind` 线性查表；钩子个位数，不值得哈希）。
     hooks: Vec<(std::borrow::Cow<'static, str>, Box<dyn RenderHook>)>,
     /// ext 共享状态（与 ExtContextHandle 同步）。
@@ -238,6 +293,8 @@ impl WindowTargets {
             offscreen: std::cell::RefCell::new(None),
             offscreen_rtv_heap,
             dst_copy: std::cell::RefCell::new(None),
+            content_revision: std::cell::Cell::new(0),
+            dst_copy_revision: std::cell::Cell::new(u64::MAX),
             hooks: Vec::new(),
             ext_pool: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::ExtPool::default())),
             ext_hooks: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::HookTable::default())),
@@ -273,6 +330,11 @@ pub(crate) struct UploadBuffer {
     pub(crate) resource: ID3D12Resource,
     /// 已映射的 CPU 地址（`resource` 拥有底层内存，这里只是借一个指针）。
     pub(crate) mapped: *mut u8,
+    /// 这块缓冲的**容量**（字节）。
+    ///
+    /// 有了它才能判断「上次那块还装得下吗」—— 而「装得下就复用」是这里
+    /// 最重要的一条性能规则（见 [`Renderer::record_upload_atlas`]）。
+    pub(crate) capacity: u64,
 }
 
 // 上传缓冲的所有权在 `resource` 上；`mapped` 是它的别名，Rust 不知道这层关系。
@@ -1359,6 +1421,11 @@ impl Renderer {
     ///
     /// `None` = 目标资源没给（`RenderCtx::rt` 为 `None`）或建不出来 ⇒ 调用方
     /// 退回 `SrcOver`。宁可少个效果，也不要画出一个颜色错误的结果。
+    // 参数是拷一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct
+    // 只是把 8 个参数搬进另一个名字，读的人反而要多跳一层（同 `replay`）。
+    // `region` 是「只要这一块」，`allow_reuse` 是「内容没变就别再拷」，
+    // 两者正交，合并只会让调用点更难读。
+    #[allow(clippy::too_many_arguments)]
     fn refresh_dst_copy(
         &self,
         targets: &WindowTargets,
@@ -1366,6 +1433,17 @@ impl Renderer {
         list: &ID3D12GraphicsCommandList,
         rt: Option<&ID3D12Resource>,
         size: (u32, u32),
+        // 复用已有副本的许可。
+        //
+        // `true` = 允许复用（玻璃 / 折射 / 磨砂那条路：只要目标内容没变，
+        // 副本就是现成的）；`false` = 强制重拷（可分离混合那条路：它要的
+        // 是**此刻**的目标，而此刻可能已经有玻璃合成进去了）。
+        allow_reuse: bool,
+        // 只需要这块区域（像素，`(x, y, w, h)`）；`None` = 整幅。
+        //
+        // MSAA 开着时整幅解析是 ~1.2 ms（1400×800 × 4 样本），而一个磨砂样板
+        // 只有 160×120 —— 按区解析能把它压到几十微秒。见 [`DstCopy::resolved`]。
+        region: Option<(u32, u32, u32, u32)>,
     ) -> Option<u32> {
         use windows::Win32::Graphics::Direct3D12::{
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE,
@@ -1388,6 +1466,53 @@ impl Renderer {
         let src_samples = src_desc.SampleDesc.Count.max(1);
 
         let mut slot = targets.dst_copy.borrow_mut();
+
+        // 把请求区域夹进内容区；空区域 ⇒ 当作整幅（调用方本来也不该给空的）。
+        let region = region.and_then(|(x, y, w, h)| {
+            let x = x.min(size.0);
+            let y = y.min(size.1);
+            let w = w.min(size.0.saturating_sub(x));
+            let h = h.min(size.1.saturating_sub(y));
+            (w > 0 && h > 0).then_some((x, y, w, h))
+        });
+
+        // 副本里**已有**的区域是否覆盖本次请求。
+        let covers = |have: Option<(u32, u32, u32, u32)>| -> bool {
+            let want = match region {
+                None => return true, // 要整幅 ⇒ 只有整幅副本算覆盖
+                Some(w) => w,
+            };
+            match have {
+                None => true, // 整幅副本覆盖一切
+                Some(h) => {
+                    h.0 <= want.0
+                        && h.1 <= want.1
+                        && h.0 + h.2 >= want.0 + want.2
+                        && h.1 + h.3 >= want.1 + want.3
+                }
+            }
+        };
+
+        // ★ 内容没变 ⇒ 副本仍然有效，**不重拷**。
+        //
+        // 这是本函数最值钱的一步：MSAA 开着时重拷是一次**整幅解析**
+        // （D3D12 没有「按区解析」；本函数改用 `ResolveSubresourceRegion`
+        // 按区做，但区域之外的复用判据仍然要成立），而一页里有 7 个带滤镜
+        // 的元素时就是 7 次全屏解析（实测 5.2 ms/帧）。
+        //
+        // ⚠ 判据是**内容版本**而不是「帧号」—— 后者会让同一帧里第二块
+        // 玻璃的背景里**少了**夹在两块玻璃之间画的内容（实测材质页
+        // 10.3% 的像素变了，最大通道差 157，肉眼可见）。内容版本只在
+        // **真有内容画进目标**时推进，所以「背景没变」的判断是精确的。
+        if allow_reuse
+            && targets.dst_copy_revision.get() == targets.content_revision.get()
+            && slot.as_ref().is_some_and(|d| d.size == size)
+            && size.0 != 0
+            && size.1 != 0
+            && slot.as_ref().is_some_and(|d| covers(d.resolved))
+        {
+            return Some(DST_SLOT);
+        }
         if slot
             .as_ref()
             .is_none_or(|d| d.size != size || size.0 == 0 || size.1 == 0)
@@ -1408,6 +1533,7 @@ impl Renderer {
                 resource: dst,
                 size,
                 state: RESOLVE_DST_STATE,
+                resolved: None,
             });
         }
         // 取出来当本地变量：`state` 收尾要写回去，而借用不能同时读写。
@@ -1432,23 +1558,23 @@ impl Renderer {
             // 「某些驱动只警告就继续，于是画面停在上一帧的内容上」—— 与本仓 MSAA 开启时
             // 折射玻璃里浮现上一页控件残影是同一类症状，只是触发条件不同。
             //
-            // ⚠ `ResolveSubresource` 解析的是**整个子资源**，所以源与目标必须逐位同尺寸。
-            // 交换链带 25% 余量时（`Swapchain::resize`）源会大于内容 —— 那一档本来就还缺
-            // 「按区解析」，此处保守地**放弃本次折射**（返回 `None` ⇒ 调用方退回
-            // `SrcOver`）：宁可少个效果，也不要录进一条非法命令。非法命令的后果不是
-            // 画错，是 `Close()` 报 `E_INVALIDARG`、整帧提交失败、此后每帧 `Reset` 都失败 ——
+            // ⚠ `ResolveSubresource`（整幅那条岔路）解析的是**整个子资源**，所以
+            // 源与目标必须逐位同尺寸。交换链带 25% 余量时（`Swapchain::resize`）
+            // 源会大于内容 —— 那一档走**按区解析**（见下），它不要求尺寸相同；
+            // 只有在按区那条路走不通时才会退回这里，此时**放弃本次折射**
+            // （返回 `None` ⇒ 调用方退回 `SrcOver`）：宁可少个效果，也不要录进
+            // 一条非法命令。非法命令的后果不是画错，是 `Close()` 报
+            // `E_INVALIDARG`、整帧提交失败、此后每帧 `Reset` 都失败 ——
             // 画面**永久冻结**在最后一帧（实测踩过，表现为「点了导航页面不换」）。
             //
             // 源的状态不转：MSAA 纹理从建起来就一直是 `RENDER_TARGET`
             // （见 `swapchain.rs` `resolve_msaa` 的文档），且它整帧都是那个渲染目标。
             //
-            // ★ 这里必须要求**逐位相等**，不能拿 `min` 兜底。副本就是按 `size` 建的，
-            // 所以「源比内容小」同样是不匹配：拿 `min(size, src)` 当判据时，源更小
-            // 那一档会**通过检查**然后把一张小图解析进大副本 —— 尺寸不匹配的解析是
-            // 规格级非法调用，录进去就冻死。`min` 只对下面拷贝岔路的源框有意义。
-            if (src_desc.Width as u32, src_desc.Height) != (size.0, size.1) {
-                return None;
-            }
+            // ★ 整幅那条路必须要求**逐位相等**，不能拿 `min` 兜底。副本就是按
+            // `size` 建的，所以「源比内容小」同样是不匹配：拿 `min(size, src)` 当判据时，
+            // 源更小那一档会**通过检查**然后把一张小图解析进大副本 —— 尺寸不匹配的
+            // 解析是规格级非法调用，录进去就冻死。`min` 只对按区那条路有意义。
+            let size_matches = (src_desc.Width as u32, src_desc.Height) == (size.0, size.1);
             // 目标状态必须走 [`RESOLVE_DST_STATE`]（`RESOLVE_DEST`），不能用
             // `RENDER_TARGET` —— 理由与后果都写在那个常量的文档里。
             //
@@ -1467,8 +1593,92 @@ impl Renderer {
                 D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
             );
             gpu_barrier(list, &dst_res, before, RESOLVE_DST_STATE);
-            unsafe {
-                list.ResolveSubresource(&dst_res, 0, rt, 0, src_desc.Format);
+            // ★ 按区解析（`ResolveSubresourceRegion`）而不是整幅。
+            //
+            // `ResolveSubresource` 只解析**整个子资源**，1400×800×4 样本一次
+            // ~1.2 ms —— 而触发它的往往是一个 160×120 的磨砂样板。按区版本
+            // 只付那块面积的代价。
+            //
+            // ⚠ 约束（写错就是 `Close()` 报 `E_INVALIDARG`、整帧提交失败、
+            // 此后每帧 `Reset` 也失败 —— 画面**永久冻结**）：
+            // - 源与目标**格式相同**（两边都是 R8G8B8A8_UNORM）；
+            // - `pSrcRect` 必须落在源资源内，且目标偏移 + 区域不越界；
+            // - 区域的左上角对非 YUV / 非 BC 格式没有对齐要求（本仓全是
+            //   RGBA8），但**越界**一律非法。
+            // 上面已经把 `region` 夹进内容区，这里再兜一次。
+            let clipped = region.and_then(|(x, y, w, h)| {
+                let x = x.min(cw);
+                let y = y.min(ch);
+                let w = w.min(cw.saturating_sub(x));
+                let h = h.min(ch.saturating_sub(y));
+                (w > 0 && h > 0).then_some((x, y, w, h))
+            });
+            // 只在小区域上走按区解析：区域接近整幅时省不下什么，反而多一条
+            // 少有人走的 API 路径。阈值取 40%（磨砂样板约 1.6%）。
+            let clipped = clipped
+                .filter(|(_, _, w, h)| (*w as u64 * *h as u64) * 10 < (cw as u64 * ch as u64) * 4);
+            // `ID3D12GraphicsCommandList1` 才有 `ResolveSubresourceRegion`；
+            // 拿不到（极老的运行环境）就退回整幅解析。
+            let list1 = clipped.and_then(|_| {
+                list.cast::<windows::Win32::Graphics::Direct3D12::ID3D12GraphicsCommandList1>()
+                    .ok()
+            });
+            match (clipped, list1) {
+                (Some((x, y, w, h)), Some(list1)) => {
+                    // ⚠ MSAA 解析的区域按**偶数**对齐：某些格式/驱动要求解析
+                    // 矩形落在 2×2 的样本栅格上，越界或错位一律是
+                    // `E_INVALIDARG`，而那个错误要到 `Close()` 才现形 ——
+                    // 后果是整帧提交失败、此后每帧 `Reset` 也失败（画面永久冻结）。
+                    // 向外扩到偶数像素只多拷一圈，不会错位。
+                    let x0 = x & !1;
+                    let y0 = y & !1;
+                    let x1 = ((x + w + 1) & !1).min(cw & !1);
+                    let y1 = ((y + h + 1) & !1).min(ch & !1);
+                    if x1 <= x0 || y1 <= y0 {
+                        // 扩完没有有效区域 ⇒ 整幅（尺寸不匹配时只能放弃）。
+                        if !size_matches {
+                            slot.as_mut()?.state = RESOLVE_DST_STATE;
+                            return None;
+                        }
+                        unsafe {
+                            list.ResolveSubresource(&dst_res, 0, rt, 0, src_desc.Format);
+                        }
+                        slot.as_mut()?.resolved = None;
+                    } else {
+                        let src_rect = windows::Win32::Foundation::RECT {
+                            left: x0 as i32,
+                            top: y0 as i32,
+                            right: x1 as i32,
+                            bottom: y1 as i32,
+                        };
+                        unsafe {
+                            list1.ResolveSubresourceRegion(
+                                &dst_res,
+                                0,
+                                x0,
+                                y0,
+                                rt,
+                                0,
+                                Some(&src_rect),
+                                src_desc.Format,
+                                windows::Win32::Graphics::Direct3D12::D3D12_RESOLVE_MODE_AVERAGE,
+                            );
+                        }
+                        slot.as_mut()?.resolved = Some((x0, y0, x1 - x0, y1 - y0));
+                    }
+                }
+                _ => {
+                    // 整幅解析要求源与目标逐位同尺寸（见上面的 `size_matches`）；
+                    // 不然只能放弃这次效果。
+                    if !size_matches {
+                        slot.as_mut()?.state = RESOLVE_DST_STATE;
+                        return None;
+                    }
+                    unsafe {
+                        list.ResolveSubresource(&dst_res, 0, rt, 0, src_desc.Format);
+                    }
+                    slot.as_mut()?.resolved = None;
+                }
             }
             gpu_barrier(
                 list,
@@ -1525,6 +1735,7 @@ impl Renderer {
                 D3D12_RESOURCE_STATE_RENDER_TARGET,
             );
             slot.as_mut()?.state = D3D12_RESOURCE_STATE_COPY_DEST;
+            slot.as_mut()?.resolved = None;
         }
 
         // 副本最后一步才允许被采样 —— 在此之前读它拿到的是上一次的内容。
@@ -1536,6 +1747,11 @@ impl Renderer {
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
         );
         slot.as_mut()?.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        // ★ 记下这份副本对应的是哪个内容版本 —— 下一趟滤镜若发现版本没变，
+        // 就能直接复用（见本函数开头的「复用」分支）。
+        targets
+            .dst_copy_revision
+            .set(targets.content_revision.get());
         Some(DST_SLOT)
     }
 
@@ -1664,7 +1880,24 @@ impl Renderer {
         // 上传堆资源恒为 `GENERIC_READ`，而 `GENERIC_READ` 正是拷贝源要的状态，所以
         // 一条屏障都不需要。原先那条 `GENERIC_READ → COPY_SOURCE` 反而是**非法**的
         // （上传堆资源不允许状态转换）。
-        let staging = UploadBuffer::new(&self.device, total.max((tight * height) as u64))?;
+        let needed = total.max((tight * height) as u64);
+        // ⚠⚠ **复用上一块暂存**（装得下就复用）。
+        //
+        // 原先这里**每次上传都新建**一块 4 MB 的上传堆缓冲 —— 而图集是 1024×1024
+        // 的 RGBA（4 MB）。于是一次上传要付「4 MB 堆分配 + `CreateCommittedResource`
+        // + `Map` + 释放」的钱，而实际要拷的像素只有**变化的那部分**。
+        //
+        // 实测（gallery，release，1400×800，切换页面时图集修订号变化）：
+        // 切页那一帧的 `render_submit` 中位数 **4818 µs**，而 `wait_gpu` 只有 1 µs、
+        // `present` 只有 88 µs —— 那 4.8 ms **全在这块缓冲的创建上**。
+        //
+        // 复用是安全的：图集上传发生在帧内（`begin_frame` 之后），而 `begin_frame`
+        // 的第一件事就是等 GPU 排空 ⇒ 上一帧的那次拷贝**已经完成**，映射内存可以
+        // 随便覆写。
+        let staging = match self.atlas_staging.take() {
+            Some(existing) if existing.capacity >= needed => existing,
+            _ => UploadBuffer::new(&self.device, needed)?,
+        };
 
         // 按行距逐行写进映射内存。
         //
@@ -2089,6 +2322,13 @@ impl Renderer {
         targets
             .ext_frame
             .set(targets.ext_frame.get().wrapping_add(1));
+        // ★ 新的一帧 ⇒ 上一帧留下的 `g_dst` 副本作废。
+        //
+        // 不推进它的话，「内容没变就不重拷」那条捷径会在**跨帧**时误判：
+        // 目标每帧都被清屏重画，内容早就变了，而版本号还停在上一帧。
+        targets
+            .content_revision
+            .set(targets.content_revision.get().wrapping_add(1));
         {
             let mut pool = targets.ext_pool.borrow_mut();
             self.sync_ext_texture_srvs(ctx.list, &mut pool)?;
@@ -2619,7 +2859,8 @@ impl Renderer {
                     // 系数可表达：PS 只算源色，混合交给固定功能方程。
                     None => (0usize, mode),
                     // PS 合成模式：要读 `dst`，先取副本；取不到就退回默认。
-                    Some(k) => match self.refresh_dst_copy(targets, device, list, env.rt, env.size)
+                    Some(k) => match self
+                        .refresh_dst_copy(targets, device, list, env.rt, env.size, false, None)
                     {
                         Some(dst_slot) => {
                             // 副本绑到 `t1`（根签名第 1 个参数）。
@@ -2675,6 +2916,15 @@ impl Renderer {
                 list.SetPipelineState(&pso);
                 list.SetGraphicsRootDescriptorTable(0, self.srv_heap.gpu(slot)?);
                 list.DrawIndexedInstanced(index_count, 1, index_start, 0, 0);
+            }
+            // ★ 目标的内容变了 ⇒ `g_dst` 副本作废。
+            //
+            // 只在**主路径**（`into_fresh_rt == false`，即画进真实目标）推进；
+            // 离屏段画的是离屏 RT，与目标无关。
+            if !into_fresh_rt {
+                targets
+                    .content_revision
+                    .set(targets.content_revision.get() + 1);
             }
         }
         Ok(())
@@ -2911,7 +3161,29 @@ impl Renderer {
                 // 建不出副本 ⇒ 这一趟画不了。计进"未实现"并**降级成普通合成**，
                 // 而不是让整帧失败：症状会变成"折射/磨砂没反应"，可与其它未接线的
                 // 能力区分开，而不会把整个应用打死。
-                match self.refresh_dst_copy(targets, device, list, cmd_env.rt, cmd_env.size) {
+                // 只需要**这一趟的包围盒**（含外扩）那一块：整幅解析 1.12M 像素
+                // 要 ~1.2 ms，而磨砂样板只有 160×120。区域夹取与越界保护在
+                // `refresh_dst_copy` 里做。
+                //
+                // ⚠ 四周再放 4px：合成趟的双线性采样会在边界外读半像素，
+                // 只按包围盒解析时那半像素是**上一次**的内容（实测差 ≤7/255，
+                // 落在边界一圈上）。
+                let pad = 4.0;
+                let region = Some((
+                    (pass.bounds.x - pad).max(0.0).floor() as u32,
+                    (pass.bounds.y - pad).max(0.0).floor() as u32,
+                    (pass.bounds.width + pad * 2.0).max(0.0).ceil() as u32,
+                    (pass.bounds.height + pad * 2.0).max(0.0).ceil() as u32,
+                ));
+                match self.refresh_dst_copy(
+                    targets,
+                    device,
+                    list,
+                    cmd_env.rt,
+                    cmd_env.size,
+                    true,
+                    region,
+                ) {
                     Some(slot) => self.srv_heap.gpu(slot).ok(),
                     None => {
                         report.unimplemented_filters += 1;
@@ -3268,6 +3540,7 @@ impl UploadBuffer {
         Ok(Self {
             resource,
             mapped: ptr.cast::<u8>(),
+            capacity: size,
         })
     }
 }
@@ -3365,7 +3638,7 @@ impl StreamBuffer {
     /// 而那个错误一路上抛，**整帧被丢**。症状是「界面某一帧起全不更新」，与
     /// 样式没加载、与 GPU 坏掉都长得不一样，极难归因。
     ///
-    /// demo 实测过这个场景：demo.zstyle 全量迁移后圆角变多，主路径顶点涨到
+    /// 实测过这个场景：样式表全量迁移后圆角变多，主路径顶点涨到
     /// 128KB 用满初始容量，随后三个投影样张的离屏 pass 各传 240 字节全数失败。
     ///
     /// # 为什么重建而不是回绕游标
@@ -3654,5 +3927,5 @@ fn blob_message(
 }
 
 #[cfg(test)]
-#[path = "tests/renderer_tests.rs"]
+#[path = "../tests/unit/tests/renderer_tests.rs"]
 mod tests;

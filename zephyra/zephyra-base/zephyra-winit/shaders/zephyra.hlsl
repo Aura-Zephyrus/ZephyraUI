@@ -119,6 +119,46 @@ float2 DstUv(VSOut i) {
 
 // 圆角矩形的有符号距离：矩形内为负，外部为正。
 // shape_k = CSS corner-shape / superellipse(K) 的 K（1=round, 2=squircle）。
+//
+// # 为什么超椭圆那一支要单独两个函数
+//
+// 超椭圆的定义是 `|x/a|^n + |y/a|^n = 1`，`n = 2K`。写成
+// `pow(pow(ax, n) + pow(ay, n), 1/n)` 时，**`n` 是运行期变量**
+// （`shape_k` 是顶点插值出来的），编译器**没法**把它折成乘法链 ——
+// 于是每个片元要付 **3 次完整的 `pow`**（每次 ≈ log2 + exp2 + 一次乘）。
+//
+// 样式表里有 **139 处** `corner-shape: superellipse(1.5)`（也就是 n=3），
+// 也就是说**几乎每个面板、每个按钮的每个片元**都在付这 3 次 `pow`。
+//
+// 实测（gallery，1400×800，Intel UHD 630）：整帧光栅化 **3.0 ms** ——
+// 而「n 取整」时可以用乘法链 + 一次开根代替：
+//
+// | n | `pow(x, n)` | 根 |
+// |---|---|---|
+// | 2 | `x*x` | `sqrt` |
+// | 3 | `x*x*x` | `pow(x, 1/3)` |
+// | 4 | `x*x*x*x` | `sqrt(sqrt)` |
+//
+// ⇒ 3 次 `pow`（≈ 9 次超越函数运算）降到 **1 次**。
+//
+// ⚠ 分支是**逐绘制**一致的：`shape_k` 标了 `nointerpolation`，
+// 整趟绘制里它是常量 ⇒ 分支在 warp 内不发散。
+// ⚠ 非整数 n 仍走 `pow`（样式表里目前没有，但接口留着）。
+// ⚠ HLSL 没有 `cbrt`（`ps_5_0` 未声明），n=3 的根仍用 `pow` —— 但只
+// **一次**，而原来是三次。
+float SuperellipsePow(float x, float n) {
+    if (abs(n - 3.0) < 1e-3) { float x2 = x * x; return x2 * x; }
+    if (abs(n - 4.0) < 1e-3) { float x2 = x * x; return x2 * x2; }
+    if (abs(n - 2.0) < 1e-3) { return x * x; }
+    return pow(x, n);
+}
+
+float SuperellipseRoot(float x, float n) {
+    if (abs(n - 4.0) < 1e-3) { return sqrt(sqrt(x)); }
+    if (abs(n - 2.0) < 1e-3) { return sqrt(x); }
+    return pow(x, 1.0 / n);
+}
+
 float sd_round_rect(float2 p, float2 half_size, float radius, float shape_k) {
     float r = min(radius, min(half_size.x, half_size.y));
     if (r <= 0.0 || shape_k > 1e6) {
@@ -145,7 +185,7 @@ float sd_round_rect(float2 p, float2 half_size, float radius, float shape_k) {
         float ay = max(qy / r, 0.0);
         float corner_d = 0.0;
         if (ax > 0.0 || ay > 0.0) {
-            corner_d = r * pow(pow(max(ax, 1e-7), n) + pow(max(ay, 1e-7), n), 1.0 / n);
+            corner_d = r * SuperellipseRoot(SuperellipsePow(max(ax, 1e-7), n) + SuperellipsePow(max(ay, 1e-7), n), n);
         }
         return corner_d + inside - r;
     }
@@ -163,7 +203,7 @@ float sd_round_rect(float2 p, float2 half_size, float radius, float shape_k) {
     float ay2 = max(qy / r, 0.0);
     float convex = 0.0;
     if (ax2 > 0.0 || ay2 > 0.0) {
-        convex = pow(pow(max(ax2, 1e-7), n2) + pow(max(ay2, 1e-7), n2), 1.0 / n2);
+        convex = SuperellipseRoot(SuperellipsePow(max(ax2, 1e-7), n2) + SuperellipsePow(max(ay2, 1e-7), n2), n2);
     }
     float scoop_d = r * (1.0 - convex);
     float base = length(float2(qx, qy)) + inside - r;
@@ -190,6 +230,131 @@ float2 grad_sd_rounded_rect(float2 coord, float2 half_size, float radius);
 /// 与混合模式**完全无关**。共用一份才不会出现「某个混合模式下的圆角矩形与
 /// 默认路径长得不一样」这类漂移。
 float4 ShadeSource(VSOut i) {
+    // kind == 5：**SVG 式像素偏移玻璃**（便宜版液态玻璃）。
+    //
+    // # 它为什么排第一
+    //
+    // 它要算 SDF（圆角矩形）⇒ 必须排在「多边形 / 图像」那两条**之前** ——
+    // 那两条的判据是 `kind > 2.5` / `kind > 1.5`，而 5.0 两条都满足。
+    //
+    // # 配方照着 SVG 版液态玻璃抄（`index.css` 的 `.glassDiv` +
+    // `index.html` 的 `liquid-glass-filter`），四层：
+    //
+    // | SVG 那层 | 值 | 这里对应什么 |
+    // |---|---|---|
+    // | `background-color: rgba(255,255,255,.06)` | 玻璃**体** | `tint`（6% 白） |
+    // | `inset 0 0 20px -5px rgba(255,255,255,.45)` | 内侧白辉光 | `glow` |
+    // | `spec_layer`（`generateSpecularMap`：贴边一条 × \|dot\|） | 高光 | `spec` |
+    // | `feDisplacementMap` | 位移 | 位移**玻璃自己的着色**（见下） |
+    // | `box-shadow: 0 4px 24px rgba(0,0,0,.18)` | 外投影 | 宿主那一侧的装饰 |
+    //
+    // ⚠ **位移的对象不同**：SVG 版被位移的是**背景**（`backdrop-filter` 的
+    // SourceGraphic 是背景图），玻璃本体（tint / 辉光 / 高光）**不缩**。
+    // 廉价路没有背景可采样 ⇒ 位移落到玻璃**自己的着色**上，而**轮廓不动**。
+    //
+    // ⚠⚠ 轮廓**不能**跟着位移缩：早先那版把形状整个向内推（`alpha` 用 `d2`），
+    // 而玻璃的填充是透明的 ⇒ 缩出来的环里什么都没有 ⇒ 屏幕上就是一只
+    // **空框**（按钮只剩一圈白描边，中间是背景）。现在轮廓由 `d` 定，
+    // 位移只作用在**辉光的峰值位置**上 ⇒ 读起来是「玻璃的边往里弯」。
+    //
+    // ⇒ **没有背景副本、没有离屏 RT、没有分色采样** —— 整块玻璃只是主趟里的
+    // 一个四边形。
+    //
+    // ⚠ `i.uv` 在这一支里**不是纹理坐标**，而是玻璃参数：
+    // `uv.x` = 位移幅度（像素）、`uv.y` = 作用带宽度（像素）。
+    // 两者都是**逐顶点常量**（四个角填同一个值）⇒ 插值后仍恒定。
+    // 这不占任何新的顶点通道：圆角矩形的 `uv` 本来就空着。
+    if (i.kind > 4.5) {
+        float2 half_size = i.half_size;
+        float2 p = i.local - half_size;
+        float d = sd_round_rect(p, half_size, i.corner.x, i.shape);
+        float amount = i.uv.x;
+        float bezel = max(i.uv.y, 1e-3);
+
+        // ---- 位移（廉价路的「像素偏移」）----
+        //
+        // ⚠ `amount` 是**绝对像素**：一颗 36px 高的按钮给 20px 就把形状吃掉了。
+        // 夹到短边一半的 40%，保证任何尺寸的玻璃都还剩个形状。
+        float short_half = min(half_size.x, half_size.y);
+        float amt = min(amount, short_half * 0.4);
+
+        // 位移带：边缘处最大，到带内侧归零（形状内部一点不动 ——
+        // 实心图形的内部位移没有意义，只会把边推歪）。
+        float band = 1.0 - smoothstep(0.0, bezel, abs(d));
+        // 形状的**外法线**（`grad_sd_rounded_rect` 与 `PSLens` 用的是同一份）。
+        float2 n = grad_sd_rounded_rect(p, half_size, i.corner.x, i.shape);
+        // ⚠ 位移**向内**（`-n`）：向外推的话形状会变大，而四边形的几何是按
+        // **原矩形**扩的（只扩了 AA 带）⇒ 向外推出去的部分会被裁掉，
+        // 症状是「玻璃的角被削平」。向内推不需要扩几何。
+        float2 off = -n * (amt * band);
+        float d2 = sd_round_rect(p - off, half_size, i.corner.x, i.shape);
+
+        float px = 0.75;
+        // 轮廓：按**原形状** `d` —— 位移不改玻璃的外形（见上面的警告）。
+        float alpha = 1.0 - smoothstep(-px, px, d);
+        // 被位移的是**玻璃体**的边（`d2`）—— SVG 版动的是背景，廉价路没有背景，
+        // ⇒ 动玻璃自己的体（见下面的 tint）。
+        float alpha_tint = 1.0 - smoothstep(-px, px, d2);
+        // 到边的距离（px，内为正）：`depth` 到位移**前**的边。
+        float depth = -d;
+
+        // ---- ① 玻璃体：6% 白（SVG `background-color: rgba(255,255,255,.06)`）----
+        //
+        // 它的**边**被位移（`alpha_tint` 走 `d2`）：玻璃越厚，体的边界越往里
+        // 掰 —— 这就是廉价路的「像素偏移」。
+        float a_fill = i.color.a * alpha;
+        float3 rgb_fill = i.color.rgb * alpha;
+        float a_tint = 0.06 * alpha_tint;
+        float a_body = a_fill + a_tint * (1.0 - a_fill);
+        float3 rgb_body = rgb_fill + float3(a_tint, a_tint, a_tint) * (1.0 - a_fill);
+
+        // ---- ② 内侧白辉光：SVG `inset 0 0 20px -5px rgba(255,255,255,.45)`----
+        //
+        // CSS 那条是**绝对 20px** 的模糊内阴影：峰值 0.45 摊在 ~20px 宽的带上。
+        // ⚠ 照搬到 34px 高的按钮上会把整颗按钮刷白（实测：白块）——
+        //   CSS 的模糊半径是**绝对像素**，而那个 20px 是给 300×200 的演示面板的。
+        // ⇒ 宽度随元素缩放：短边的 10% + 位移幅度的一部分（玻璃越厚，倒角带越宽，
+        //   这与 SVG 里 `bezelWidth` 决定光学带宽是一回事），封顶 24px。
+        float gw = clamp(short_half * 2.0 * 0.10 + amt * 0.8, 2.0, 24.0);
+        // 模糊内阴影的剖面：未模糊的矩形往里缩 `spread`（CSS 的 `-5px` = 带宽的
+        // 25%），再叠一个 σ = 半径/2 的高斯 ⇒ 峰值在边内侧、向外沿也淡出。
+        float gsigma = gw * 0.5;
+        float gpos = gw * 0.25;
+        float gg = (depth - gpos) / gsigma;
+        float a_glow = exp(-gg * gg) * 0.42 * alpha;
+
+        // ---- ③ 高光：SVG `spec_layer`（`generateSpecularMap`）----
+        //
+        // SVG 那份的剖面是 `sqrt(1 - (1 - f)^2)`（f = 到边的距离 / px），
+        // 峰值**贴着轮廓线**、宽度 ~1px，强度再乘 `|dot|`（光向）。
+        // ⇒ 这里也用一条**贴着边**的细线。
+        // ⚠ 上一版用的是「带内侧最亮」的大面积高光（`sqrt(2t - t²)`），
+        //   对 36px 的按钮等于**整颗刷白** —— 症状是「玻璃变成一块白板」。
+        //
+        // ⚠⚠ 这里必须是「**从边往里衰减**」：`1 - smoothstep(0, rim_w, depth)`。
+        //   写成 `smoothstep(-rim_w, 0, depth)` 会得到**整片内部都是 1** ——
+        //   那是「整颗按钮刷白 + 沿超椭圆法线翻转的那条对角线出现亮痕」
+        //   的根源（`facing` 在 `max(q.x,q.y)` 的切换对角线上会跳变）。
+        float rim_w = clamp(short_half * 0.09, 1.0, 2.0);
+        float rim_p = 1.0 - smoothstep(0.0, rim_w, max(depth, 0.0));
+        // 光从左上角来。用**法线**而不是位置，形状歪一点也还成立。
+        // ⚠ 取**绝对值**：SVG 那份也是 `abs(dot)` —— 背光的那侧也有一层弱反光，
+        // 这正是 iOS 液态玻璃的观感（不是只有一条亮线）。
+        float2 light = normalize(float2(-0.6, -0.8));
+        float facing = abs(dot(n, light));
+        float a_spec = rim_p * facing * 0.5 * alpha;
+
+        // ---- 合成（预乘；每层都是「白 + 自己的 alpha」）----
+        //
+        // ③ 压在玻璃体之上，④ 高光压在最上。
+        float a_b2 = a_glow + a_body * (1.0 - a_glow);
+        float3 rgb_b2 = float3(a_glow, a_glow, a_glow) + rgb_body * (1.0 - a_glow);
+        float a = a_spec + a_b2 * (1.0 - a_spec);
+        clip(a - 0.0039);
+        float3 rgb = float3(a_spec, a_spec, a_spec) + rgb_b2 * (1.0 - a_spec);
+        return float4(rgb, a);
+    }
+
     // kind == 3：已 CPU 三角化的多边形。**不采样纹理**，直接返回顶点色。
     //
     // # 必须排在图像分支之前
@@ -510,9 +675,29 @@ float BlurRadius(float sigma) {
     return min(ceil(3.0 * sigma), 32.0);
 }
 
+/// 抽样的**步长**（像素）。
+///
+/// # 为什么要有步长
+///
+/// 核半径 r = 3σ ⇒ 逐纹素采样要 2r+1 次（σ=10 时 **61 次**）。而实测
+/// （gallery，1400×800，Intel UHD 630，材质页一帧）**光「模糊乒乓」这一项
+/// 就是 5.6 ms** —— 比整帧的基础开销还大，是那一帧 GPU 占用的大头。
+///
+/// 高斯核在 3σ 之外几乎没有质量，而**抽稀**（每隔 step 个纹素取一个，
+/// 权重仍按**真实偏移**算）是无偏的：和仍是同一个高斯，只是方差大一点。
+/// 对「柔和投影」这种低频用途，肉眼看不出差别。
+///
+/// step = ⌊r/6⌋ ⇒ 每轴最多 ~13~17 次采样（σ=10 时 61 → 13，4.7 倍）。
+/// 小 σ（r ≤ 6）时 step = 1，**逐字等于**原来的核 —— 绝大多数 UI 里的
+/// 细描边 / 小阴影根本走不到抽稀那条路。
+float BlurStride(float r) {
+    return max(1.0, floor(r / 6.0));
+}
+
 float4 PSBlurH(VSOut i) : SV_TARGET {
     float sigma = i.corner.y;
     float r = BlurRadius(sigma);
+    float stride = BlurStride(r);
     float2 size = i.half_size;
     // ⚠ 累加器是 **float4**，不是 float3 —— 四通道**一起**模糊，与 Chrome / Skia 一致。
     //
@@ -529,14 +714,15 @@ float4 PSBlurH(VSOut i) : SV_TARGET {
     // 否则恶意/异常的 σ 会让它跑几百万次。
     [loop]
     for (int k = 0; k <= 32; ++k) {
-        if (float(k) > r) { break; }
-        float2 uv = (i.local + float2(float(k), 0.0)) / size;
-        float w = GaussWeight(float(k), sigma);
+        float off = float(k) * stride;
+        if (off > r) { break; }
+        float2 uv = (i.local + float2(off, 0.0)) / size;
+        float w = GaussWeight(off, sigma);
         sum += g_tex.SampleLevel(g_smp, uv, 0) * w;
         wsum += w;
         // 对称项：k = 0 只算一次（否则权重翻倍）。
         if (k > 0) {
-            float2 uv2 = (i.local - float2(float(k), 0.0)) / size;
+            float2 uv2 = (i.local - float2(off, 0.0)) / size;
             sum += g_tex.SampleLevel(g_smp, uv2, 0) * w;
             wsum += w;
         }
@@ -551,18 +737,20 @@ float4 PSBlurH(VSOut i) : SV_TARGET {
 float4 PSBlurV(VSOut i) : SV_TARGET {
     float sigma = i.corner.y;
     float r = BlurRadius(sigma);
+    float stride = BlurStride(r);
     float2 size = i.half_size;
     float4 sum = float4(0.0, 0.0, 0.0, 0.0);
     float wsum = 0.0;
     [loop]
     for (int k = 0; k <= 32; ++k) {
-        if (float(k) > r) { break; }
-        float2 uv = (i.local + float2(0.0, float(k))) / size;
-        float w = GaussWeight(float(k), sigma);
+        float off = float(k) * stride;
+        if (off > r) { break; }
+        float2 uv = (i.local + float2(0.0, off)) / size;
+        float w = GaussWeight(off, sigma);
         sum += g_tex.SampleLevel(g_smp, uv, 0) * w;
         wsum += w;
         if (k > 0) {
-            float2 uv2 = (i.local - float2(0.0, float(k))) / size;
+            float2 uv2 = (i.local - float2(0.0, off)) / size;
             sum += g_tex.SampleLevel(g_smp, uv2, 0) * w;
             wsum += w;
         }
@@ -928,18 +1116,26 @@ float4 PSBackdropBlur(VSOut i) : SV_TARGET {
     // 核半径：3σ 截到 12（磨砂不需要更宽）；步长把每轴抽样压到 ≤ ~13 个。
     float r = min(ceil(3.0 * sigma), 12.0);
     float stride = max(1.0, r / 6.0);
+    // ⚠ 循环上界按**实际要采的点数**算，而不是写死 12。
+    //
+    // 写死 12 时，循环**照样**跑 25×25 = 625 次 —— 里面绝大多数是
+    // `continue` 掉的空转。着色器里的循环是**串行**的：这 625 圈的开销
+    // 全都记在每个片元头上，而真正用到的采样只有 ~13×13。
+    //
+    // 改成 `taps` 之后循环次数与采样次数一致，**采到的纹素一个不差**
+    // （`taps = ceil(r / stride)` ⇒ `taps * stride == r`，恰好覆盖
+    // 原来 `|f| ≤ r` 的全部偏移）⇒ **画面逐像素相同**，只是不再空转。
+    int taps = (int)ceil(r / stride);
 
     float4 sum = float4(0.0, 0.0, 0.0, 0.0);
     float wsum = 0.0;
-    // 上界写死 12（r 已被截到 12），循环次数有界，不会因异常 σ 跑飞。
+    // 上界由 `taps` 决定（r ≤ 12 ⇒ taps ≤ 12），循环次数有界，不会因异常 σ 跑飞。
     [loop]
-    for (int ky = -12; ky <= 12; ++ky) {
+    for (int ky = -taps; ky <= taps; ++ky) {
         float fy = float(ky) * stride;
-        if (abs(fy) > r) { continue; }
         [loop]
-        for (int kx = -12; kx <= 12; ++kx) {
+        for (int kx = -taps; kx <= taps; ++kx) {
             float fx = float(kx) * stride;
-            if (abs(fx) > r) { continue; }
             float w = GaussWeight(fy, sigma) * GaussWeight(fx, sigma);
             float2 suv = saturate(uv + float2(fx, fy) * px2uv);
             sum += g_dst.SampleLevel(g_smp, suv, 0) * w;

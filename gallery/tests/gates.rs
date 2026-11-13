@@ -1,5 +1,5 @@
 //! 树级门禁。全部按**整棵树**判，不按函数判 —— 逐函数查只能查到
-//! 「我记得去查的那个」。（与 `examples/demo.rs` 的 6 条同一理由。）
+//! 「我记得去查的那个」。（与早期那条逐函数查的门禁同一理由。）
 //!
 //! # 恒真防御
 //!
@@ -62,6 +62,14 @@ fn laid_out(route: &'static str) -> Node {
 
 /// [`laid_out`] 的**带族**版本：路由 + 参考族（非 reference 路由时族无影响）。
 fn laid_out_from(route: &'static str, family: usize) -> Node {
+    laid_out_tweaked(route, |_| {}, family)
+}
+
+/// [`laid_out`] 的**可改初值**版本：先把 `tweak` 应用到 `Gallery` 再出树。
+///
+/// 用于「同一个路由、不同运行期状态」的门禁 —— 玻璃的便宜 / 物理两种算法
+/// 各自长出**不同的面板**（两个旋钮 vs 四个），而两条都要钉。
+fn laid_out_tweaked(route: &'static str, tweak: impl FnOnce(&mut Gallery), family: usize) -> Node {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let (engine, _note) = zephyra_fx::from_system_font();
     let engine = std::cell::RefCell::new(engine);
@@ -69,6 +77,7 @@ fn laid_out_from(route: &'static str, family: usize) -> Node {
     let mut g = Gallery::default();
     g.route = route;
     g.ref_family = family;
+    tweak(&mut g);
     let element = g.view(&ctx);
     let mut root = Node::from_element(&element);
     merged_sheet().apply_all(&mut root);
@@ -79,6 +88,11 @@ fn laid_out_from(route: &'static str, family: usize) -> Node {
 /// 材质页的树 —— 一等路由 `materials`（材质专区与液态玻璃合并在一页）。
 fn laid_out_materials() -> Node {
     laid_out("materials")
+}
+
+/// 材质页的树，玻璃强制走**物理折射**（面板上有四个旋钮）。
+fn laid_out_materials_physical() -> Node {
+    laid_out_tweaked("materials", |g| g.glass.mode = GlassMode::Physical, 0)
 }
 
 /// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
@@ -1064,7 +1078,8 @@ fn interaction_leaves_no_stale_appearance() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
     let sheet = std::sync::Arc::new(merged_sheet());
-    let styler = || Box::new(SheetStyler(sheet.clone())) as Box<dyn zephyra_core::styler::Styler>;
+    let styler =
+        || Box::new(SheetStyler::new(sheet.clone())) as Box<dyn zephyra_core::styler::Styler>;
 
     // 脚本覆盖四类会改外观的状态：路由、勾选、开关、折叠、选中、悬停/按下。
 
@@ -2027,11 +2042,11 @@ fn touch_target_converts_to_official_ephemeral_px() {
 // --------------------------------------------------- 门禁 26：折射参数可调
 
 use zephyra_gallery::app::glass::{
-    Glass, Param, BEZEL, BEZEL_TEXT, DISPERSION, DISPERSION_TEXT, IOR, IOR_TEXT, THICKNESS,
-    THICKNESS_TEXT,
+    Glass, GlassMode, Param, BEZEL, BEZEL_TEXT, DISPERSION, DISPERSION_TEXT, IOR, IOR_TEXT,
+    THICKNESS, THICKNESS_TEXT,
 };
 
-/// 收集**三块玻璃块**上的折射参数。
+/// 收集**三块玻璃块**上的滤镜（两种算法都收）。
 ///
 /// # 为什么只收 `glass:*` 而不是整树
 ///
@@ -2039,6 +2054,13 @@ use zephyra_gallery::app::glass::{
 /// （`knob_filter` 绑定，strength 随按压进度变化）—— 整树收会把把手的
 /// 滤镜数进来，`pick(0, …)` 就指到把手而不是玻璃块，这条门禁原本钉的是
 /// 「参数面板真的在改玻璃块」，把手是另一条通道。
+///
+/// # 为什么两种算法都要收
+///
+/// 玻璃默认跑**便宜那条**（[`GlassMode::Cheap`] ⇒ [`Filter::PixelOffset`]），
+/// 物理折射那条只在 `GlassMode::Physical` 下出现。只收 `Refraction` 的话，
+/// 这条门禁在**默认档**下会因为「树上一块折射都没有」而失败 —— 而它要钉的
+/// 恰恰是「默认档也真的可调」。
 ///
 /// # 为什么读 `iter_local` 而不是 `get`
 ///
@@ -2063,7 +2085,11 @@ fn refraction_filters(root: &Node) -> Vec<zephyra_core::filter::Filter> {
             }
             if let zephyra_core::property::PropertyValue::Filter(chain) = v {
                 for f in chain.filters() {
-                    if matches!(f, zephyra_core::filter::Filter::Refraction { .. }) {
+                    if matches!(
+                        f,
+                        zephyra_core::filter::Filter::Refraction { .. }
+                            | zephyra_core::filter::Filter::PixelOffset { .. }
+                    ) {
                         out.push(*f);
                     }
                 }
@@ -2117,8 +2143,14 @@ fn glass_params_are_not_hard_coded() {
     let pick = |idx: usize, v: &Vec<Filter>| parts(&v[idx]);
 
     // ---- 基准树 ----
+    //
+    // ⚠ **四参数的契约只在物理折射那条路上成立**：便宜路（`PixelOffset`）
+    // 只有 `amount` / `bezel` 两个字段，色散与折射率在那边没有对应物。
+    // 所以这一段显式切到 `Physical`（默认是 `Cheap`）。便宜路那两个字段
+    // 由 `cheap_glass_mode_moves_amount_and_bezel` 单独钉。
     let mut base = Gallery::default();
     base.route = "materials";
+    base.glass.mode = GlassMode::Physical;
     let warm = filters_at(&base);
     assert!(
         warm.len() >= 3,
@@ -2131,6 +2163,7 @@ fn glass_params_are_not_hard_coded() {
     for param in Param::ALL {
         let mut g = Gallery::default();
         g.route = "materials"; // 材质专区（与液态玻璃合并）是一等路由
+        g.glass.mode = GlassMode::Physical;
         assert!(
             g.glass.nudge(param, 1),
             "默认档位下 `{param:?}` 加一档被 clamp 掉了 —— 表的下界取得不对"
@@ -2194,6 +2227,7 @@ fn glass_params_are_not_hard_coded() {
     // 加（那种形状下每条单参数门禁都绿，而画面上 `[−]` 与 `[+]` 效果一样）。
     let mut round = Gallery::default();
     round.route = "materials"; // 材质专区（与液态玻璃合并）是一等路由
+    round.glass.mode = GlassMode::Physical;
     for param in Param::ALL {
         assert!(round.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
     }
@@ -2205,7 +2239,10 @@ fn glass_params_are_not_hard_coded() {
     }
     assert_eq!(
         round.glass,
-        Glass::default(),
+        Glass {
+            mode: GlassMode::Physical,
+            ..Glass::default()
+        },
         "四个参数各加一档再各减一档后没回到默认值"
     );
     assert_eq!(
@@ -2213,6 +2250,71 @@ fn glass_params_are_not_hard_coded() {
         b,
         "加减一轮之后树上的折射参数没回到基准值"
     );
+}
+
+/// 便宜路（`Filter::PixelOffset`）的两个字段也必须随参数变。
+///
+/// # 为什么单列一条
+///
+/// [`glass_params_are_not_hard_coded`] 断的是物理折射的四参数契约，而玻璃
+/// **默认**跑便宜路 —— 那条路上树里是 `PixelOffset { amount, bezel }`。
+/// 两个字段分别由 `Thickness` / `Bezel` 两个档位驱动（`Dispersion` / `Ior`
+/// 在便宜路上没有对应物，改了也只改树上那两个字段）。
+///
+/// 这条同时钉住「默认档就是便宜路」：`GlassMode::default()` 若被改成
+/// `Physical`，下面第一句就会因为树上是 `Refraction` 而失败。
+#[test]
+fn cheap_glass_mode_moves_amount_and_bezel() {
+    use zephyra_core::filter::Filter;
+
+    fn amount_bezel(f: &Filter) -> (f32, f32) {
+        match f {
+            Filter::PixelOffset { amount, bezel } => (*amount, *bezel),
+            other => panic!("默认档应当是像素偏移玻璃，树上却是 {other:?}"),
+        }
+    }
+
+    let mut base = Gallery::default();
+    base.route = "materials";
+    assert_eq!(
+        base.glass.mode,
+        GlassMode::Cheap,
+        "玻璃的默认算法必须是便宜路（见 `GlassMode` 的文档）"
+    );
+    let warm = filters_at(&base);
+    assert!(
+        warm.len() >= 3,
+        "液态玻璃页上只有 {} 块玻璃 —— 这条门禁可能恒真",
+        warm.len()
+    );
+    let b = amount_bezel(&warm[0]);
+
+    for (param, changes_amount) in [(Param::Thickness, true), (Param::Bezel, false)] {
+        let mut g = Gallery::default();
+        g.route = "materials";
+        assert!(g.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
+        let m = amount_bezel(&filters_at(&g)[0]);
+        if changes_amount {
+            assert_ne!(b.0, m.0, "`{param:?}` 加一档后 `amount` 没变 —— 被写死了");
+            assert_eq!(b.1, m.1, "`{param:?}` 加一档后 `bezel` 也跟着变了");
+        } else {
+            assert_ne!(b.1, m.1, "`{param:?}` 加一档后 `bezel` 没变 —— 被写死了");
+            assert_eq!(b.0, m.0, "`{param:?}` 加一档后 `amount` 也跟着变了");
+        }
+    }
+
+    // 便宜路没有色散 / 折射率：那两个旋钮在树上**不该**产生第三、第四个字段，
+    // 但它们也不该把已有字段改坏。
+    for param in [Param::Dispersion, Param::Ior] {
+        let mut g = Gallery::default();
+        g.route = "materials";
+        g.glass.nudge(param, 1);
+        assert_eq!(
+            amount_bezel(&filters_at(&g)[0]),
+            b,
+            "`{param:?}` 在便宜路上没有对应物，却改了 `amount` / `bezel`"
+        );
+    }
 }
 
 /// 数值表与文本表必须**逐项对齐**。
@@ -2325,12 +2427,41 @@ fn glass_param_tables_line_up() {
 /// 「面板发的是 `glass-thickness:dec` 而 `slug()` 返回 `thickness` 但中间少个
 /// 冒号」。所以这里**真的点一遍**再回读参数。
 ///
+/// # 两种算法各测一遍
+///
+/// 便宜路（默认）只有 Amount / Bezel 两个旋钮 —— 色散与折射率在那边**没有
+/// 对应物**，面板不画它们。物理折射那条才是四行八键。少测一边就会出现
+/// 「切到物理之后 `[+]` 是摆设」或「便宜模式下画了四个、两个点了没用」。
+///
 /// # 恒真防御
 ///
-/// 断言 8 个按钮全在树上；按钮少画了就会在这里报，而不是静默通过。
+/// 先断言该模式下的按钮**个数**，少画了会在这里报，而不是静默通过。
 #[test]
 fn glass_param_keys_all_wired() {
+    // ---- 便宜路：两行四键 ----
     let root = laid_out_materials();
+    let cheap = [(Param::Thickness, "Amount"), (Param::Bezel, "Bezel")];
+    for (param, label) in cheap {
+        for suffix in ["dec", "inc"] {
+            let k = format!("glass-{}:{suffix}", param.slug());
+            assert!(
+                find_by_key(&root, &k).is_some(),
+                "便宜模式下找不到按钮 {k}（{label} 的 {suffix}）—— \
+                 Param::ALL 与 effects.rs 的面板对不上"
+            );
+        }
+    }
+    // 反向：便宜模式**不该**画色散 / 折射率。
+    for param in [Param::Dispersion, Param::Ior] {
+        let k = format!("glass-{}:dec", param.slug());
+        assert!(
+            find_by_key(&root, &k).is_none(),
+            "便宜模式下画出了 {k} —— 像素偏移没有色散 / 折射率，那个旋钮是摆设"
+        );
+    }
+
+    // ---- 物理折射：四行八键 ----
+    let phys = laid_out_materials_physical();
     let mut keys = Vec::new();
     for param in Param::ALL {
         keys.push(format!("glass-{}:dec", param.slug()));
@@ -2339,8 +2470,8 @@ fn glass_param_keys_all_wired() {
     assert_eq!(keys.len(), 8, "四个参数 × 增减 = 8 个按钮");
     for k in &keys {
         assert!(
-            find_by_key(&root, k).is_some(),
-            "液态玻璃页上找不到按钮 {k} —— Param::ALL 与 effects.rs 的面板对不上"
+            find_by_key(&phys, k).is_some(),
+            "物理折射下找不到按钮 {k} —— Param::ALL 与 effects.rs 的面板对不上"
         );
     }
 
@@ -3860,8 +3991,11 @@ fn the_switch_knob_travels_with_the_fraction() {
     assert_eq!(bg, Some(0.0), "按住时白罩应完全消失（alpha = 0）");
 }
 
-/// 玻璃页「装饰」开关翻的是三块玻璃的 `DECORATIONS` 属性（glass ↔ none）——
+/// 玻璃页「装饰」开关翻的是三块玻璃的 `DECORATIONS` 属性（none ↔ glass）——
 /// 绑定断了，开关能点、模型是对的，玻璃块画面毫无差别：静默地错。
+///
+/// 默认是 **none**（见 `mod.rs` 里 `glass_decor` 的注释：边缘着色已由着色器画，
+/// 旧装饰是重复的一层、每帧 1.6 ms）。
 #[test]
 fn the_glass_decor_toggle_flips_the_panes_decorations() {
     use zephyra_gallery::app::GLASS_DECOR_KEY;
@@ -3885,29 +4019,29 @@ fn the_glass_decor_toggle_flips_the_panes_decorations() {
         found
     };
 
-    // 1) 默认开：三块玻璃都是 glass 装饰（非恒等）。
-    for pane in ["glass:a", "glass:b", "glass:c"] {
-        assert!(
-            !decorations_of(&g, pane).is_identity(),
-            "{pane} 默认应有玻璃装饰"
-        );
-    }
-
-    // 2) 点一下：三块一起退回恒等（none）。
-    g.click(GLASS_DECOR_KEY);
+    // 1) 默认**关**：三块玻璃都退回恒等（none，不进离屏 pass）。
     for pane in ["glass:a", "glass:b", "glass:c"] {
         assert!(
             decorations_of(&g, pane).is_identity(),
-            "{pane} 的装饰应退回 none"
+            "{pane} 默认不该带装饰 —— 玻璃的边缘着色由着色器画，旧装饰是 1.6 ms/帧 的重复层"
         );
     }
 
-    // 3) 再点一下：装饰回来。
+    // 2) 点一下：三块一起带上 glass 装饰。
     g.click(GLASS_DECOR_KEY);
     for pane in ["glass:a", "glass:b", "glass:c"] {
         assert!(
             !decorations_of(&g, pane).is_identity(),
             "{pane} 的装饰应恢复"
+        );
+    }
+
+    // 3) 再点一下：又退回 none。
+    g.click(GLASS_DECOR_KEY);
+    for pane in ["glass:a", "glass:b", "glass:c"] {
+        assert!(
+            decorations_of(&g, pane).is_identity(),
+            "{pane} 的装饰应退回 none"
         );
     }
 }

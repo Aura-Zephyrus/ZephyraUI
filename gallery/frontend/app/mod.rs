@@ -256,6 +256,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.normal", "Normal"),
     ("en", "ui.thick", "Thick"),
     ("en", "ui.decorations", "Decorations"),
+    ("en", "ui.glass.pixel-offset", "Pixel offset"),
+    ("en", "ui.glass.physical-refraction", "Physical refraction"),
     // ---- 布局页：flex ----
     (
         "en",
@@ -390,6 +392,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.normal", "普通"),
     ("zh-Hans", "ui.thick", "厚"),
     ("zh-Hans", "ui.decorations", "装饰"),
+    ("zh-Hans", "ui.glass.pixel-offset", "像素偏移"),
+    ("zh-Hans", "ui.glass.physical-refraction", "物理折射"),
     // ---- 布局页：flex ----
     (
         "zh-Hans",
@@ -528,6 +532,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.normal", "普通"),
     ("ja", "ui.thick", "厚い"),
     ("ja", "ui.decorations", "装飾"),
+    ("ja", "ui.glass.pixel-offset", "ピクセルオフセット"),
+    ("ja", "ui.glass.physical-refraction", "物理折射"),
     // ---- レイアウト頁：flex ----
     (
         "ja",
@@ -784,6 +790,12 @@ pub const CHECK_GROUP_KEY: &str = "group:checks";
 /// 加一项时就会漏改一边，症状是"点了没反应"。
 pub const SWITCH_DEMO_KEY: &str = "switch:demo";
 pub const GLASS_DECOR_KEY: &str = "glass:decor";
+/// 玻璃页的**算法切换**按钮：便宜像素偏移 ↔ 物理折射。
+///
+/// 为什么要有它：物理折射那条路**完整保留**（[`crate::app::glass::GlassMode::Physical`]），
+/// 但它每个玻璃元素要拷一份**全屏**副本 ⇒ 材质页一帧 **5.06 ms**。
+/// 默认走便宜的像素偏移（~0），想看折射时一键切过去。
+pub const GLASS_MODE_KEY: &str = "glass:mode";
 pub const SWITCH_SOLID_KEY: &str = "switch:solid";
 pub const SWITCH_GLASS_KEY: &str = "switch:glass";
 pub const MAT_SOLID_KEY: &str = "mat:solid";
@@ -823,16 +835,30 @@ pub const RADIO_LABEL_KEYS: [&str; 3] = ["ui.radio.off", "ui.radio.on", "ui.radi
 pub const COMBO_OPTIONS: &[&str] = &["Solid", "Frosted", "Glass", "None"];
 
 /// Gallery 应用状态。
+static NEXT_GALLERY_CACHE_SCOPE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Debug, Clone)]
 pub struct Gallery {
+    /// ?? UiRuntime ?????
+    pub cache_scope: u64,
     /// 当前路由 id。
     pub route: &'static str,
     /// 当前 hover 的 key（来自 InputState）。
     pub hovered: Option<ElementKey>,
     /// 当前按住的 key（捕获语义）。
+    ///
+    /// ⚠ 这是**主**按下态（最近一次按下的那个）。多指同时按多个控件时，
+    /// 要判断「我是不是被按着」请用 [`Self::holds`]（它查的是**集合**）。
     pub pressed: Option<ElementKey>,
+    /// 当前**所有**被按住的 key（每个按下中的指针一个）。
+    ///
+    /// 多指同时按两个控件时这里长度是 2 —— 应用要画**两个**按下态。
+    pub pressed_keys: Vec<ElementKey>,
     /// 上一帧的 pressed —— 用来还原 click。
     pub last_pressed: Option<ElementKey>,
+    /// 上一帧的**全部**按下态 —— 用来还原多指的 click。
+    pub last_pressed_keys: Vec<ElementKey>,
     /// 当前拥有键盘焦点的 key（来自 InputState）。模板据此发 `focused` 类。
     pub focused: Option<ElementKey>,
     /// 想要深色主题（意图；宿主执行）。
@@ -978,6 +1004,9 @@ pub struct Gallery {
     /// 不存它就得靠"进入的这一刻"传参，而 `on_input` 每帧只被调一次、拿不到
     /// "事件"——只有状态。
     entered_route: &'static str,
+    /// zypui per-element cache 的保守失效信号（Host::state_revision）。
+    /// 交互/路由/语言等影响模板输出的变化后递增；tr 依赖缓存仅在有 revision 时启用。
+    pub zypui_rev: u64,
 }
 
 impl Gallery {
@@ -1184,6 +1213,8 @@ impl Default for Gallery {
             hovered: None,
             pressed: None,
             last_pressed: None,
+            pressed_keys: Vec::new(),
+            last_pressed_keys: Vec::new(),
             focused: None,
             wants_dark: true,
             theme_intent: None,
@@ -1216,10 +1247,23 @@ impl Default for Gallery {
                 g
             },
             glass: crate::app::glass::Glass::default(),
-            // 装饰默认**开**（与 `Decorations::glass()` 同款；`none` 是
-            // 恒等，画面零差别只是不进离屏 pass）。
+            // 装饰默认**关**。
+            //
+            // # 为什么默认关（2026-11 改的，上一版是开）
+            //
+            // 玻璃改走「SVG 式像素偏移」之后，**边缘的着色（tint / 内侧辉光 /
+            // 高光）由着色器自己画**了 —— 而 `Decorations::glass()` 那三层
+            // （24dp 外投影 + 高光 + 内阴影）当初是给**物理折射**那版补厚度感的。
+            // 两套叠在一起的实测差别：玻璃块区域平均差 **1.2/255**、最大 22
+            // （只有边缘一圈），肉眼不可分。
+            //
+            // 代价却不小：三层装饰每块玻璃要开一趟离屏 RT（投影 σ=24 ⇒
+            // 外扩 2.5σ ⇒ RT 340×240，是元素本身的 3 倍面积），三块合计
+            // **1.6 ms/帧**（gallery 材质页 / UHD 630 / MSAA 4×）。
+            //
+            // ⇒ 默认关；开关留着（标签「装饰」），想看旧观感就点开。
             glass_decor: zephyra_ui::ToggleSwitch::new(GLASS_DECOR_KEY, GLASS_DECOR_LABEL_KEY)
-                .with_checked(true)
+                .with_checked(false)
                 .with_material(zephyra_core::filter::Material::Glass),
             // 开关默认**关**着；单选组默认选中第一项（「关」）—— 一进页面就看得见
             // 两种状态，不必先点一下才知道控件长什么样。
@@ -1282,6 +1326,9 @@ impl Default for Gallery {
             // 初值 = `route` 的初值（"home"），否则第一帧会被判成"路由变了"
             // 而归零一次 —— 那恰好是想要的，所以两者必须**相同**。
             entered_route: ROUTES[0].0,
+            zypui_rev: 1,
+            cache_scope: NEXT_GALLERY_CACHE_SCOPE
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 }
@@ -1326,10 +1373,34 @@ impl Gallery {
         self.pressed.as_ref().and_then(|k| k.as_name())
     }
     pub fn holds(&self, key: &str) -> bool {
-        self.pressed.as_ref().and_then(|k| k.as_name()) == Some(key)
+        // ⚠ 查**并集**（集合 + 主按下态）而不是只查集合 ——
+        // 多指同时按两个控件时，主按下态只代表其中一个，而「我是不是被按着」
+        // 对**每个**控件都要答。
+        //
+        // ⚠ 而主按下态**不能省**：应用自己构造 `InputState` 时（门禁、离线路径）
+        // 常常只填 `pressed` 那一栏 —— 那时集合是空的，只查集合就答「没被按着」。
+        self.pressed_keys.iter().any(|k| k.as_name() == Some(key))
+            || self.pressed.as_ref().and_then(|k| k.as_name()) == Some(key)
     }
     pub fn is_focused(&self, key: &str) -> bool {
         self.focused.as_ref().and_then(|k| k.as_name()) == Some(key)
+    }
+
+    /// 这一帧「按着」的**全部** key。
+    ///
+    /// # 为什么不是直接用 `state.pressed_keys`
+    ///
+    /// 应用自己构造 [`InputState`] 时（门禁、离线路径）常常只填 `pressed` 那一栏
+    /// —— 那时 `pressed_keys` 是**空表**，只查它就答「没被按着」。
+    ///
+    /// 所以这里取**并集**：`pressed_keys` 非空就用它（宿主填的时候它已含
+    /// `pressed`），否则退回 `pressed` 一个。
+    fn pressed_set(state: &InputState) -> Vec<ElementKey> {
+        if state.pressed_keys.is_empty() {
+            state.pressed.iter().cloned().collect()
+        } else {
+            state.pressed_keys.clone()
+        }
     }
 
     /// 应用一次 click（按下与抬起落在同一 key 上）。
@@ -1344,6 +1415,7 @@ impl Gallery {
     /// 门禁**不能**自己复刻一份分派逻辑再验它 —— 那样验的是门禁自己，
     /// 面板可以照样点不动。
     pub fn click(&mut self, key: &str) {
+        self.zypui_rev = self.zypui_rev.wrapping_add(1);
         // ---- 1) 导航（查表，不是 match 列举）----
         //
         // 首页的分类入口与左侧导航栏发的是**同一个 key**（路由 id），所以这一条
@@ -1451,6 +1523,16 @@ impl Gallery {
                 } else {
                     self.switch_demo.toggle();
                 }
+            }
+            // 玻璃页：切换**算法**（便宜的 SVG 像素偏移 ↔ 贵的物理折射）。
+            //
+            // ⚠ 不切 `filter`、只切 `mode`：滤镜由 `view()` 每帧按 `mode` 重建，
+            // 而 `mode` 是**状态**（进 `PropertyValue` 的相等表 ⇒ diff 能认出来）。
+            GLASS_MODE_KEY => {
+                self.glass.mode = match self.glass.mode {
+                    crate::app::glass::GlassMode::Cheap => crate::app::glass::GlassMode::Physical,
+                    crate::app::glass::GlassMode::Physical => crate::app::glass::GlassMode::Cheap,
+                };
             }
             // 玻璃页「装饰」开关：控制三块玻璃的 `decoration`（glass ↔ none）。
             GLASS_DECOR_KEY => {
@@ -1580,6 +1662,7 @@ impl Gallery {
 
 impl View for Gallery {
     fn on_input(&mut self, state: &InputState) {
+        self.zypui_rev = self.zypui_rev.wrapping_add(1);
         // 时钟输入。取一次，全函数共用 —— 同一帧里读两次 `state.dt_ms`
         // 不会得到不同值，但两处各写一遍会让"这个数字是哪来的"变成两处真相。
         let dt = state.dt_ms;
@@ -1587,6 +1670,8 @@ impl View for Gallery {
         // `last_pressed` 则在点击判据用完后更新（见后）。
         self.hovered = state.hovered.clone();
         self.pressed = state.pressed.clone();
+        // 全部按下态（多指各按一个控件时长度 > 1）。
+        self.pressed_keys = Gallery::pressed_set(state);
         self.focused = state.focused.clone();
 
         // 点外部收起（含**空白处**）。不能只靠下面的 click 分派：Click 由
@@ -1681,14 +1766,31 @@ impl View for Gallery {
 
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
-        let click_key = match (&self.last_pressed, &state.pressed) {
-            (Some(prev), None) => Some(prev.as_name().unwrap_or_default().to_string()),
-            _ => None,
+        //
+        // ⚠ **取消不是抬起**：系统抢走了手势（Windows 11 的三指/四指手势）时，
+        // `pressed` 也会被清成 `None` —— 若不区分，应用会把「用户手指还在
+        // 屏幕上」当成「用户松手了」，**误触发一次点击**。
+        //
+        // 官方触控指南把「指针取消」单列为一个事件，正是因为它不是抬起。
+        //
+        // ⚠ 多指：判据用**集合差**（上帧按着的 − 这帧按着的），
+        // 而不是「上帧那一个」。两指各按一个控件时，先抬的那个**也要**算
+        // 一次点击 —— 否则「先抬的那根手指点了它」这件事就丢了。
+        let click_keys: Vec<String> = if state.cancelled {
+            Vec::new()
+        } else {
+            let now = Gallery::pressed_set(state);
+            self.last_pressed_keys
+                .iter()
+                .filter(|k| !now.contains(k))
+                .map(|k| k.as_name().unwrap_or_default().to_string())
+                .collect()
         };
-        if let Some(key) = click_key {
+        for key in click_keys {
             self.click(&key);
         }
         self.last_pressed = state.pressed.clone();
+        self.last_pressed_keys = Gallery::pressed_set(state);
 
         self.switch_demo.advance(dt);
         self.glass_decor.advance(dt);
@@ -1801,6 +1903,14 @@ impl View for Gallery {
 // （画面直接可见），真拦住漂移的是 parity 测试。
 
 impl zypui::Host for Gallery {
+    fn cache_scope(&self) -> u64 {
+        self.cache_scope
+    }
+
+    fn state_revision(&self) -> Option<u64> {
+        Some(self.zypui_rev)
+    }
+
     fn binding(&self, name: &str) -> Option<zypui::Val> {
         use crate::app::data::*;
         use zypui::Val::{B, F, L, S};
@@ -1918,22 +2028,51 @@ impl zypui::Host for Gallery {
                 .collect()),
 
             // ---- glass ----
+            //
+            // ⚠ 面板的旋钮**跟着算法走**：物理折射有四个参数（厚度 / 倒角 / 色散 /
+            // IOR），SVG 式像素偏移只有两个（位移幅度 / 作用带宽度）——
+            // 它不掰背景，所以既没有色散也没有折射率。
+            //
+            // 留两个「点了不动」的旋钮比不给好？不。**更糟**：那教给用户的是
+            // 「这个旋钮坏了」。所以便宜模式下面板就只有两组。
             "glass_params" => {
-                let (t, bz, d, i) = g.glass.texts();
-                let values = [t, bz, d, i];
-                L(crate::app::glass::Param::ALL
-                    .iter()
-                    .enumerate()
-                    .map(|(n, p)| {
+                use crate::app::glass::GlassMode;
+                let rows: Vec<(crate::app::glass::Param, &'static str)> = match g.glass.mode {
+                    GlassMode::Cheap => {
+                        let (a, b) = g.glass.cheap_texts();
+                        vec![
+                            (crate::app::glass::Param::Thickness, a),
+                            (crate::app::glass::Param::Bezel, b),
+                        ]
+                    }
+                    GlassMode::Physical => {
+                        let (t, bz, d, i) = g.glass.texts();
+                        vec![
+                            (crate::app::glass::Param::Thickness, t),
+                            (crate::app::glass::Param::Bezel, bz),
+                            (crate::app::glass::Param::Dispersion, d),
+                            (crate::app::glass::Param::Ior, i),
+                        ]
+                    }
+                };
+                L(rows
+                    .into_iter()
+                    .map(|(p, value)| {
                         rec(vec![
-                            ("label", S(p.label())),
-                            ("dec", S(glass_step_key(*p, false))),
-                            ("inc", S(glass_step_key(*p, true))),
-                            ("value", S(values[n])),
+                            ("label", S(p.label_for(g.glass.mode))),
+                            ("dec", S(glass_step_key(p, false))),
+                            ("inc", S(glass_step_key(p, true))),
+                            ("value", S(value)),
                         ])
                     })
                     .collect())
             }
+            // 算法切换按钮：标签是**当前**算法（按钮的 `checked` 表示「现在贵」）。
+            "glass_mode_label_key" => S(match g.glass.mode {
+                crate::app::glass::GlassMode::Cheap => "ui.glass.pixel-offset",
+                crate::app::glass::GlassMode::Physical => "ui.glass.physical-refraction",
+            }),
+            "glass_mode_checked" => B(g.glass.mode == crate::app::glass::GlassMode::Physical),
             "glass_filter_0" => zypui::Val::Raw(glass_filter_value(g, 0)),
             "glass_filter_1" => zypui::Val::Raw(glass_filter_value(g, 1)),
             "glass_filter_2" => zypui::Val::Raw(glass_filter_value(g, 2)),
