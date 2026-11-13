@@ -197,6 +197,18 @@ pub static SCALE_X: PropertyKey = PropertyKey::new("ScaleX", PropertyValue::floa
 /// 绘制时 Y 缩放。见 [`SCALE_X`]。
 pub static SCALE_Y: PropertyKey = PropertyKey::new("ScaleY", PropertyValue::float(1.0));
 
+/// 这四个键是**绘制变换**：改了它们，节点就会「移走」——旧位置的像素得有人清，
+/// 而脏区算的是**新**位置。
+///
+/// 判据用**地址**而不是名字（与本仓其余处一致）：`PropertyKey` 没有
+/// `PartialEq`，名字只是调试输出用的。
+pub fn is_transform_key(key: &PropertyKey) -> bool {
+    std::ptr::eq(key, &TRANSLATE_X)
+        || std::ptr::eq(key, &TRANSLATE_Y)
+        || std::ptr::eq(key, &SCALE_X)
+        || std::ptr::eq(key, &SCALE_Y)
+}
+
 /// 合成层（决定后端如何切 render pass）。
 pub static LAYER: PropertyKey =
     PropertyKey::new("Layer", PropertyValue::layer(crate::paint::Layer::Content));

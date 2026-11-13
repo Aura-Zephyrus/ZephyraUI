@@ -11,8 +11,10 @@
 
 use crate::id::{ElementKey, NodeTag};
 use crate::property::{PropertyKey, PropertyStore, PropertyValue};
+use std::sync::Arc;
 
 /// 声明式元素。
+#[derive(Clone)]
 pub struct Element {
     tag: NodeTag,
     key: Option<ElementKey>,
@@ -35,7 +37,8 @@ pub struct Element {
     /// ```
     styles: Vec<&'static str>,
     props: PropertyStore,
-    children: Vec<Element>,
+    /// 子节点使用共享句柄：per-element 缓存命中时可零拷贝复用子树输出。
+    children: Vec<Arc<Element>>,
 }
 
 impl Element {
@@ -60,13 +63,26 @@ impl Element {
     /// ⚠ `set_local` 的返回值**这里直接丢掉**。它只为 [`crate::node::Node::set_prop`]
     /// 存在（那条路径要靠它决定标 `Layout` 还是 `Paint` 脏）。声明树不需要 —— 声明树
     /// 本来就是"每帧重建、无状态"的。
+    ///
+    /// ⚠ 所以这里走 [`crate::property::PropertyStore::set_local_plain`] 而不是
+    /// `set_local`：后者会**克隆**一份值放进变更记录，而那份记录在这里被丢掉 ——
+    /// 于是每次声明都白克隆一次（`Str` 是引用计数加减，`Filter` 是堆分配）。
     pub fn with(mut self, key: &'static PropertyKey, value: PropertyValue) -> Self {
-        self.props.set_local(key, value);
+        self.props.set_local_plain(key, value);
         self
     }
 
-    /// 设置子节点。
+    /// 设置子节点（兼容路径：拥有的子节点会被包装为共享句柄）。
     pub fn with_children(mut self, children: impl IntoIterator<Item = Element>) -> Self {
+        self.children = children.into_iter().map(Arc::new).collect();
+        self
+    }
+
+    /// 设置已共享的子节点（per-element 缓存命中时的零拷贝路径）。
+    pub fn with_shared_children(
+        mut self,
+        children: impl IntoIterator<Item = Arc<Element>>,
+    ) -> Self {
         self.children = children.into_iter().collect();
         self
     }
@@ -114,9 +130,14 @@ impl Element {
         &self.props
     }
 
-    /// 子节点。
-    pub fn children(&self) -> &[Element] {
+    /// 子节点（共享句柄）。
+    pub fn children(&self) -> &[Arc<Element>] {
         &self.children
+    }
+
+    /// 按 `&Element` 视图迭代子节点（兼容 diff/paint 等消费方的常见写法）。
+    pub fn child_elements(&self) -> impl Iterator<Item = &Element> {
+        self.children.iter().map(|c| c.as_ref())
     }
 
     /// 是否为「无子树」的叶子元素（diff 时可跳过结构比对）。

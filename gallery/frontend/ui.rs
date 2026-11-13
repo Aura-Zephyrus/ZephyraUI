@@ -15,32 +15,46 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use zypui::{Interner, Ui};
+use zypui::{Interner, Ui, UiRuntime};
 
 static SHELL: OnceLock<Ui> = OnceLock::new();
+static SHELL_RT: OnceLock<Mutex<UiRuntime>> = OnceLock::new();
 /// 表达式求值的字符串去重器（动态 key / class 的 `&'static` 来源）。
 ///
 /// 跨帧复用：每帧新建的话，同一个动态串每帧都会被 intern 成新的 'static
 /// —— 那正是本仓每帧泄漏纪律要消灭的形状。UI 单线程，锁只在同帧内竞争。
 static INTERNER: OnceLock<Mutex<Interner>> = OnceLock::new();
 
-/// 应用 UI（外壳 + 页面 + 控件组件，进程内一份，跨帧复用）。
-///
-/// 解码失败是**编译期产物的错**（build.rs 与 zypui 版本错位才会发生），
-/// 直接 panic —— 这不是运行期能降级的错。
-pub fn shell() -> &'static Ui {
-    SHELL.get_or_init(|| {
-        let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shell.zypui.bin"));
-        let raw = zypui::decode::decode(bytes).expect("shell.zypui.bin 解码失败（产物错位？）");
-        Ui::new(raw).expect("组件重名")
-    })
+fn load_raw() -> zypui::RawUi {
+    let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shell.zypui.bin"));
+    zypui::decode::decode(bytes).expect("shell.zypui.bin 解码失败（产物错位？）")
 }
 
-/// 每帧一棵树：`Window` 页实例化。
-///
-/// `Interner` 跨帧复用（见上）；页名拼错是**错**不是静默空白（`build`
-/// 返回 `Result`，这里直接 expect —— 运行期不会走到，CI 有 parity 钉着）。
+/// 应用 UI（外壳 + 页面 + 控件组件，进程内一份，跨帧复用）。
+pub fn shell() -> &'static Ui {
+    SHELL.get_or_init(|| Ui::new(load_raw()).expect("组件重名"))
+}
+
+/// P1 per-element 运行时（build cache）。与 `shell()` 共享同源 IR 形态，但各自持有实例。
+pub fn shell_runtime() -> &'static Mutex<UiRuntime> {
+    SHELL_RT.get_or_init(|| Mutex::new(UiRuntime::new(load_raw()).expect("组件重名")))
+}
+
+/// 每帧一棵树：`Window` 页实例化（P1 per-element cache 路径）。
 pub fn window<H: zypui::Host>(host: &H) -> zephyra_core::element::Element {
+    let mut it = INTERNER
+        .get_or_init(|| Mutex::new(Interner::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut rt = shell_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let root = rt
+        .resolve_page("Window", host, &mut it)
+        .expect("Window 页实例化失败");
+    (*root).clone()
+}
+
+/// Oracle 路径：全量构建（等价性测试/对照用）。
+pub fn window_oracle<H: zypui::Host>(host: &H) -> zephyra_core::element::Element {
     let mut it = INTERNER
         .get_or_init(|| Mutex::new(Interner::new()))
         .lock()

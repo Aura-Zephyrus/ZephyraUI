@@ -392,8 +392,22 @@ impl PartialEq for PropertyValue {
             (PropertyValue::Float(a), PropertyValue::Float(b)) => a == b,
             (PropertyValue::Int(a), PropertyValue::Int(b)) => a == b,
             (PropertyValue::Bool(a), PropertyValue::Bool(b)) => a == b,
-            (PropertyValue::Str(a), PropertyValue::Str(b)) => a == b,
-            (PropertyValue::StaticStr(a), PropertyValue::StaticStr(b)) => a == b,
+            (PropertyValue::Str(a), PropertyValue::Str(b)) => {
+                // ⚠ 指针相等**蕴含**内容相等（`Arc` 不可变），所以先试指针。
+                //
+                // 为什么这条快路径命中率很高：声明树每帧重建，但**字符串本身是
+                // 共享的** —— `PropertyValue::Str` 持 `Arc<str>`，而 `Arc::clone`
+                // 只加引用计数、不复制内容。于是「上一帧存进节点的那份」与
+                // 「这一帧声明的那份」指向**同一个** `Arc`，指针一比就知道没变。
+                //
+                // 不加这条时，每个文本属性每帧都要**逐字节比字符串**。
+                Arc::ptr_eq(a, b) || a == b
+            }
+            (PropertyValue::StaticStr(a), PropertyValue::StaticStr(b)) => {
+                // 同款快路径：字面量在同一个二进制里是**同一份**数据，
+                // 地址相等即内容相等。
+                std::ptr::eq(a, b) || a == b
+            }
             (PropertyValue::Color(a), PropertyValue::Color(b)) => a == b,
             (PropertyValue::Direction(a), PropertyValue::Direction(b)) => a == b,
             (PropertyValue::CrossAlign(a), PropertyValue::CrossAlign(b)) => a == b,
@@ -748,6 +762,40 @@ impl PropertyStore {
         }
     }
 
+    /// 按键写入样式值，返回**值是否真的变了** —— 借用版。
+    ///
+    /// # 为什么要有借用版
+    ///
+    /// 同 [`Self::set_local_if_changed_ref`]：按值版在调用点就得克隆，而
+    /// [`PropertyValue::Filter`] 持一个 `Vec<Filter>` —— 克隆它就是一次堆分配。
+    ///
+    /// 样式表每帧都把同一条规则再写一遍（`apply` 每次都跑），于是**稳态下**
+    /// 每个带滤镜的节点每帧都要克隆一次滤镜链。
+    ///
+    /// ⚠ 实测（gallery，release，稳态）：分配数没变（稳态的滤镜链是空的），
+    /// 省下的是克隆动作本身（`style` 段 8 → 7 µs）。
+    pub fn set_styled_if_changed_ref(
+        &mut self,
+        key: &'static PropertyKey,
+        value: &PropertyValue,
+    ) -> bool {
+        let id = Self::id_of(key);
+        match self.styled.iter_mut().find(|e| e.id() == id) {
+            Some(existing) if existing.value == *value => false,
+            Some(existing) => {
+                existing.value = value.clone();
+                true
+            }
+            None => {
+                self.styled.push(LocalEntry {
+                    key,
+                    value: value.clone(),
+                });
+                true
+            }
+        }
+    }
+
     /// 清除本地值（回落到样式/继承/默认）。
     pub fn clear_local(&mut self, key: &PropertyKey) {
         let id = Self::id_of(key);
@@ -806,6 +854,83 @@ impl PropertyStore {
                 true
             }
         }
+    }
+
+    /// 按键写入本地值，返回**值是否真的变了** —— 借用版。
+    ///
+    /// # 为什么要有借用版
+    ///
+    /// 按值版在**调用点**就得克隆：所有权已经交出去了，想省也省不掉。
+    /// 而有些值是**带堆分配**的 —— [`PropertyValue::Filter`] 持一个
+    /// `Vec<Filter>`，克隆它就是一次堆分配。
+    ///
+    /// 稳态路径上这件事每帧每节点都在发生：声明树每帧重建，diff 拿声明的
+    /// 值去对账，于是「值没变」的属性也被克隆了一遍。
+    ///
+    /// ⚠ **实测结论要说清楚**：gallery（release，稳态）的每帧分配数
+    /// **没有变**（291 → 291）—— 因为它稳态下的滤镜链是**空**的
+    /// （`Vec::clone` 空向量不分配）。省下的是**克隆动作**本身
+    /// （`style` 段 8 → 7 µs），不是分配。
+    ///
+    /// 真正会因此受益的是「稳态下带着非空滤镜链」的应用 —— 那才是
+    /// 「每帧每节点一次堆分配」的场合。
+    ///
+    /// # 为什么不能把按值版删掉
+    ///
+    /// 调用点拿到的是**所有权**（`PropertyValue` 不是 `Copy`），按值版是
+    /// 「我不管你后面还用不用」的入口。两种都有，**按值版委托给借用版**，
+    /// 于是判据只有一份。
+    pub fn set_local_if_changed_ref(
+        &mut self,
+        key: &'static PropertyKey,
+        value: &PropertyValue,
+    ) -> bool {
+        let id = Self::id_of(key);
+        match self.local.iter_mut().find(|e| e.id() == id) {
+            Some(existing) if existing.value == *value => false,
+            Some(existing) => {
+                existing.value = value.clone();
+                true
+            }
+            None => {
+                self.local.push(LocalEntry {
+                    key,
+                    value: value.clone(),
+                });
+                true
+            }
+        }
+    }
+
+    /// 按键写入本地值，**不**产出变更记录。
+    ///
+    /// # 为什么要多一个入口
+    ///
+    /// [`Self::set_local`] 会**克隆**一份值放进 [`PropertyChange`]，好让调用方
+    /// 独立持有「新值」。而**声明树**（[`crate::element::Element::with`]）
+    /// 拿到那个变更记录就**直接丢掉** —— 声明树是「每帧重建、无状态」的，
+    /// 它不需要知道「之前是什么」。
+    ///
+    /// 于是那次克隆是**纯浪费**：每个属性每次声明都克隆一次。对
+    /// `PropertyValue::Str`（`Arc<str>`）那是引用计数加减；对
+    /// `PropertyValue::Filter`（持 `Vec<Filter>`）那是**一次堆分配**。
+    ///
+    /// 声明树（[`crate::element::Element::with`]）每帧重建，而带属性的元素有
+    /// 上百个 —— 于是「每次声明克隆一次」这件事每帧要发生**几百次**。
+    /// 省掉的是那份**被丢掉**的变更记录：对 `PropertyValue::Str`（`Arc<str>`）
+    /// 是引用计数加减，对 `PropertyValue::Filter`（持 `Vec<Filter>`）是
+    /// **一次堆分配**。
+    ///
+    /// ⚠ 实测（gallery，release，稳态）：`view` 段 33 µs（前后同量级）——
+    /// 因为 gallery 的属性值绝大多数是 `Arc`，省下的是引用计数加减而不是
+    /// 堆分配。分配数不变（291/帧）。收益在**带非空滤镜链**的应用上。
+    ///
+    /// # 与 `set_local` 的关系
+    ///
+    /// 两者写的是**同一张表**，判据（键的身份 = 地址）也只有一份 ——
+    /// `upsert` 是共用实现。
+    pub fn set_local_plain(&mut self, key: &'static PropertyKey, value: PropertyValue) {
+        upsert(&mut self.local, key, value);
     }
 
     /// 按内部 id 读取本地值。
@@ -919,5 +1044,5 @@ pub fn resolve<'a>(
 }
 
 #[cfg(test)]
-#[path = "tests/property_store_tests.rs"]
+#[path = "../tests/unit/property_store_tests.rs"]
 mod store_tests;

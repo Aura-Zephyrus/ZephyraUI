@@ -18,7 +18,7 @@ use super::pointer::PointerTable;
 /// 捏合激活容差（屏幕 px，逐轴 Chebyshev 判据）。
 pub const PINCH_TOLERANCE: f32 = 8.0;
 
-const NO_ID: u32 = u32::MAX;
+const NO_ID: u64 = u64::MAX;
 
 /// 增量捏合输出（`Copy`）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,7 +34,7 @@ pub struct PinchDelta {
 #[derive(Clone)]
 pub(crate) struct PinchState {
     is_pinching: bool,
-    ids: [u32; 2],
+    ids: [u64; 2],
     /// 增量参考距离（上一产出帧或激活帧的指距）。
     prev_distance: f32,
     /// 激活时刻指距（容差判定基准）。
@@ -95,7 +95,7 @@ impl PinchState {
     }
 
     /// Move：返回本事件产出的增量（仅当激活 + 批次门控通过）。
-    pub(crate) fn on_move(&mut self, table: &PointerTable, moved_id: u32) -> Option<PinchDelta> {
+    pub(crate) fn on_move(&mut self, table: &PointerTable, moved_id: u64) -> Option<PinchDelta> {
         if !self.is_pinching {
             return None;
         }
@@ -173,7 +173,7 @@ impl PinchState {
     }
 
     /// Up：若是捏合指则结束；屏幕仍 ≥2 指时用剩余手指重新开始。返回是否 regrab。
-    pub(crate) fn on_up(&mut self, table: &PointerTable, id: u32) -> bool {
+    pub(crate) fn on_up(&mut self, table: &PointerTable, id: u64) -> bool {
         if !self.is_pinching || !self.ids.contains(&id) {
             return false;
         }

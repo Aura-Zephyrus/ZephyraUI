@@ -501,5 +501,5 @@ impl<'a> Cursor<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/path_tests.rs"]
+#[path = "../../tests/unit/icon/path_tests.rs"]
 mod tests;

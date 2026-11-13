@@ -174,5 +174,5 @@ impl ActivationState {
 }
 
 #[cfg(test)]
-#[path = "tests/activation_tests.rs"]
+#[path = "../../tests/unit/activation.rs"]
 mod tests;

@@ -470,5 +470,5 @@ impl Shaders {
 }
 
 #[cfg(test)]
-#[path = "tests/shader_tests.rs"]
+#[path = "../tests/unit/tests/shader_tests.rs"]
 mod tests;

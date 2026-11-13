@@ -875,5 +875,5 @@ impl AtlasStats {
 }
 
 #[cfg(test)]
-#[path = "tests/atlas_tests.rs"]
+#[path = "../../tests/unit/text/atlas_tests.rs"]
 mod tests;

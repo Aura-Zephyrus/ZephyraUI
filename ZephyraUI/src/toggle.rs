@@ -676,6 +676,16 @@ impl ToggleSwitch {
                         // fraction 会由 advance() 的 250 ms 快入 tween 推向新目标（0 或 1）
                     }
                 }
+                zephyra_fx::PointerInputPhase::Cancel => {
+                    // ⚠ **取消不是抬起**：系统抢走了这次交互（Windows 11 的
+                    // 三指/四指手势）。这时**不能**提交 —— 用户没抬手。
+                    if self.dragging {
+                        self.dragging = false;
+                        self.did_drag = false;
+                        // 取消的那一下**不算数**：不产生提交目标。
+                        self.drag_completed_target_checked = None;
+                    }
+                }
             }
         }
     }
@@ -923,5 +933,5 @@ impl Default for RadioGroup {
 }
 
 #[cfg(test)]
-#[path = "tests/toggle_tests.rs"]
+#[path = "../tests/unit/toggle_tests.rs"]
 mod tests;

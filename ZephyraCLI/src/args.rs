@@ -40,7 +40,26 @@ pub struct Args {
 ///
 /// 所以取值型标志必须**显式列出**。没列进去的 `--foo bar` 里，`bar` 会被当位置
 /// 参数 —— 这是刻意的：`--` 之后要原样透传给 cargo 的东西正是靠这条规则保持形状。
-pub const VALUE_FLAGS: &[&str] = &["format", "path", "manifest-path", "styles", "port", "host"];
+pub const VALUE_FLAGS: &[&str] = &[
+    "format",
+    "path",
+    "manifest-path",
+    "styles",
+    "port",
+    "host",
+    "log",
+    "tail",
+    // `perf` / `debug` 的取值型标志。
+    //
+    // ⚠ 它们**必须**列在这里：不列的话 `--seconds 3` 会被解析成
+    // 「一个叫 `seconds` 的布尔标志 + 一个位置参数 `3`」—— 而
+    // `debug watch` 的位置参数是**桥命令**，那个 `3` 就会被拼进命令里，
+    // 于是应用收到一条莫名其妙的命令，而 CLI 那边**一切正常**。
+    "seconds",
+    "interval-ms",
+    "duration-ms",
+    "depth",
+];
 
 /// 解析结果：要么是参数，要么是一条**用法错误文案**。
 #[derive(Debug, Clone, PartialEq, Eq)]

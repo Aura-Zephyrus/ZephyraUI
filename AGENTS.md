@@ -26,7 +26,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 772 通过 / 0 失败 / 21 ignored（本机 2026-10） |
+| 测试 | `cargo test --workspace` —— 1460 通过 / 0 失败 / 72 ignored（本机 2026-11-12） |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
 单点验证：
@@ -36,8 +36,8 @@ cargo test -p zephyra-core <filter>          # 单 crate / 单条用例
 cargo test -p zephyra-cli                    # 21 条，每条都是实测踩过的坑
 cargo test -p zephyra-dcomp --lib            # 纯逻辑断言，不要窗口
 cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
-cargo run -p zephyra-ui --bin gallery -- --list-routes --dump-cpu --route <id>
-cargo run -p zephyra-foundation --bin demo -- --dump-cpu --bench --alloc-probe
+cargo run -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
+cargo run -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe
 cargo run -p zstylec -- check <file.zstyle>  # 也可用 zephyra check（同一份编译器）
 cargo run -p zstylec -- fmt [--check] <file.zstyle>   # 排版：只动空白，不改值（判据在 zstylec/src/fmt.rs）
 cargo run -p zypuic -- fmt [--check] <file.zypui>    # 排版：只动位置，不改内容（判据在 zypuic/src/fmt.rs）
@@ -45,8 +45,9 @@ cargo run -p zypuic -- fmt [--check] <file.zypui>    # 排版：只动位置，�
 
 ### `--workspace` 不是可选项
 
-`default-members` 只有 core / fx / zephyra-winit / examples，所以裸 `cargo test`
-只跑 **534 条**。另外这些 crate 在 `members` 里但**不在** `default-members`，
+`default-members` 只有 core / fx / zephyra-winit，所以裸 `cargo test`
+只跑 **754 条**（本机 2026-11-12 实测）。另外这些 crate 在 `members` 里但**不在**
+`default-members`，
 无差别的 `cargo build` / `cargo test` 连编都不编（这是有意的：默认构建不该编译
 unsafe 与设备代码）：`zstylec`、`zephyra-style`、`zephyra-cli`、
 `zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
@@ -92,19 +93,22 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 
 ⚠ 两个非显然的地方：
 
-1. **`--workspace` 在 Linux 上编的是「没有宿主」那一态。** `examples` 的
+1. **`--workspace` 在 Linux 上编的是「没有宿主」那一态。** `gallery` 的
    `default = ["d3d12"]`，而 d3d12 那个 crate 在非 Windows 上是空的
    （`#![cfg(windows)]`）。所以**判据必须是「平台 且 feature」**，只看 feature 会
-   在 `use zephyra_winit_d3d12::HostWindow` 上炸 —— 症状像「Linux 适配把 demo 弄坏了」，
+   在 `use zephyra_winit_d3d12::HostWindow` 上炸 —— 症状像「Linux 适配把应用弄坏了」，
    真相只是「默认 feature 指向一个本平台为空的 crate」。真要把 Linux 后端编一遍：
 
    ```bash
-   cargo clippy -p zephyra-foundation -p zephyra-ui --all-targets \
+   cargo clippy -p zephyra-gallery -p zephyra-ui --all-targets \
        --no-default-features \
-       --features zephyra-foundation/linux-vk,zephyra-ui/linux-vk -- -D warnings
-   cargo run -p zephyra-foundation --bin demo   --no-default-features --features linux-vk
-   cargo run -p zephyra-ui --bin gallery        --no-default-features --features linux-vk
+       --features zephyra-gallery/linux-vk -- -D warnings
+   cargo run -p zephyra-gallery --bin gallery --no-default-features --features linux-vk
    ```
+
+   ⚠ `zephyra-ui` **没有** `linux-vk` feature（控件层零后端依赖），所以
+   `--features zephyra-ui/linux-vk` 会直接报「the package 'zephyra-ui' does not
+   contain this feature」。
 
    只给 `--features linux-vk` 而**不**给 `--no-default-features` 会把 d3d12 也编进来：
    能跑（`#[cfg]` 选中的那个出画面），但多编一遍 D3D12 的依赖链。
@@ -192,7 +196,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 什么分辨率、多少节点测的，那时它比没有更糟。
 
 ```rust
-/// 四阶段合计 162 µs（demo，45 节点，1400×800）
+/// 四阶段合计 162 µs（gallery，45 节点，1400×800）
 // ↑ 数字 + 条件 + 规模，缺一不可
 ```
 
@@ -223,14 +227,22 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 
    ```rust
    #[cfg(test)]
-   #[path = "tests/filter_tests.rs"]
+   #[path = "../../tests/unit/filter_tests.rs"]
    mod tests;
    ```
 
    用 `#[path]` 而不是直接改文件名，是为了让模块路径不变——`use super::*` 与对
    父模块私有项的访问照旧，不必把私有项提成 `pub(crate)`。
-   `zephyra-core/src/lib.rs` 指向的是同目录的 `*_tests.rs`，属于另一种「本来就分离」。
-   `examples/` 是特例：`tests/` 已被 cargo 集成测试占用，故另开 `testmods/`。
+
+   **测试文件住 crate 根的 `tests/unit/`**，按生产模块的边界分文件
+   （`tests/unit/input/router.rs` 对应 `src/input/router.rs`）。这样 `src/` 里
+   **只有生产代码**，而 `cargo test -p <crate> <模块路径>` 能只跑改动的那部分
+   （`cargo test -p zephyra-core input::router` ⇒ 23 条）。
+   `tests/unit/` 是**子目录**，cargo 不会把它当集成测试目标 ——
+   `tests/*.rs` 才是。
+
+   `gallery/` 是特例：它的 `tests/` 是 cargo 的集成测试目录（门禁），所以
+   单元测试住 `gallery/tests/unit/` 而不是 `gallery/src/tests/`。
 6. **命名规范就是「通过 clippy 的 `upper_case_acronyms` 且 clippy 零警告」**：
    `SRV` / `PSO` / `ID` 全大写。不要另立「缩写要不要展开」「变量该多长」这类规矩——
    机器查不了、也没有共识，写进规范只会变成口水仗。
@@ -249,12 +261,14 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   实测：stable 上对 `zephyra-core/src/frame.rs` 跑一遍 rustfmt 零 diff，那张 µs 对照表
   的列对齐不会被冲散。
 - **PowerShell 默认编码把中文打成乱码，文件本身是真 UTF-8。** 别照着 shell 输出
-  「修」注释。仓库里已有 **54 个 U+FFFD 分布在 21 个文件**（如 `examples/demo.rs:9`、
+  「修」注释。仓库里已有 **54 个 U+FFFD 分布在 21 个文件**（如
   `zephyra-fx/src/quad.rs`），是历史损坏——看到别扩散，也别当成待修的谜团。
 - **一个二进制只编一个后端**：`d3d12` / `d3d11` 由 feature 选，不做运行时切换
-  （两个都编进来时「画面一空」无法归因）。`demo` 的 bin 带
-  `required-features = ["d3d12"]`，选 d3d11 必须
-  `--no-default-features --features d3d11`，否则 bin 编不过——这是有意的，不是 bug。
+  （两个都编进来时「画面一空」无法归因）。`gallery` 的 bin **不带**
+  `required-features`：Linux 上 d3d12 是空 crate，而 `required-features` 表达不了
+  「d3d12 或 linux-vk」⇒ 照原样写这个 bin 在 Linux 上**永远存不住**。所以改成
+  「bin 恒可编，后端由 `gallery/src/bin/main.rs` 里的 `#[cfg(feature)]` 分流」，没开任何
+  后端 feature 时 `main()` 打印一行提示并退出。
 - 环境变量：`ZEPHYRA_TRACE=1`（每帧统计，`zephyra dev` 默认开）、`ZEPHYRA_DCOMP`
   （切 DirectComposition 呈现路径）、`ZEPHYRA_FRAME_DUMP=<path>`（把某帧后缓冲写成
   BMP，给「肉眼才看得见」的故障留证据）、`ZEPHYRA_MSAA`、`ZEPHYRA_ADAPTER`、

@@ -19,8 +19,10 @@
 //! | 3 | 环境缺失（找不到 cargo、目录已存在…） |
 
 pub mod args;
+pub mod bridge_client;
 pub mod commands;
 pub mod entry;
+pub mod shot;
 
 pub use args::{Args, ParseOutcome};
 pub use commands::COMMANDS;

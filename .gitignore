@@ -1,7 +1,13 @@
 /target
 
-# `demo --dump-cpu` 的输出（1.9 MB 的 BMP），每次跑都重新生成。
-# 它是**产物**不是素材 —— 仓库根那份是当前输出，examples/ 那份是早先的残留。
+# 第二个构建目录。存在的理由是**同一台机器上要同时有两个构建**：
+# 跑着的 `gallery.exe` 会锁住 `target\debug\gallery.exe`，于是「重编 + 起新实例」
+# 这件事在默认目录下做不成（实测报 `拒绝访问 (os error 5)`）。
+# 换目录（`CARGO_TARGET_DIR=target2`）就能一边跑旧实例一边编新的。
+/target2
+
+# `gallery --dump-cpu` 的输出（1.9 MB 的 BMP），每次跑都重新生成。
+# 它是**产物**不是素材。
 *.bmp
 
 # 同理：出图时顺手转的 PNG 预览（本机临时工具的产物）。

@@ -65,26 +65,29 @@ zephyra-fx                      DisplayList → 顶点流 / 字形图集 / 纹�
 
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings      # 默认 feature；Linux 上 d3d12 是空 crate
-cargo clippy -p zephyra-foundation -p zephyra-ui --all-targets \
-      --no-default-features --features zephyra-foundation/linux-vk,zephyra-ui/linux-vk \
+cargo clippy -p zephyra-gallery -p zephyra-ui --all-targets \
+      --no-default-features --features zephyra-gallery/linux-vk \
       -- -D warnings                                      # 真的把 Linux 后端编一遍
 cargo test --workspace
 ```
 
 ⚠ 第一条在 Linux 上**编的是「没有宿主」那一态**：`default = ["d3d12"]`，而 d3d12
 crate 在 Linux 上是空的（`#![cfg(windows)]`）。所以判据必须是「平台 **且** feature」
-而不是只看 feature —— 详见 `examples/demo.rs` 顶部那段注释。
+而不是只看 feature —— 详见 `gallery/src/bin/main.rs` 顶部那段注释。
+
+⚠ `zephyra-ui` **没有** `linux-vk` feature（控件层零后端依赖）——
+`--features zephyra-ui/linux-vk` 会直接报「the package 'zephyra-ui' does not
+contain this feature」。
 
 ### 5.2 「能跑」（需要显示环境）
 
 ```bash
-cargo run -p zephyra-foundation --bin demo   --no-default-features --features linux-vk
-cargo run -p zephyra-ui --bin gallery        --no-default-features --features linux-vk
-ZEPHYRA_FRAME_DUMP=/tmp/f.bmp cargo run -p zephyra-foundation --bin demo \
+cargo run -p zephyra-gallery --bin gallery --no-default-features --features linux-vk
+ZEPHYRA_FRAME_DUMP=/tmp/f.bmp cargo run -p zephyra-gallery --bin gallery \
       --no-default-features --features linux-vk     # 把第一帧写成 BMP
 ```
 
-`ZEPHYRA_FRAME_DUMP` 是三个后端共用的诊断开关。Linux 侧实测：demo 1100×700、
-184 个四边形、颜色数 1461；gallery 1400×800、1177 个四边形、颜色数 949 —— 与
-`--dump-cpu`（CPU 参考光栅器）给出的同一张图一致。**「与 CPU 参考图一致」才是
-这里的判据**；「没报错」不算（空画面同样不报错，这一点在本仓被反复验证过）。
+`ZEPHYRA_FRAME_DUMP` 是三个后端共用的诊断开关。Linux 侧实测：gallery
+1400×800、1177 个四边形、颜色数 949 —— 与 `--dump-cpu`（CPU 参考光栅器）给出的
+同一张图一致。**「与 CPU 参考图一致」才是这里的判据**；「没报错」不算
+（空画面同样不报错，这一点在本仓被反复验证过）。

@@ -70,42 +70,47 @@ pub struct StageTimes {
     /// `View::view()`：构造声明树。
     pub view_us: u32,
     /// `diff()`：声明树与保留树对账。
+    ///
+    /// ⚠ 2026-11 起这一项**不再是恒 0** —— `zephyra_core::frame::RenderFrame`
+    /// 自己测分段耗时（见 [`zephyra_core::frame::StageTimings`]），这里转述。
+    ///
+    /// 此前 diff / layout / paint 三项恒为 0，是因为 `FrameCache` 引入之后
+    /// 它们搬进了 `zephyra-core`，本模块拿不到内部分段耗时 —— 而「恒 0 的字段」
+    /// 比「没有字段」更糟：它会让人以为「这三段不花钱」，而 resize 路径上
+    /// **最贵的恰恰是 layout 与 paint**。
     pub diff_us: u32,
+    /// 样式注入（`Styler::apply`）：逐节点查规则表。
+    pub style_us: u32,
+    /// 脏区扫描（`tree_needs_layout` + `scan`）：逐节点算脏矩形。
+    pub scan_us: u32,
     /// `layout_tree()`：递归算矩形。
     pub layout_us: u32,
     /// `paint::render()`：树 → `DisplayList`（含文本排版与字形栅格化）。
     pub paint_us: u32,
     /// `quad::expand()`：`DisplayList` → 顶点流。
     pub expand_us: u32,
-    /// `FrameCache::frame()` **整体**：diff + apply + layout + render。
+    /// `FrameCache::frame()` **整体**：diff + apply + scan + layout + render。
     ///
-    /// # 为什么单列这一项，而不是继续报那三段的 0
+    /// # 为什么单列这一项，而不是只报那几段
     ///
-    /// diff / layout / paint 早先在本模块里各占一段，`FrameCache` 引入之后
-    /// 它们搬进了 `zephyra-core`，本模块拿不到内部分段耗时 —— 于是那三个字段
-    /// 恒为 0。
+    /// 上面五段是**分解**，`cache_us` 是**整体**。两者都留着：分解告诉你
+    /// 「慢在哪一段」，整体告诉你「那五段之外还剩多少」—— 两者的差值就是
+    /// 「计时点之间漏掉的代码」。
     ///
-    /// 恒 0 的字段比没有字段更糟：它会让人以为"这三段不花钱"。而 resize 路径上
-    /// **最贵的恰恰是 layout 与 paint**（重排 + 重排文字），也就是说这三个 0
-    /// 把唯一值得看的成本藏了起来 —— 加这一项之前，`--bench-resize` 报出来的
-    /// layout 中位数是 0 µs，而那是**假的**。
-    ///
-    /// 所以这里测**合并值**：诚实、可测、且覆盖了真正要优化的那段。代价是分不出
-    /// "是 layout 还是 paint" —— 那要 `FrameCache` 暴露观测钩子，而它的全部价值
-    /// 就在于能在无 GPU 环境里断言（见 `frame_timed` 的注释）。要更细就直接改
-    /// `frame.rs` 加临时探针。
+    /// 此前本项恒为 0 的是 diff / layout / paint 三项（`FrameCache` 把它们
+    /// 搬进了 `zephyra-core`）。现在 core 自己测了分段，这三项有真值了。
     pub cache_us: u32,
-    /// 各段之和（`cache_us` 已含 diff/layout/paint，不要重复相加）。
+    /// 各段之和（`cache_us` 已含 diff/style/scan/layout/paint，不要重复相加）。
     pub total_us: u32,
 }
 
 impl StageTimes {
     /// 各段累加。
     ///
-    /// `cache_us` 与 `diff_us` / `layout_us` / `paint_us` 是**互斥**的：后三者恒为 0
-    /// （见字段文档），所以这里把 `cache_us` 与 `view_us`、`expand_us` 相加。
-    /// 写成"全加起来"的话，那三项一旦有人重新填上真值，合计就会把 cache 那部分
-    /// **算两遍**。
+    /// `cache_us` 与 `diff_us` / `style_us` / `scan_us` / `layout_us` /
+    /// `paint_us` 是**包含关系**（cache 含那五段），所以这里只加
+    /// `cache_us`、`view_us`、`expand_us`。
+    /// 写成"全加起来"的话，那五段会被**算两遍**。
     pub fn sum(&self) -> u32 {
         self.view_us + self.cache_us + self.expand_us
     }
@@ -233,29 +238,36 @@ impl<V: View> CpuHost<V> {
             let size = self.size;
             t.view_us = t0.elapsed().as_micros() as u32;
 
-            // ⚠ 逐阶段计时现在**盖不住** diff / layout / paint 三段了 ——
-            // 它们搬进了 `zephyra_core::frame::FrameCache`，本模块拿不到内部分段耗时。
+            // ⚠ 分段耗时现在**拿得到**了：`FrameCache` 自己测（见
+            // `zephyra_core::frame::StageTimings`），这里转述。
             //
-            // 所以这三项恒为 0，而 `view_us` / `expand_us` 仍是真值。
-            //
-            // 这不是测量退化而是**诚实**：把一个数写成"看起来还在测"比不测更糟。
-            // 要恢复分段计时就得让 `FrameCache` 暴露回调，那会把它从"纯计算"变成
-            // "带观测钩子" —— 而它的全部价值就在于能在无 GPU 环境里断言。
-            // 真要分段，直接改 `frame.rs` 加临时探针（注意探针本身的开销）。
+            // 此前这三段恒为 0（diff / layout / paint 搬进 core 之后本模块
+            // 拿不到内部分段耗时）。那不是测量退化而是**诚实**：把一个数写成
+            // 「看起来还在测」比不测更糟 —— 而现在 core 真的测了。
             let tc = std::time::Instant::now();
             let outcome = self
                 .cache
                 .frame(&element, ctx, (size.0 as f32, size.1 as f32));
             t.cache_us = tc.elapsed().as_micros() as u32;
 
-            match outcome {
+            // 借用顺序：`outcome` 借着 `self.cache`（它带着 `list` 引用），
+            // 所以先把它化成**不借用**的一份，再读 `timings()`。
+            let (diff, damage, redrawn) = match outcome {
                 FrameOutcome::Unchanged => (DiffStats::default(), Damage::Full, false),
                 FrameOutcome::Updated {
                     list: _,
                     stats,
                     damage,
                 } => (stats, damage, true),
-            }
+            };
+
+            let stages = self.cache.timings();
+            t.diff_us = stages.diff_us;
+            t.style_us = stages.style_us;
+            t.scan_us = stages.scan_us;
+            t.layout_us = stages.layout_us;
+            t.paint_us = stages.paint_us;
+            (diff, damage, redrawn)
         };
 
         let t4 = std::time::Instant::now();

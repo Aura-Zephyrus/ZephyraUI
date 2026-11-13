@@ -1,8 +1,8 @@
 # Zephyra 后端拓展接口标准化设计文档
 
 > 版本：v1.18  
-> 日期：2026-11-07  
-> 状态：设计评审通过，§3/§4 已按 §17 对齐
+> 日期：2026-11-07（状态更新：2026-11-08）  
+> 状态：设计评审通过，§3/§4 已按 §17 对齐。**实施进展**：`zephyra-render-ext`/`zephyra-ext`/`zephyra-ext-wgpu` 已在 workspace 落地（`forbid(unsafe_code)`，非 GPU lib 测试通过）；D3D11/D3D12/Vulkan 后端已有 `ext` 集成与契约桩测试（GPU 依赖项按文档标 `#[ignore]`，需真实设备/环境）。§12 中需真实 GPU/多后端硬件的验收、§14.2/§15 的待定项、以及 Phase 2+ 的完整离屏/运行时隔离等仍按计划推进，**不在无硬件环境下伪造通过**。
 
 ---
 
@@ -2557,3 +2557,15 @@ pub fn with_adapter_identity(mut self, id: AdapterIdentity) -> Self { ... }
 | **S7** | `ExternalTextureHandle::update()` 与 `register_texture()` 语义重叠 | 明确：`update(builder)` = **同 key 替换纹理内容/源**（保持句柄有效、触发重绘标记）；`register_texture` 对已存在 key 的行为必须定义为“替换并返回同逻辑句柄”或“错误”，二选一写死（建议**替换**，便于视频帧更新）。 |
 | **S8** | 多窗口 + 纹理 key 作用域未定 | Phase 1 规定：**texture key 全局唯一**（`ExtContext` 级）；多窗口共享同一纹理池。若未来需要窗口隔离，引入 `namespaced key`（`window_id/key`），不破坏现有 API。 |
 | **S9** | `ImportedTexture::valid_until: FrameId` / `FrameId` 未定义 | 在 `zephyra-render-ext::types` 定义 `pub struct FrameId(pub u64);`。`valid_until` 语义：**当前帧提交前有效**；后端不得在帧结束后复用同一 imported 视图而不重新导入（除非显式缓存策略 Phase 2）。 |
+
+## 18. 实施验证记录（2026-11）
+
+> 记录在当前工作区/机器上的可复现验证；**不代表** §12 中全部 GPU/硬件验收已完成。
+
+| 项目 | 结果 | 说明 |
+|---|---|---|
+| `cargo test -p zephyra-render-ext -p zephyra-ext -p zephyra-ext-wgpu` | 通过 | 契约/门面/interop 非 GPU 测试通过（lib + doctest 汇总含忽略项）。 |
+| 后端 `ext` 集成 | 已存在 | `zephyra-winit` / `zephyra-winit-d3d12` / `zephyra-vulkan` 含 `ext.rs`、hook/context 适配；`ext_contract_stubs` 等 GPU 测试保持 `#[ignore]`。 |
+| `cargo fmt/clippy/doc/test --workspace` | 通过（2026-11 本轮） | 与本仓整体门禁一致；无新增 Rust 代码变更引入回归。 |
+| §12 真 GPU/跨后端一致性/设备丢失/多窗口隔离/CPU 基准 | 未在本机无头/无专用 runner 环境执行 | 需 Windows+GPU、Linux+Vulkan/llvmpipe 或 GPU runner；按 §14.2/CI 设计推进。 |
+| §14.2/§15 待定项 | 未关闭 | NT Handle 跨进程安全描述符、Vulkan 黑名单、CPU 回退阈值、多窗口纹理池、Hook panic 隔离等需结合 Phase 2+ 实测与产品决策。 |

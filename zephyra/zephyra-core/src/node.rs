@@ -17,6 +17,7 @@ use crate::core::Rect;
 use crate::id::{ElementKey, NodeTag};
 use crate::layout::{Constraints, MeasureResult};
 use crate::property::{PropertyKey, PropertyStore, PropertyValue};
+use std::sync::Arc;
 
 /// 脏标记等级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -59,6 +60,21 @@ pub struct Node {
     pub(crate) styles: Vec<&'static str>,
     props: PropertyStore,
     children: Vec<Node>,
+    /// P2c：构建/对账时对应的 Element 身份。`Arc::ptr_eq` 相同表示子树输入未变，可跳过 diff 下探。
+    source: Option<Arc<crate::element::Element>>,
+    /// 本帧**绘制变换变过**（translate / scale）。
+    ///
+    /// # 为什么单独一个标记，而不是只看「当前变换是不是恒等」
+    ///
+    /// 脏区算的是节点的**新**位置，而「移走」留下的是**旧**位置的像素 ——
+    /// 旧矩形没有快照，所以只能退让成整帧。判据若写成「当前变换非恒等」，
+    /// 就会漏掉**回到恒等**的那一帧：把手从 20px 滑回 0 时，落点那帧的变换
+    /// 恰好是恒等，判据不成立 ⇒ 脏区收窄成把手的新矩形 ⇒ 旧位置的把手留在
+    /// 屏幕上（两个把手并排的残影）。
+    ///
+    /// 所以这里记的是「**变了**」这件事，而不是「变成了什么」——由写属性的那
+    /// 一侧（diff 写本地值 / `set_styled_prop` 写样式值）判定。
+    moved: bool,
     /// 测量结果缓存（`Dirty >= Layout` 时失效）。
     ///
     /// 缓存键包含 `(Constraints, viewport)`（D15/R2）：`root` 手动项的视口约束
@@ -154,13 +170,44 @@ impl Node {
             key: element.key().cloned(),
             styles: element.style_names().to_vec(),
             props: element.props().clone(),
-            children: element.children().iter().map(Node::from_element).collect(),
+            children: element.child_elements().map(Node::from_element).collect(),
+            source: None,
+            moved: false,
             measure_cache: None,
             glyph_quads: std::cell::RefCell::new(None),
             arranged_rect: Rect::default(),
-            // 新节点必然需要一次完整布局。
             dirty: Dirty::Structure,
         }
+    }
+
+    /// 由共享元素句柄构建节点（保留 Arc 身份，供 P2c diff 子树跳过）。
+    pub fn from_element_arc(element: Arc<crate::element::Element>) -> Node {
+        Node {
+            tag: element.tag(),
+            key: element.key().cloned(),
+            styles: element.style_names().to_vec(),
+            props: element.props().clone(),
+            children: element
+                .children()
+                .iter()
+                .cloned()
+                .map(Node::from_element_arc)
+                .collect(),
+            source: Some(element),
+            moved: false,
+            measure_cache: None,
+            glyph_quads: std::cell::RefCell::new(None),
+            arranged_rect: Rect::default(),
+            dirty: Dirty::Structure,
+        }
+    }
+
+    pub(crate) fn source_arc(&self) -> Option<&Arc<crate::element::Element>> {
+        self.source.as_ref()
+    }
+
+    pub(crate) fn set_source_arc(&mut self, source: Option<Arc<crate::element::Element>>) {
+        self.source = source;
     }
 
     /// 类型标签。
@@ -263,6 +310,19 @@ impl Node {
         self.arranged_rect
     }
 
+    /// 记下「本帧的绘制变换变过」。
+    ///
+    /// 写这四个键（translate / scale）的一侧调用它 —— 见 [`crate::props::is_transform_key`]。
+    /// 判据是「**变了**」，不是「变成了什么」：回到恒等的那一帧同样会移走。
+    pub fn mark_moved(&mut self) {
+        self.moved = true;
+    }
+
+    /// 本帧绘制变换是否变过（见 [`Self::mark_moved`]）。
+    pub fn moved(&self) -> bool {
+        self.moved
+    }
+
     /// 按事件身份深搜本子树，返回第一个 key 匹配的节点。
     ///
     /// 用**深度优先 + 文档序**：与 [`crate::input::focus::collect_focusable`] 的遍历
@@ -299,6 +359,10 @@ impl Node {
             if self.dirty.needs_layout() {
                 self.measure_cache = None;
             }
+            // 绘制变换变了 ⇒ 节点「移走」：旧位置的像素没人清（脏区只算新位置）。
+            if crate::props::is_transform_key(key) {
+                self.mark_moved();
+            }
         }
     }
 
@@ -328,6 +392,37 @@ impl Node {
             if self.dirty.needs_layout() {
                 self.measure_cache = None;
             }
+            // 样式表也能改绘制变换（分类名一变，位移就变）—— 与本地值同一条路。
+            if crate::props::is_transform_key(key) {
+                self.mark_moved();
+            }
+        }
+    }
+
+    /// 写入样式值（**借用**入参）—— 见 [`Self::set_styled_prop`]。
+    ///
+    /// # 为什么要分两个
+    ///
+    /// 按值版在**调用点**就得克隆。而 [`crate::property::PropertyValue::Filter`]
+    /// 持一个 `Vec<Filter>` —— 克隆它就是一次堆分配。
+    ///
+    /// 样式表每帧都把同一条规则再写一遍（`apply` 每次都跑），所以稳态下
+    /// 每个带滤镜的节点每帧都要克隆一次滤镜链 —— 哪怕值一个字节都没变。
+    ///
+    /// 借用版只在**真的要写**的时候才克隆。
+    pub fn set_styled_prop_ref(&mut self, key: &'static PropertyKey, value: &PropertyValue) {
+        if self.props.set_styled_if_changed_ref(key, value) {
+            self.dirty = self.dirty.merged(if key.affects_layout() {
+                Dirty::Layout
+            } else {
+                Dirty::Paint
+            });
+            if self.dirty.needs_layout() {
+                self.measure_cache = None;
+            }
+            if crate::props::is_transform_key(key) {
+                self.mark_moved();
+            }
         }
     }
 
@@ -351,6 +446,10 @@ impl Node {
             } else {
                 Dirty::Paint
             });
+            // 拆掉绘制变换 = 变换**变回默认值** ⇒ 同样是「移走」。
+            if crate::props::is_transform_key(key) {
+                self.mark_moved();
+            }
         }
         if !removed.is_empty() && self.dirty.needs_layout() {
             self.measure_cache = None;
@@ -473,6 +572,7 @@ impl Node {
 /// （改之前它是红的，每帧 6 次整形）。
 pub fn clear_dirty(node: &mut Node) {
     node.dirty = Dirty::None;
+    node.moved = false;
     for child in node.children_mut() {
         clear_dirty(child);
     }

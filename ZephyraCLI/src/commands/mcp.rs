@@ -37,150 +37,10 @@
 use serde_json::{json, Value};
 
 use super::{CliError, Write};
+use crate::bridge_client::{BridgeClient, BridgeResponse};
 use crate::{args::Args, ExitCode};
 
-use std::io::{BufRead, Write as _};
-
-/// 桥客户端：一条到运行中应用的 TCP 连接 + 协议响应切分。
-struct BridgeClient {
-    stream: std::net::TcpStream,
-    /// 半行/跨读缓冲——与桥那边对称：响应按「读到终止符」切分。
-    buf: Vec<u8>,
-}
-
-/// 一条桥响应（与 `zephyra_fx::bridge::Response` 同构，但 CLI 侧只看文本形状）。
-enum BridgeResponse {
-    /// 文本正文（不含 `OK` 终止行）。
-    Text(Vec<String>),
-    /// 二进制载荷（BMP）。头行的 note（`bmp 24bpp`）在切分时已被消费——
-    /// 它只描述格式，CLI 侧没有消费者；留解析是为了校验头行形状。
-    Binary {
-        #[allow(dead_code, reason = "切分时消费，无下游读者")]
-        note: String,
-        data: Vec<u8>,
-    },
-    /// 桥明确回的错误。
-    Err(String),
-}
-
-impl BridgeClient {
-    /// 连接应用调试桥。`tries` 次、每次间隔 500ms——应用刚启动时端口可能
-    /// 还没监听（AI 客户端往往先配好 MCP 再起应用）。
-    fn connect(host: &str, port: u16, tries: usize) -> std::io::Result<Self> {
-        let addr = (host, port);
-        let mut last = None;
-        for _ in 0..tries {
-            match std::net::TcpStream::connect(addr) {
-                Ok(s) => {
-                    s.set_nodelay(true).ok();
-                    // 读超时是「MCP server 不被冻结的应用拖死」的关键：没有它，
-                    // 应用帧循环停摆（模态框 / 最小化 / 卡死）时 read 会永远阻塞，
-                    // 本进程从此不应答任何消息，客户端只能杀进程重配。
-                    // 10 秒远大于实测的最慢单次往返（get_resources 首次采样
-                    // 约 1.2 秒、强制截图约 0.3 秒，gallery 1400×800 D3D12 真机）。
-                    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))
-                        .ok();
-                    return Ok(Self {
-                        stream: s,
-                        buf: Vec::new(),
-                    });
-                }
-                Err(e) => {
-                    last = Some(e);
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                }
-            }
-        }
-        Err(last.unwrap_or_else(|| std::io::Error::other("connect failed")))
-    }
-
-    /// 发一条命令并读一条响应。
-    fn call(&mut self, cmd: &str) -> Result<BridgeResponse, String> {
-        if self.stream.write_all(cmd.as_bytes()).is_err() || self.stream.write_all(b"\n").is_err() {
-            return Err("桥连接已断开".into());
-        }
-        self.stream.flush().ok();
-        self.read_response()
-    }
-
-    /// 从流里读出**一条**完整响应（读到 `OK` 行 / `ERR` 行 / `BIN` 载荷完）。
-    ///
-    /// ⚠ 这份切分逻辑与 `zephyra-fx::bridge` 的单测是**同一协议的两个读者**：
-    /// 桥怎么写，这里就怎么读。二进制载荷按长度分块读取，不能逐字节转 UTF-8。
-    fn read_response(&mut self) -> Result<BridgeResponse, String> {
-        use std::io::Read;
-        let mut chunk = [0u8; 8192];
-        loop {
-            if self.buf.starts_with(b"BIN ") {
-                if let Some(header_end) = self.buf.iter().position(|&b| b == b'\n') {
-                    let header = std::str::from_utf8(&self.buf[..header_end])
-                        .map_err(|e| format!("桥二进制头不是 UTF-8: {e}"))?;
-                    let (length, note) = header[4..]
-                        .split_once(' ')
-                        .ok_or_else(|| format!("桥二进制头格式错误: {header}"))?;
-                    let length = length
-                        .parse::<usize>()
-                        .map_err(|e| format!("桥二进制长度无效: {e}"))?;
-                    let note = note.to_string();
-                    let payload_start = header_end + 1;
-                    let response_end = payload_start
-                        .checked_add(length)
-                        .and_then(|n| n.checked_add(b"\nOK\n".len()))
-                        .ok_or_else(|| "桥二进制长度溢出".to_string())?;
-                    while self.buf.len() < response_end {
-                        let n = self
-                            .stream
-                            .read(&mut chunk)
-                            .map_err(|e| format!("读取桥二进制响应失败: {e}"))?;
-                        if n == 0 {
-                            return Err("桥连接在二进制响应中断开".into());
-                        }
-                        self.buf.extend_from_slice(&chunk[..n]);
-                    }
-                    let payload_end = payload_start + length;
-                    if &self.buf[payload_end..response_end] != b"\nOK\n" {
-                        return Err("桥二进制响应缺少 OK 终止符".into());
-                    }
-                    let data = self.buf[payload_start..payload_end].to_vec();
-                    self.buf.drain(..response_end);
-                    return Ok(BridgeResponse::Binary { note, data });
-                }
-            }
-            if self.buf.starts_with(b"ERR ") {
-                if let Some(end) = self.buf.iter().position(|&b| b == b'\n') {
-                    let line = String::from_utf8_lossy(&self.buf[..end]).into_owned();
-                    self.buf.drain(..=end);
-                    return Ok(BridgeResponse::Err(line));
-                }
-            }
-            let terminator = self
-                .buf
-                .windows(b"\nOK\n".len())
-                .position(|window| window == b"\nOK\n")
-                .map(|index| (index, index + b"\nOK\n".len()))
-                .or_else(|| self.buf.starts_with(b"OK\n").then_some((0, 3)));
-            if let Some((body_end, response_end)) = terminator {
-                let body = String::from_utf8_lossy(&self.buf[..body_end]).into_owned();
-                let lines = if body.is_empty() {
-                    Vec::new()
-                } else {
-                    body.lines().map(str::to_string).collect()
-                };
-                self.buf.drain(..response_end);
-                return Ok(BridgeResponse::Text(lines));
-            }
-
-            let n = self
-                .stream
-                .read(&mut chunk)
-                .map_err(|e| format!("读取桥响应失败: {e}"))?;
-            if n == 0 {
-                return Err("桥连接已断开".into());
-            }
-            self.buf.extend_from_slice(&chunk[..n]);
-        }
-    }
-}
+use std::io::BufRead;
 
 /// 一个 MCP 工具的定义（`tools/list` 的数据源 + `tools/call` 的执行）。
 struct Tool {
@@ -271,6 +131,36 @@ coordinate from `get_tree` output. Takes effect this frame.",
         annotations: MUTATES,
     },
     Tool {
+        name: "click_by_key",
+        description: "Synthesize a full click on the element with the given `key` \
+(the key column of `get_tree`; the app routes events by that key). The click lands on \
+the element's center, so no coordinate arithmetic is needed. Takes effect this frame.",
+        schema: r#"{"type": "object", "properties": {"key": {"type": "string", "description": "Element key as shown in get_tree, e.g. \"switch:solid\""}}, "required": ["key"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
+        name: "hover_by_key",
+        description: "Move the pointer onto the element with the given `key` \
+(the key column of `get_tree`). Same coordinate handling as `click_by_key`.",
+        schema: r#"{"type": "object", "properties": {"key": {"type": "string", "description": "Element key as shown in get_tree"}}, "required": ["key"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
+        name: "click_by_path",
+        description: "Synthesize a full click on the element at the given layout-tree \
+path (the first column of `get_tree`, e.g. \"0.1.1\"). Use this when the element has no \
+key or when several elements share one key.",
+        schema: r#"{"type": "object", "properties": {"path": {"type": "string", "description": "Child-index chain from get_tree, e.g. \"0.1.1\""}}, "required": ["path"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
+        name: "hover_by_path",
+        description: "Move the pointer onto the element at the given layout-tree path \
+(the first column of `get_tree`).",
+        schema: r#"{"type": "object", "properties": {"path": {"type": "string", "description": "Child-index chain from get_tree"}}, "required": ["path"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
         name: "press_key",
         description: "Synthesize one logical key press and release (for example Enter, \
 ArrowDown, Escape, or a character). The running View receives both key-edge events.",
@@ -296,6 +186,49 @@ Coordinates are physical pixels. Sampling and total duration are bounded.",
         annotations: MUTATES,
     },
     Tool {
+        name: "touch",
+        description: "Inject one touch contact (multi-touch). Phases are down / move / up / \
+cancel. `cancel` is what Windows sends when the system takes the gesture over (three- \
+and four-finger gestures) -- it must NOT commit a tap, because the user never lifted \
+their finger. Each finger has its own `pointer_id`.",
+        schema: r#"{"type": "object", "properties": {"phase": {"type": "string", "enum": ["down", "move", "up", "cancel"]}, "pointer_id": {"type": "integer", "description": "Which finger (0, 1, ...) -- different ids are different fingers"}, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["phase", "pointer_id", "x", "y"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
+        name: "hit_test",
+        description: "Find out what is at a pixel coordinate -- the element under the \
+pointer, its key, its visible text, and whether that spot is interactive. Use it when you \
+have a screenshot and want to know what a particular pixel belongs to, instead of \
+guessing from the tree.",
+        schema: r#"{"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}"#,
+        annotations: READ_ONLY,
+    },
+    Tool {
+        name: "resize_window",
+        description: "Resize the app window's client area (logical pixels). The app re-lays out \
+on the next frame. Use it to check whether a layout survives a narrow window -- reading the \
+stylesheet cannot answer that, because flex, wrapping and clipping all need a real layout pass.",
+        schema: r#"{"type": "object", "properties": {"width": {"type": "integer", "minimum": 1, "maximum": 16384}, "height": {"type": "integer", "minimum": 1, "maximum": 16384}}, "required": ["width", "height"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
+        name: "find_by_text",
+        description: "Locate elements by their visible text (case-insensitive substring match). \
+Use this when you know what the interface says but not which element it is -- e.g. \"the nav \
+item labelled 快速开始\". Each hit reports the text node's path plus `owner`: the nearest \
+ancestor that has an element key, which is usually the clickable one.",
+        schema: r#"{"type": "object", "properties": {"text": {"type": "string", "description": "Visible text to look for (substring, case-insensitive)"}}, "required": ["text"]}"#,
+        annotations: READ_ONLY,
+    },
+    Tool {
+        name: "type_text",
+        description: "Type a string of text into whatever currently has keyboard focus. This is \
+one semantic action (the text appears in the field), not a sequence of key presses -- use it \
+instead of press_key for filling text fields.",
+        schema: r#"{"type": "object", "properties": {"text": {"type": "string", "description": "The text to insert"}}, "required": ["text"]}"#,
+        annotations: MUTATES,
+    },
+    Tool {
         name: "analyze_performance",
         description: "Collect a bounded CPU frame-performance profile and return it when the \
 requested capture duration ends. Records per-frame update/layout, render-submit and total CPU \
@@ -306,11 +239,22 @@ By default only the summary is returned; pass include_rows=true to also receive 
         annotations: MUTATES,
     },
     Tool {
+        name: "wait_frames",
+        description: "Wait until the app has actually rendered N more frames. Use this \
+instead of sleeping: it waits for real frames, so the next screenshot or tree read sees \
+the state after those frames. A static app renders no frames — the wait then reports how \
+few frames it managed to wait for.",
+        schema: r#"{"type": "object", "properties": {"frames": {"type": "integer", "minimum":0, "maximum":10000, "description": "How many rendered frames to wait for"}}, "required": ["frames"]}"#,
+        annotations: READ_ONLY,
+    },
+    Tool {
         name: "screenshot",
         description: "Render a frame and read back the pixels as a 24bpp BMP. D3D11 and \
 D3D12 apps support this. Returns the absolute file path that was written; use get_layout for \
-textual layout context without pixel data.",
-        schema: r#"{"type": "object", "properties": {"path": {"type": "string", "description": "where to write the .bmp; defaults to a temp file"}}}"#,
+textual layout context without pixel data. By default the capture keeps the current frame's \
+damage region, so stale pixels from the previous frame (ghosting) stay visible; pass \
+repaint=true for a clean full-frame image.",
+        schema: r#"{"type": "object", "properties": {"path": {"type": "string", "description": "where to write the .bmp; defaults to a temp file"}, "repaint": {"type": "boolean", "default": false, "description": "force a full-frame repaint instead of keeping the current damage region"}}}"#,
         annotations: MUTATES,
     },
 ];
@@ -679,6 +623,30 @@ fn run_tool(
                 c.call(&format!("click {x} {y}"))
             })?)?)
         }
+        "click_by_key" => {
+            let key = element_key(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("click_key {key}"))
+            })?)?)
+        }
+        "hover_by_key" => {
+            let key = element_key(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("hover_key {key}"))
+            })?)?)
+        }
+        "click_by_path" => {
+            let path = element_path(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("click_path {path}"))
+            })?)?)
+        }
+        "hover_by_path" => {
+            let path = element_path(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("hover_path {path}"))
+            })?)?)
+        }
         "press_key" => {
             let key = a
                 .get("key")
@@ -754,24 +722,119 @@ fn run_tool(
             }
         }
         "screenshot" => {
-            let r = with_bridge(session, |c| c.call("shot"))?;
+            let repaint = a.get("repaint").and_then(Value::as_bool).unwrap_or(false);
+            let cmd = if repaint { "shot --repaint" } else { "shot" };
+            let r = with_bridge(session, |c| c.call(cmd))?;
             match r {
                 BridgeResponse::Binary { data, .. } => {
                     if data.is_empty() {
                         return Err("后端读回为空".into());
                     }
                     let path = resolve_shot_path(a);
-                    std::fs::write(&path, &data).map_err(|e| format!("写 {path} 失败: {e}"))?;
+                    // 扩展名 `.png` ⇒ 转 PNG（见 `crate::shot`）；其余原样 BMP。
+                    let format = if std::path::Path::new(&path)
+                        .extension()
+                        .map(|e| e.eq_ignore_ascii_case("png"))
+                        .unwrap_or(false)
+                    {
+                        "PNG"
+                    } else {
+                        "24bpp BMP"
+                    };
+                    crate::shot::write_shot(std::path::Path::new(&path), &data)
+                        .map_err(|e| format!("写 {path} 失败: {e}"))?;
                     // 回**绝对**路径：AI 客户端不知道本进程的 cwd，相对路径
                     // 等于没说。
+                    //
+                    // ⚠ 报的是**落盘后**的大小：转成 PNG 之后大小会变，
+                    // 报线上那个字节数会让人以为文件被截断了。
+                    let written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     reply(format!(
-                        "screenshot written to {path} ({} bytes, 24bpp BMP)",
-                        data.len()
+                        "screenshot written to {path} ({} bytes, {}{})",
+                        written,
+                        format,
+                        if repaint {
+                            ", forced full-frame repaint"
+                        } else {
+                            ", damage region kept (stale pixels stay visible)"
+                        }
                     ))
                 }
                 BridgeResponse::Err(e) => Err(e),
                 BridgeResponse::Text(_) => Err("桥回了文本而不是图像".into()),
             }
+        }
+        "wait_frames" => {
+            let frames = a
+                .get("frames")
+                .and_then(Value::as_u64)
+                .ok_or("wait_frames 需要 frames 参数（0..=10000 的整数）")?;
+            if frames > 10_000 {
+                return Err("frames 不能超过 10000".into());
+            }
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("wait_frames {frames}"))
+            })?)?)
+        }
+        "touch" => {
+            let phase = a
+                .get("phase")
+                .and_then(Value::as_str)
+                .ok_or("touch 需要 phase 参数（down/move/up/cancel）")?;
+            let pointer_id = a
+                .get("pointer_id")
+                .and_then(Value::as_u64)
+                .ok_or("touch 需要 pointer_id 参数（哪一根手指）")?;
+            let (x, y) = xy(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("touch {phase} {pointer_id} {x} {y}"))
+            })?)?)
+        }
+        "hit_test" => {
+            let (x, y) = xy(a)?;
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("hit {x} {y}"))
+            })?)?)
+        }
+        "resize_window" => {
+            let width = a
+                .get("width")
+                .and_then(Value::as_u64)
+                .ok_or("resize_window 需要 width 参数")?;
+            let height = a
+                .get("height")
+                .and_then(Value::as_u64)
+                .ok_or("resize_window 需要 height 参数")?;
+            if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
+                return Err("宽高要在 1..=16384 之间".into());
+            }
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("resize {width} {height}"))
+            })?)?)
+        }
+        "find_by_text" => {
+            let text = a
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or("find_by_text 需要 text 参数（要找的可见文字）")?;
+            if text.trim().is_empty() {
+                return Err("text 不能是空白".into());
+            }
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("find {}", quote_argument(text)))
+            })?)?)
+        }
+        "type_text" => {
+            let text = a
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or("type_text 需要 text 参数（要输入的文字）")?;
+            if text.is_empty() {
+                return Err("text 不能是空的".into());
+            }
+            reply(text_of(with_bridge(session, |c| {
+                c.call(&format!("type_text {}", quote_argument(text)))
+            })?)?)
         }
         other => Err(format!(
             "unknown tool `{other}`；用 tools/list 查看可用工具"
@@ -856,6 +919,67 @@ fn deltas(a: &Value) -> Result<(String, String), String> {
         finite_f32(v, k)
     };
     Ok((get("delta_x")?, get("delta_y")?))
+}
+
+/// 把一段文字包成**协议里的一个参数**（带引号 + 转义）。
+///
+/// ⚠ 必须转义：桥协议是**行文本**（一行一条命令），而文字里可能有换行、
+/// 引号或反斜杠。一个没转义的换行会把一条命令劈成两条 —— 症状是
+/// 「应用收到了莫名其妙的命令」，而没人知道为什么。
+fn quote_argument(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// 从工具参数里取元素 key。
+///
+/// ⚠ 不能含空白：桥协议是**行文本**（一行一条命令），key 里带空白会被切成两条命令。
+/// 那种错会表现为「应用收到了莫名其妙的命令」，极难归因 —— 所以在这里挡住。
+fn element_key(a: &Value) -> Result<String, String> {
+    let key = a
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or("需要 key 参数（来自 get_tree 的 key 列）")?;
+    if key.is_empty() || key.chars().any(char::is_whitespace) {
+        return Err("key 不能为空，也不能含空白".into());
+    }
+    Ok(key.to_string())
+}
+
+/// 从工具参数里取布局树路径（`0.1.1` 形态）。
+fn element_path(a: &Value) -> Result<String, String> {
+    let path = a
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("需要 path 参数（来自 get_tree 的路径列，形如 0.1.1）")?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("path 不能为空".into());
+    }
+    // 形态校验：全是非负整数、用 `.` 连接。桥那边会再解析一次，这里先挡住
+    // 明显不是路径的输入（否则错误会变成应用侧的「路径不存在」，误导方向）。
+    if !trimmed
+        .split('.')
+        .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()))
+    {
+        return Err(format!(
+            "path `{trimmed}` 不是路径形态（应为 0 开头的子下标链，如 0.1.1）"
+        ));
+    }
+    Ok(trimmed.to_string())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1729,10 +1853,7 @@ mod tests {
             stream.write_all(b"\nOK\n").unwrap();
         });
 
-        let mut client = BridgeClient {
-            stream: std::net::TcpStream::connect(address).unwrap(),
-            buf: Vec::new(),
-        };
+        let mut client = BridgeClient::from_stream(std::net::TcpStream::connect(address).unwrap());
         match client.read_response().unwrap() {
             BridgeResponse::Binary { note, data } => {
                 assert_eq!(note, "bmp 24bpp");

@@ -128,3 +128,7 @@ pub fn rect_contains(rect: Rect, point: Point) -> bool {
         && point.y >= rect.y
         && point.y < rect.y + rect.height
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/hit.rs"]
+mod tests;

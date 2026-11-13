@@ -497,5 +497,5 @@ impl GlyphSource for VaryingOffset {
 }
 
 #[cfg(test)]
-#[path = "tests/stack_tests.rs"]
+#[path = "../../tests/unit/text/stack_tests.rs"]
 mod tests;

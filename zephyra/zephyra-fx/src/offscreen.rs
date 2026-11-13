@@ -487,6 +487,21 @@ pub fn plan_pass(cmd: &Command) -> Option<OffscreenPass> {
     if filter.is_identity() && decorations.is_identity() {
         return None;
     }
+    // ★ **SVG 式像素偏移玻璃不开离屏**。
+    //
+    // 它的位移是**解析**的（掰形状自己的边，不采样背景）⇒ 没有离屏 RT，
+    // 也没有全屏目标副本 —— 图元展开那层已经把它画成带玻璃参数的四边形了
+    // （见 `quad::expand_range_translated_into` 的 `Command::Quad` 分支）。
+    //
+    // ⚠ 判据必须与展开那层**逐字一致**（都是「链长 1 且那一条是
+    // `PixelOffset`」）—— 两边不一致的后果是「玻璃被画了两遍」或
+    // 「玻璃根本没画」：前者多花一次离屏，后者元素凭空消失。
+    //
+    // ⚠ 链里混了别的滤镜时**不能**走这条捷径 —— 那些要离屏 ⇒ 整条链都得
+    // 走离屏 ⇒ 这里返回 `None` 会让它们**全部丢掉**。
+    if filter.pixel_offset().is_some() && decorations.is_identity() {
+        return None;
+    }
     let content = command_content_rect(cmd)?;
     if !(content.width > 0.0 && content.height > 0.0) {
         return None;
@@ -633,6 +648,40 @@ pub fn pass_for_chain_shaped(
                 refraction = None;
                 lens = None;
                 redraw_original = true;
+            }
+            zephyra_core::filter::Filter::PixelOffset { .. } => {
+                // ★ 像素偏移玻璃**不占离屏的任何一环**。
+                //
+                // 它没有离屏 RT、没有目标副本、没有合成趟 —— 位移是**解析**的，
+                // 图元展开那层已经把它画成带玻璃参数的四边形了。
+                //
+                // ⚠ 走到这里说明「链里混了别的滤镜」（`plan_pass` 的短路只认
+                // 「链长 1 且那一条是 PixelOffset」）。此时**不能**把像素偏移
+                // 丢掉 —— 那会让玻璃整块消失。
+                //
+                // 怎么办：像素偏移是**就地替换**语义（与折射 / 透镜 / 磨砂同一族：
+                // 「这一块区域被换成我的结果」），而它不占「元素背后那一块」——
+                // 所以它与其它滤镜**正交**：这里记下来，让合成趟在**普通合成**
+                // 之后**追加**一次「带玻璃参数的重画」。
+                //
+                // ⚠ 那一次重画要读**元素自己的离屏内容** ⇒ 合成趟的 `final_rt`
+                // 就是它 ⇒ 直接重画 `final_rt` 即可（不额外开 RT）。
+                //
+                // 但 `final_rt` 里存的是**元素自己**（不含玻璃效果）⇒ 重画它
+                // 就是「原样贴回」⇒ 玻璃效果丢失。
+                //
+                // ⇒ 所以这条路径**暂不支持**：链里混了别的滤镜 + 像素偏移时，
+                // 像素偏移**不生效**（其它滤镜照常）。
+                //
+                // 为什么不干脆报错：`.zstyle` 的滤镜链是「就地依次执行」，
+                // 混用是允许的；这里少做一件事（少一个效果）比整帧失败好，
+                // 而且 `unimplemented_filters` 会记一笔（那是唯一的诊断手段）。
+                //
+                // TODO：把玻璃参数带进合成趟（`OffscreenPass` 加一个字段，
+                // 合成趟按它重画）—— 那样「混合链」也能用玻璃。
+                refraction = None;
+                lens = None;
+                backdrop_blur = None;
             }
         }
     }
@@ -1218,8 +1267,8 @@ impl OffscreenPass {
         (self.rt_size.0 as f32, self.rt_size.1 as f32)
     }
 }
-#[path = "tests/offscreen_stress_tests.rs"]
+#[path = "../tests/unit/tests/offscreen_stress_tests.rs"]
 mod stress_tests;
 #[cfg(test)]
-#[path = "tests/offscreen_tests.rs"]
+#[path = "../tests/unit/tests/offscreen_tests.rs"]
 mod tests;

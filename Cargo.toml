@@ -75,7 +75,6 @@ members = [
     # 渲染后端（d3d12 / d3d11 / linux-vk 互斥），而控件层零后端依赖。
     # 同样不进 default-members：它编一整套应用。
     "gallery",
-    "examples",
     "zephyra/zephyra-base/zephyra-render-ext",
     "zephyra/zephyra-base/zephyra-ext",
     # wgpu interop（可选，S5）：让用户用 wgpu 开发扩展时可转换 AdapterIdentity/类型。
@@ -97,7 +96,6 @@ default-members = [
     "zephyra/zephyra-core",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-base/zephyra-winit",
-    "examples",
 ]
 
 [workspace.package]

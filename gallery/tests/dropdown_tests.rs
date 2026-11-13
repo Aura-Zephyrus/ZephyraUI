@@ -6,7 +6,7 @@
 //! - **点外面 → 收起**：空白处没有可交互目标，router 不产生 Click，只能靠
 //!   Down + `hovered` 判归属。只测前者会漏掉「点外面关不掉」。
 
-use zephyra_fx::{InputState, PointerInput, PointerInputPhase, View};
+use zephyra_fx::{InputState, PointerInput, PointerInputPhase, PointerSource, View};
 
 use zephyra_gallery::app::motion::{self, DropdownMotion, CLOSE_MS, FADE_STEPS, OPEN_MS};
 use zephyra_gallery::app::{Gallery, LIQUID_DD_GLASS_KEY, LIQUID_DD_SOLID_KEY};
@@ -15,9 +15,11 @@ fn down_with_hover(hovered: Option<&'static str>) -> InputState {
     InputState {
         hovered: hovered.map(Into::into),
         pointer_events: vec![PointerInput {
+            id: 0,
             x: 900.0,
             y: 700.0,
             phase: PointerInputPhase::Down,
+            source: PointerSource::Mouse,
         }],
         ..InputState::default()
     }
@@ -245,7 +247,7 @@ fn opening_the_menu_does_not_move_the_glass_dropdown() {
     let bounds = (1400.0, 800.0);
 
     let mut cache = FrameCache::new();
-    cache.set_styler(Box::new(SheetStyler(Arc::new(merged()))));
+    cache.set_styler(Box::new(SheetStyler::new(Arc::new(merged()))));
 
     let mut g = Gallery::default();
     g.route = "reference";
@@ -313,7 +315,7 @@ fn morph_keeps_the_button_top_left_corner_fixed() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
-    cache.set_styler(Box::new(SheetStyler(Arc::new(sheet))));
+    cache.set_styler(Box::new(SheetStyler::new(Arc::new(sheet))));
 
     let mut g = Gallery::default();
     g.route = "reference";

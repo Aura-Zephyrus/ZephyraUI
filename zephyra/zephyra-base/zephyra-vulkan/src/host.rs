@@ -21,9 +21,7 @@ use zephyra_window::{
 
 use zephyra_core::context::Context;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
-use zephyra_core::input::{
-    InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents,
-};
+use zephyra_core::input::{InputRouter, PointerPhase, RoutedEvent, RoutedEvents};
 use zephyra_core::node::Node;
 use zephyra_core::theme::{Theme, ThemeVariant};
 
@@ -85,12 +83,23 @@ pub struct HostWindow<V: View> {
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
+    /// 待发的**静态手势**（轻点 / 双击 / 长按）。
+    pending_gestures: Vec<zephyra_fx::GestureEvent>,
+    /// 待发的**操作增量**（多指平移 / 缩放 / 旋转 + 速度）。
+    pending_manipulations: Vec<zephyra_core::input::ManipulationDelta>,
+    /// 操作结束时的平移速度（px/秒）—— **惯性的初值**。
+    pending_inertia: Option<(f32, f32)>,
     pending_text_events: Vec<zephyra_core::input::TextEvent>,
     /// winit 按键 → core 文本事件的翻译器（修饰键状态也住在这里）。
     ///
     /// 本后端曾经把 `key_events` / `scroll` 写死成空值 —— 键盘与滚轮在这条
     /// 链路上从未接通过。现在与两个 Windows 后端共用同一份翻译。
     translator: zephyra_winit_input::Translator,
+    /// winit 指针事件 → core 指针事件的翻译器（**含单调时钟**）。
+    ///
+    /// ⚠ 触控这条路**必须**有它：`winit` 的 `Touch` 事件不带时间戳，而静态
+    /// 手势（轻点 / 双击 / 长按）是计时的。
+    pointer_translator: zephyra_winit_input::PointerTranslator,
     /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
     focus: zephyra_core::input::FocusState,
     /// 键盘激活状态机：焦点落在 ACTIVATABLE 节点上时 Space/Enter 闩住 pressed。
@@ -256,8 +265,12 @@ impl<V: View> HostWindow<V> {
             pointer: None,
             pointer_pos: (0.0, 0.0),
             pending_pointer_events: Vec::new(),
+            pending_gestures: Vec::new(),
+            pending_manipulations: Vec::new(),
+            pending_inertia: None,
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
+            pointer_translator: zephyra_winit_input::PointerTranslator::new(),
             focus: zephyra_core::input::FocusState::new(),
             activation: zephyra_core::input::ActivationState::new(),
             pending_scroll: None,
@@ -624,6 +637,14 @@ impl<V: View> HostWindow<V> {
 
     /// 把当前输入状态推给视图。
     pub fn sync_input(&mut self) {
+        // 长按是**时钟驱动**的：手指不动时没有任何输入事件，所以只能每帧查一次。
+        //
+        // 官方指南把长按列为静态手势之一（并明确它是「计时交互」的正当用例）。
+        if let Some((kind, target)) = self.router.tick(self.pointer_translator.now_ms()) {
+            self.pending_gestures
+                .push(zephyra_fx::GestureEvent { kind, target });
+            self.dirty = true;
+        }
         let size = self.client_size();
         let scale = self.window.scale_factor();
         let now = std::time::Instant::now();
@@ -632,6 +653,9 @@ impl<V: View> HostWindow<V> {
             .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
             .unwrap_or(0.0);
         self.last_frame_at = Some(now);
+        // ⚠ 这一批指针事件里有没有**取消**（系统抢走了手势）。
+        // 应用要靠它**不**把「按下 → 松开」当成点击 —— 用户的手指还在屏幕上。
+        let cancelled = zephyra_fx::has_cancelled(&self.pending_pointer_events);
         let state = InputState {
             hovered: self.router.hovered().cloned(),
             // 键盘激活复用指针的 pressed 通道（指针优先）—— Space 按住时模板出
@@ -642,6 +666,22 @@ impl<V: View> HostWindow<V> {
                 .pressed()
                 .or_else(|| self.activation.held())
                 .cloned(),
+            // **全部**按下态（多指各按一个控件时长度 > 1）。
+            //
+            // ⚠ 键盘激活（Space/Enter）也要在**里面**：`pressed` 那一栏是
+            // 「指针的按下态，否则是键盘激活」，这里必须**同款** ——
+            // 否则「按 key 找自己」那条路在键盘激活时找不到自己
+            // （症状：Space 激活的按钮画不出按下态）。
+            pressed_keys: {
+                let mut keys: Vec<zephyra_core::id::ElementKey> =
+                    self.router.pressed_keys().cloned().collect();
+                if keys.is_empty() {
+                    if let Some(held) = self.activation.held() {
+                        keys.push(held.clone());
+                    }
+                }
+                keys
+            },
             // 视觉焦点 = 焦点环可见时才报告（鼠标点击设焦点但不画环，见
             // `FocusState::is_visible`）。激活 / 无障碍另走 `self.focus.focused()`。
             focused: if self.focus.is_visible() {
@@ -653,6 +693,10 @@ impl<V: View> HostWindow<V> {
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
             pointer_events: std::mem::take(&mut self.pending_pointer_events),
+            cancelled,
+            gestures: std::mem::take(&mut self.pending_gestures),
+            manipulations: std::mem::take(&mut self.pending_manipulations),
+            inertia: self.pending_inertia.take(),
             viewport: (size.0 as f32, size.1 as f32),
             scale: scale as f32,
             dt_ms,
@@ -664,21 +708,17 @@ impl<V: View> HostWindow<V> {
     /// 处理指针移动。返回是否产生了路由事件。
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer_pos = (x, y);
+        let ev = self.pointer_translator.mouse_move(x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
             x,
             y,
             phase: zephyra_fx::PointerInputPhase::Move,
+            source: ev.source,
         });
         let theme = self.theme;
-        let pos = PointerEvent {
-            id: 0,
-            x,
-            y,
-            phase: PointerPhase::Move,
-            source: PointerSource::Mouse,
-        };
         self.route(|router, node, out| {
-            router.on_pointer(node, pos, Context::new(theme), out);
+            router.on_pointer(node, ev, Context::new(theme), out);
         })
         .0
     }
@@ -687,25 +727,17 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_down(&mut self) -> bool {
         self.pointer = Some(0);
         let (x, y) = self.pointer_pos;
+        let ev = self.pointer_translator.mouse_button(true, x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
             x,
             y,
             phase: zephyra_fx::PointerInputPhase::Down,
+            source: ev.source,
         });
         let theme = self.theme;
         self.route(|router, node, out| {
-            router.on_pointer(
-                node,
-                PointerEvent {
-                    id: 0,
-                    x,
-                    y,
-                    phase: PointerPhase::Down,
-                    source: PointerSource::Mouse,
-                },
-                Context::new(theme),
-                out,
-            );
+            router.on_pointer(node, ev, Context::new(theme), out);
         })
         .0
     }
@@ -714,25 +746,17 @@ impl<V: View> HostWindow<V> {
     pub fn on_pointer_up(&mut self) -> bool {
         self.pointer = None;
         let (x, y) = self.pointer_pos;
+        let ev = self.pointer_translator.mouse_button(false, x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
             x,
             y,
             phase: zephyra_fx::PointerInputPhase::Up,
+            source: ev.source,
         });
         let theme = self.theme;
         let (changed, out) = self.route(|router, node, out| {
-            router.on_pointer(
-                node,
-                PointerEvent {
-                    id: 0,
-                    x,
-                    y,
-                    phase: PointerPhase::Up,
-                    source: PointerSource::Mouse,
-                },
-                Context::new(theme),
-                out,
-            );
+            router.on_pointer(node, ev, Context::new(theme), out);
         });
         // 点击设焦点：`RoutedEvent::Click` 是「按下 + 抬起在同一节点」。
         // 焦点设给被点到的那个 key —— 文本框点进去获得键盘焦点。
@@ -749,6 +773,43 @@ impl<V: View> HostWindow<V> {
         changed
     }
 
+    /// 处理一次**触摸**事件（多点触控的主入口）。
+    ///
+    /// # 为什么这条路径以前是**空的**
+    ///
+    /// `winit` 会 `RegisterTouchWindow` —— 那会**关掉**系统的「触摸提升为鼠标」。
+    /// 于是触摸事件既不是触摸也不是鼠标，被整个丢掉：**触控屏上点不动任何东西**。
+    ///
+    /// # 触控与鼠标的差别（都要在这一层体现）
+    ///
+    /// - **多指并存**：每根手指一个 id；
+    /// - **双状态**：触控**不产生悬停**（由 core 的路由器判）；
+    /// - **取消 ≠ 抬起**：系统接管手势时收到的是取消（core 清按下态、
+    ///   不提交点击）。
+    pub fn on_touch(&mut self, phase: winit::event::TouchPhase, id: u64, x: f32, y: f32) -> bool {
+        let ev = self.pointer_translator.touch(phase, id, x, y);
+        let fx_phase = match ev.phase {
+            PointerPhase::Down => zephyra_fx::PointerInputPhase::Down,
+            PointerPhase::Move => zephyra_fx::PointerInputPhase::Move,
+            PointerPhase::Up => zephyra_fx::PointerInputPhase::Up,
+            PointerPhase::Cancel => zephyra_fx::PointerInputPhase::Cancel,
+        };
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
+            x,
+            y,
+            phase: fx_phase,
+            source: ev.source,
+        });
+        // 触控也要更新「指针当前位置」—— IME 插入点用它当代理。
+        self.pointer_pos = (x, y);
+        let theme = self.theme;
+        self.route(|router, node, out| {
+            router.on_pointer(node, ev, Context::new(theme), out);
+        })
+        .0
+    }
+
     /// 统一的「跑一次路由器 + 置脏」包装。
     fn route<F>(&mut self, f: F) -> (bool, RoutedEvents)
     where
@@ -763,6 +824,23 @@ impl<V: View> HostWindow<V> {
         let changed = self.router.revision() != before;
         if changed {
             self.dirty = true;
+        }
+        // 静态手势 / 操作增量收进**待发缓冲**（给应用的增量信息，不进 revision）。
+        for ev in out.iter() {
+            match ev {
+                RoutedEvent::Static(kind, target) => {
+                    self.pending_gestures.push(zephyra_fx::GestureEvent {
+                        kind: *kind,
+                        target: target.clone(),
+                    });
+                }
+                RoutedEvent::Manipulation(delta) => self.pending_manipulations.push(*delta),
+                RoutedEvent::ManipulationEnded {
+                    velocity_x,
+                    velocity_y,
+                } => self.pending_inertia = Some((*velocity_x, *velocity_y)),
+                _ => {}
+            }
         }
         (changed, out)
     }
@@ -868,6 +946,17 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 }
                 _ => {}
             },
+            WindowEvent::Touch(touch) => {
+                // ⚠ 触控**必须**接：winit 会 `RegisterTouchWindow`，那会关掉
+                // 「触摸提升为鼠标」—— 不接的话触摸事件被整个丢掉。
+                let _ = self.on_touch(
+                    touch.phase,
+                    touch.id,
+                    touch.location.x as f32,
+                    touch.location.y as f32,
+                );
+                self.dirty = true;
+            }
             WindowEvent::ModifiersChanged(m) => {
                 self.translator.on_modifiers(m.state());
             }

@@ -61,6 +61,8 @@ pub mod stack;
 ///
 /// 这个契约被违反过一次，且症状极端（图集全空 → 文字完全不出现），详见文件头。
 #[cfg(test)]
+#[cfg(test)]
+#[path = "../../tests/unit/text/atlas_contract_tests.rs"]
 mod atlas_tests;
 
 pub use atlas::{

@@ -98,5 +98,5 @@ pub const ALL: &[&str] = &[
 ];
 
 #[cfg(test)]
-#[path = "tests/tokens_tests.rs"]
+#[path = "../tests/unit/tokens_tests.rs"]
 mod tests;

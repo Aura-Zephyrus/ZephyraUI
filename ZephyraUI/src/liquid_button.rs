@@ -237,12 +237,17 @@ impl LiquidButton {
                     }
                 }
                 zephyra_fx::PointerInputPhase::Move => {
-                    if self.tracking && self.pressed {
+                    if self.tracking && self.pressed && self.material == Material::Glass {
                         self.pos_x = x_dip;
                         self.pos_y = y_dip;
                     }
                 }
                 zephyra_fx::PointerInputPhase::Up => {
+                    self.tracking = false;
+                }
+                zephyra_fx::PointerInputPhase::Cancel => {
+                    // ⚠ **取消不是抬起**：系统抢走了这次交互（Windows 11 的
+                    // 三指/四指手势）。这时**不能**提交 —— 用户没抬手。
                     self.tracking = false;
                 }
             }
@@ -322,20 +327,34 @@ impl LiquidButton {
 }
 
 #[cfg(test)]
-#[path = "tests/liquid_button_tests.rs"]
+#[path = "../tests/unit/liquid_button_tests.rs"]
 mod tests;
 
 /// 原版 `effects { vibrancy(); blur(2dp); lens(12dp,24dp) }` 的 Zephyra 近似。
 ///
-/// `vibrancy()` 在 Zephyra Filter 中无独立变体，省略；保留 `blur(2) + lens(12,24)`。
+/// `vibrancy()` 在 Zephyra Filter 中无独立变体，省略。
+///
+/// # 为什么用 **SVG 式像素偏移玻璃**而不是 `blur(2) + lens(12,24)`
+///
+/// `lens()` 要读元素**背后**的画面 ⇒ 每个带滤镜的元素都要拷一份**全屏**的
+/// 目标副本（MSAA 开着时那是一次**整幅解析** —— D3D12 没有「按区解析」）。
+///
+/// ⇒ 一颗按钮，代价是**一次全屏拷贝**。实测（gallery 1400×800 /
+/// Intel UHD 630）：材质页一帧 7 个带滤镜的元素 ⇒ **玻璃税 8.4 ms/帧**，
+/// 占那一帧 GPU 开销的 74% —— 而这一颗按钮就是其中之一。
+///
+/// [`Filter::PixelOffset`] 的位移是**解析**的（掰形状自己的边，不采样背景）
+/// ⇒ 不开离屏 pass ⇒ 不拷全屏副本 ⇒ **几乎不花钱**。
+///
+/// ⚠ 视觉上的差别：**背景不再被透镜掰弯**。真实液态玻璃那条路**完整保留**
+/// （[`Filter::Lens`] / `material: glass-refract`），要就用它。
 pub fn glass_filter_value() -> PropertyValue {
-    PropertyValue::filter(FilterChain::new(vec![
-        Filter::BackdropBlur { sigma: 2.0 },
-        Filter::Lens {
-            refraction_height: 12.0,
-            refraction_amount: 24.0,
-        },
-    ]))
+    PropertyValue::filter(FilterChain::single(Filter::PixelOffset {
+        // ⚠ 48px 高的按钮：位移是**形状位移**（像素），给 12 会推掉四分之一高度。
+        // 5px 是「看得见有厚度、形状还站得住」的量（着色器另有一道短边 40% 的夹）
+        amount: 5.0,
+        bezel: 12.0,
+    }))
 }
 
 /// 按压高光强度的装饰近似（原版 `InteractiveHighlight` 用径向 RuntimeShader + Plus 混合；

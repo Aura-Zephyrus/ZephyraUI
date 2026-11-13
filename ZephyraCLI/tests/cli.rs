@@ -336,15 +336,37 @@ fn dev_styles_flag_is_parsed_as_a_value() {
 
 /// 守卫：`VALUE_FLAGS` 与命令表里写的取值型选项必须一致。
 ///
-/// 两处各写一份是「改 A 忘了改 B」的典型温床，所以这条用例直接把
-/// `dev` 的 `--styles` 与 `--manifest-path` 拉出来对一遍。
+/// 两处各写一份是「改 A 忘了改 B」的典型温床，所以这条用例**扫整张命令表**
+/// —— 命令表里凡是写成 `--xxx <...>` 的，都必须在 `VALUE_FLAGS` 里。
+///
+/// # 为什么这条门禁重要
+///
+/// 不在名单里的取值型选项会被解析成「一个布尔标志 + 一个位置参数」。
+/// 而 `perf` / `debug` 的位置参数是**桥命令** —— 那个被漏下的值会被拼进
+/// 命令里，于是应用收到一条莫名其妙的命令，而 CLI 那边**一切正常**
+/// （退出码 0，输出看着像样）。
 #[test]
 fn value_flags_cover_every_option_the_commands_document() {
-    for opt in ["format", "path", "manifest-path", "styles"] {
-        assert!(
-            args::VALUE_FLAGS.contains(&opt),
-            "`--{opt}` takes a value but is missing from VALUE_FLAGS"
-        );
+    for cmd in commands::COMMANDS {
+        let mut rest = cmd.args;
+        while let Some(start) = rest.find("--") {
+            rest = &rest[start + 2..];
+            let Some(end) = rest.find(|c: char| c.is_whitespace() || c == ']') else {
+                break;
+            };
+            let name = &rest[..end];
+            rest = &rest[end..];
+            // 只看**取值型**的（`--xxx <...>`）：布尔标志后面没有 `<`。
+            let Some(after) = rest.trim_start().strip_prefix('<') else {
+                continue;
+            };
+            let _ = after;
+            assert!(
+                args::VALUE_FLAGS.contains(&name),
+                "`{}` 文档里的 `--{name}` 取值，但不在 VALUE_FLAGS 里",
+                cmd.name
+            );
+        }
     }
 }
 
@@ -516,6 +538,113 @@ fn scaffold_entry_implements_every_required_trait_method() {
     }
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- `bridge` ----
+
+/// `zephyra bridge log <file> [--tail N]`：读**本地**日志，不需要连上应用。
+///
+/// 这条命令存在的意义是「应用跑着，你看它的输出」—— 而日志是 `run --log` /
+/// `dev --log` 落下来的那份。
+#[test]
+fn bridge_log_prints_the_tail_without_needing_an_app() {
+    let dir = scratch("bridge-log");
+    let log = dir.join("app.log");
+    std::fs::write(&log, "first\nsecond\nthird\nfourth\n").unwrap();
+
+    let mut o = Vec::new();
+    let mut e = Vec::new();
+    {
+        let mut io = Io {
+            out: &mut o,
+            err: &mut e,
+        };
+        let ParseOutcome::Parsed(a) =
+            args::parse(argv(&format!("bridge log {} --tail 2", log.display())))
+        else {
+            panic!("expected Parsed")
+        };
+        let code = (commands::find("bridge").unwrap().run)(&a, &mut io).unwrap();
+        assert_eq!(code, ExitCode::Success);
+    }
+
+    let out = String::from_utf8_lossy(&o).to_string();
+    assert!(out.contains("third"), "{out}");
+    assert!(out.contains("fourth"), "{out}");
+    assert!(!out.contains("second"), "{out}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `bridge log` 缺文件路径 ⇒ **用法错**（2），不是「动作失败」（1）。
+///
+/// 区分这两个码是有意义的：前者是「你写错了」，后者是「它没成」。
+#[test]
+fn bridge_log_without_a_path_is_a_usage_error() {
+    let mut o = Vec::new();
+    let mut e = Vec::new();
+    {
+        let mut io = Io {
+            out: &mut o,
+            err: &mut e,
+        };
+        let ParseOutcome::Parsed(a) = args::parse(argv("bridge log")) else {
+            panic!("expected Parsed")
+        };
+        let err = (commands::find("bridge").unwrap().run)(&a, &mut io).unwrap_err();
+        assert_eq!(err.code, ExitCode::Usage);
+    }
+}
+
+// ---- `perf` / `debug` ----
+
+/// `perf` 与 `debug` 必须在命令表里，而且帮助里要能看到。
+///
+/// 理由：这两个是「AI / 人驱动运行中应用」的主力入口。注册了但帮助里没有
+/// ⇒ 没人知道它们存在；而「命令表里有、帮助里没有」这种不同步正是本文件
+/// 要防的那类退化。
+#[test]
+fn perf_and_debug_are_registered_and_documented() {
+    for name in ["perf", "debug"] {
+        let cmd = commands::find(name).expect("command must be in the table");
+        assert!(!cmd.args.is_empty(), "`{name}` should document its args");
+        let help = commands::render_help("zephyra", "0.0.0");
+        assert!(help.contains(name), "`--help` must list `{name}`");
+    }
+}
+
+/// `perf` / `debug` 的取值型标志必须进 `VALUE_FLAGS`。
+///
+/// ⚠ 这不是「多写一份名单」的问题：不列进去，`--duration-ms 2000` 会被解析成
+/// 「一个叫 `duration-ms` 的布尔标志 + 一个位置参数 `2000`」—— 而
+/// `debug watch` 的位置参数是**桥命令**，那个 `2000` 就会被拼进命令里，
+/// 于是应用收到一条莫名其妙的命令，而 CLI 那边**一切正常**。
+#[test]
+fn perf_and_debug_value_flags_are_parseable() {
+    let ParseOutcome::Parsed(a) = args::parse(argv(
+        "perf watch --port 7878 --interval-ms 200 --duration-ms 3000 --seconds 2",
+    )) else {
+        panic!("expected Parsed")
+    };
+    assert_eq!(a.option("port"), Some("7878"));
+    assert_eq!(a.option("interval-ms"), Some("200"));
+    assert_eq!(a.option("duration-ms"), Some("3000"));
+    assert_eq!(a.option("seconds"), Some("2"));
+    // 取值不能漏进位置参数（那会被当成桥命令）。
+    assert_eq!(a.positional, vec!["watch"], "{:?}", a.positional);
+}
+
+/// `debug watch` 的命令是**位置参数的全部剩余部分**，不是一个词。
+///
+/// `debug watch "props 0.1.0.1"` 是三个词 —— 只取第一个就变成
+/// `props`，后两个被丢掉，watcher 会一直问一个不存在的命令。
+#[test]
+fn debug_watch_takes_the_whole_command_as_positional() {
+    let ParseOutcome::Parsed(a) = args::parse(argv("debug watch props 0.1.0.1")) else {
+        panic!("expected Parsed")
+    };
+    assert_eq!(a.command.as_deref(), Some("debug"));
+    assert_eq!(a.positional, vec!["watch", "props", "0.1.0.1"]);
 }
 
 // ---- `fmt` ----

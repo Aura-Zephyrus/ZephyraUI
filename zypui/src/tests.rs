@@ -383,6 +383,7 @@ fn for_iterates_bindings_and_exposes_var_and_index() {
             root: vec![Node::For(ForNode {
                 var: "name",
                 index: Some("i"),
+                track_key: None,
                 list: Expr::Binding("icons"),
                 body: vec![Node::El(ElementNode {
                     tag: NodeTag::Image,
@@ -527,4 +528,116 @@ fn background_only_accepts_a_raw_color_binding() {
         .lookup(&props::BACKGROUND)
         .and_then(|(v, _)| v.get::<zephyra_core::core::Color>());
     assert_eq!(got, Some(color), "绑定颜色必须原样落地");
+}
+
+#[test]
+fn runtime_resolve_matches_build_for_static_page() {
+    // 简单静态页：UiRuntime 的 P1 缓存路径必须与 Ui::build 语义等价。
+    let raw = RawUi {
+        components: vec![Component {
+            name: "Label",
+            params: vec!["text"],
+            body: vec![Node::El(ElementNode {
+                tag: zephyra_core::id::NodeTag::Text,
+                key: None,
+                classes: vec![ClassTok::Lit("label")],
+                attrs: vec![("text", Expr::Ref("text"))],
+                children: vec![],
+            })],
+        }],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::Use(UseNode {
+                comp: "Label",
+                key: Some(Expr::LitS("a")),
+                class_extra: vec![],
+                args: vec![("text", Expr::LitS("hello"))],
+                children: vec![],
+            })],
+        }],
+    };
+    let h = host(vec![]);
+    let mut it1 = Interner::new();
+    let mut it2 = Interner::new();
+    let ui = Ui::new(raw.clone()).unwrap();
+    let mut rt = crate::UiRuntime::new(raw).unwrap();
+    let a = ui.build("p", &h, &mut it1).unwrap();
+    let b = rt.resolve_page("p", &h, &mut it2).unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].tag(), b.tag());
+    assert_eq!(a[0].key(), b.key());
+    assert_eq!(a[0].style_names(), b.style_names());
+    assert_eq!(a[0].child_elements().count(), b.child_elements().count());
+}
+
+#[test]
+fn runtime_oracle_check_matches_full_build() {
+    let raw = RawUi {
+        components: vec![Component {
+            name: "Label",
+            params: vec!["text"],
+            body: vec![Node::El(ElementNode {
+                tag: zephyra_core::id::NodeTag::Text,
+                key: Some(Expr::Ref("text")),
+                classes: vec![ClassTok::Lit("label")],
+                attrs: vec![("text", Expr::Ref("text"))],
+                children: vec![],
+            })],
+        }],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::Use(UseNode {
+                comp: "Label",
+                key: Some(Expr::LitS("a")),
+                class_extra: vec![],
+                args: vec![("text", Expr::LitS("hello"))],
+                children: vec![],
+            })],
+        }],
+    };
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let mut rt = crate::UiRuntime::new(raw).unwrap();
+    #[cfg(debug_assertions)]
+    rt.set_oracle_check(true);
+    let _ = rt.resolve_page("p", &h, &mut it).unwrap();
+    let stats = rt.cache_stats();
+    assert!(stats.misses >= 1);
+}
+
+#[test]
+fn for_track_key_builds_in_order() {
+    let ui = Ui::new(RawUi {
+        components: vec![],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::For(ForNode {
+                var: "item",
+                index: Some("i"),
+                track_key: Some(Expr::Field(Box::new(Expr::Ref("item")), "id")),
+                list: Expr::Binding("items"),
+                body: vec![Node::El(ElementNode {
+                    tag: NodeTag::Box,
+                    key: Some(Expr::Call(
+                        "str",
+                        vec![Expr::Field(Box::new(Expr::Ref("item")), "id")],
+                    )),
+                    classes: vec![],
+                    attrs: vec![],
+                    children: vec![],
+                })],
+            })],
+        }],
+    })
+    .unwrap();
+    let items = Val::L(vec![
+        Val::Rec(vec![("id", Val::S("a"))]),
+        Val::Rec(vec![("id", Val::S("b"))]),
+    ]);
+    let h = host(vec![("items", items)]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    assert_eq!(els.len(), 2);
+    assert_eq!(els[0].key().and_then(|k| k.as_name()), Some("a"));
+    assert_eq!(els[1].key().and_then(|k| k.as_name()), Some("b"));
 }

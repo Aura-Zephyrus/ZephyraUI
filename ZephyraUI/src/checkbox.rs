@@ -422,5 +422,5 @@ impl CheckboxGroup {
 }
 
 #[cfg(test)]
-#[path = "tests/checkbox_tests.rs"]
+#[path = "../tests/unit/checkbox_tests.rs"]
 mod tests;

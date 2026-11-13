@@ -606,6 +606,20 @@ impl Slider {
                         self.release_pending = true;
                     }
                 }
+                zephyra_fx::PointerInputPhase::Cancel => {
+                    // ⚠ **取消不是抬起**：系统抢走了这次交互（Windows 11 的
+                    // 三指/四指手势）。这时**不能**提交 —— 用户没抬手。
+                    //
+                    // 症状（若当成抬起）：手指还按着滑块，系统接管手势，应用却
+                    // 把滑块的值提交了 —— 用户看到「我没松手它自己跳了」。
+                    if self.dragging {
+                        self.dragging = false;
+                        self.did_drag = false;
+                        // 提交目标也丢掉：取消的那一下**不算数**。
+                        self.drag_committed = None;
+                        self.tap_committed = None;
+                    }
+                }
             }
         }
     }
@@ -675,5 +689,5 @@ fn spring_step(x: &mut f32, v: &mut f32, target: f32, dt: f32, omega: f32, zeta:
 }
 
 #[cfg(test)]
-#[path = "tests/slider_tests.rs"]
+#[path = "../tests/unit/slider_tests.rs"]
 mod tests;

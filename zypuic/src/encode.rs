@@ -77,6 +77,7 @@ fn node(w: &mut Writer, n: &Node) {
             w.u8(2);
             w.str(f.var);
             opt_str(w, f.index);
+            opt_expr(w, &f.track_key);
             expr(w, &f.list);
             w.u32(f.body.len() as u32);
             for c in &f.body {

@@ -32,6 +32,8 @@
 
 pub mod activation;
 pub mod focus;
+pub mod gesture;
+pub mod manipulation;
 pub mod momentum;
 pub mod pinch;
 pub mod pointer;
@@ -42,6 +44,8 @@ pub mod viewport;
 
 pub use activation::ActivationState;
 pub use focus::FocusState;
+pub use gesture::StaticGesture;
+pub use manipulation::ManipulationDelta;
 pub use momentum::Momentum;
 pub use pinch::PinchDelta;
 pub use pointer::{PointerEvent, PointerPhase, PointerSource};

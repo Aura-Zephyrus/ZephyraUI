@@ -892,5 +892,5 @@ impl Swapchain {
 /// 堆只给 1 个描述符时第二帧 `cpu(1)` 就越界 —— 而越界的症状是「画面卡在第
 /// 一帧的颜色」或崩，没有任何提示指向描述符个数。
 #[cfg(test)]
-#[path = "tests/swapchain_tests.rs"]
+#[path = "../tests/unit/tests/swapchain_tests.rs"]
 mod tests;

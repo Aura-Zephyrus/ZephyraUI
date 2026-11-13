@@ -362,17 +362,32 @@ fn build_for(
             return;
         }
     };
-    // 体内可见：外层参数 + 本层变量。
+    // 体内可见：外层参数 + 本层变量（track key 在 item 作用域求值）。
     let mut inner: Vec<String> = visible.to_vec();
     inner.push(var.to_string());
     if let Some(ix) = index {
         inner.push(ix.to_string());
     }
+    let track_src = el.attr("key").or_else(|| el.attr("track-by"));
+    let track_key = match track_src {
+        Some(src) => match parse_expr(src, file, el.line, el.col + 5) {
+            Ok(e) => {
+                validate_expr(&e, &inner, file, el.line, el.col, diags);
+                Some(e)
+            }
+            Err(d) => {
+                diags.push(d);
+                None
+            }
+        },
+        None => None,
+    };
     let (body, mut d) = build_nodes(&el.children, file, &inner, in_template, signatures);
     diags.append(&mut d);
     out.push(Node::For(ForNode {
         var: leak(var),
         index: index.map(leak),
+        track_key,
         list,
         body,
     }));

@@ -40,4 +40,10 @@ zypuic = { path = "../zypuic" }
 # 破例面被压到最小。
 serde_json = "1"
 
+# 截图转 PNG。与 serde_json 同款破例：PNG 的**容器**（IHDR/IDAT/IEND + zlib
+# 流 + CRC32）自己写是经典坑源（一个字节的 CRC 错位就得到「能打开但是花的图」），
+# 而截图是本 CLI 的正经功能。转换只发生在**客户端**（落盘那一步），
+# 库层调试桥仍然只发 BMP 字节 —— 协议里不掺格式选择。
+png = "0.18.1"
+
 [dev-dependencies]

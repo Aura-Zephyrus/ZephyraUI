@@ -10,15 +10,15 @@
 | 外观（颜色、尺寸、间距、状态样式） | `.zstyle` |
 | 行为（状态、事件分派、数据） | Rust（`View` + `zypui::Host`） |
 
-仓里有两个完整的真实用户：
+仓里有一个完整的真实用户：
 
-- `gallery/`（应用外壳 + 17 个页面，前端文件集中在 `gallery/frontend/`，结构来源 `gallery/frontend/shell.zypui`）；
-- `examples/ui/demo.zypui`（最小示例，六个视图函数的翻译）。
+- `gallery/`（应用外壳 + 17 个页面，前端文件集中在 `gallery/frontend/`，结构来源 `gallery/frontend/shell.zypui`）。
 
 ## 编译成二进制，运行时零解析
 
 ```text
-build.rs: zypuic::compile(&[("ui/demo.zypui", src)]) → OUT_DIR/*.zypui.bin
+build.rs: zypuic::compile(&[(控件库.zypui, 控件库源码), (shell.zypui, 外壳源码)])
+         → OUT_DIR/shell.zypui.bin
 运行时:   include_bytes! + zypui::decode → RawUi → Ui::build("页名", host, …)
 ```
 
@@ -30,8 +30,8 @@ build.rs: zypuic::compile(&[("ui/demo.zypui", src)]) → OUT_DIR/*.zypui.bin
 
 ## 语言
 
-XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`（其它
-标签名按组件引用处理）。全部展开成裸元素树，没有运行时组件对象。
+XML/HTML 风格。裸元素四种：`box` / `text` / `image` / `control`（其它
+标签名按组件引用处理；旧 `<container>` 已移除，编译器会提示改为 `<box>`）。全部展开成裸元素树，没有运行时组件对象。
 
 排版（属性顺序、一元素一行、缩进）另有规范：[zypui-style](zypui-style.md)。
 那五条**不是语义** —— 编译器不管，判据是一条扫描全仓 `.zypui` 的测试。
@@ -40,7 +40,7 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 
 ```xml
 <control key="{b.name}" class="{press(b.name) ? 'pressed'}" interactive="true">
-  <container key="glyph" class="glyph {hover(b.name) ? 'hovered'}" icon="{b.name}"/>
+  <box key="glyph" class="glyph {hover(b.name) ? 'hovered'}" icon="{b.name}"/>
 </control>
 ```
 
@@ -79,7 +79,7 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 ```
 
 ```xml
-<container key="swatch" class="swatch {fill}" filter="{e.filter}" blend="{e.blend}"/>
+<box key="swatch" class="swatch {fill}" filter="{e.filter}" blend="{e.blend}"/>
 ```
 
 `Raw` 在条件/拼接等其它上下文里按「假」降级——给错类型时画面上少一个效果，
@@ -90,7 +90,7 @@ XML/HTML 风格。裸元素四种：`container` / `text` / `image` / `control`�
 `.zypui` 可以声明一个宿主已登记的渲染源 kind：
 
 ```xml
-<container key="video-surface" render-source="video:main"/>
+<box key="video-surface" render-source="video:main"/>
 ```
 
 该属性不构造 payload。实例化时调用 `Host::render_source(kind)`；宿主返回对应的
@@ -103,9 +103,9 @@ payload。
 
 ```xml
 <component name="FxSwatch" params="id caption fill filter blend">
-  <container key="{id}" class="fx">
+  <box key="{id}" class="fx">
     <children/>
-  </container>
+  </box>
 </component>
 <FxSwatch id="fx-none" caption="对照" fill="accent" …/>
 ```

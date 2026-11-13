@@ -302,5 +302,5 @@ impl TextEvent {
 }
 
 #[cfg(test)]
-#[path = "tests/text_tests.rs"]
+#[path = "../../tests/unit/text.rs"]
 mod tests;

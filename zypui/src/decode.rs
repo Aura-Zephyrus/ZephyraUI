@@ -116,12 +116,14 @@ fn node(r: &mut Reader) -> Result<Node, ZypuiError> {
         2 => {
             let var = r.str()?;
             let index = opt_str(r)?;
+            let track_key = opt_expr(r)?;
             let list = expr(r)?;
             let n_body = r.u32()?;
             let body = nodes(r, n_body)?;
             Ok(Node::For(ForNode {
                 var,
                 index,
+                track_key,
                 list,
                 body,
             }))

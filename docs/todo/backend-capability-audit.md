@@ -6,38 +6,40 @@
 
 ## 结论摘要
 
-1. **触控尚未接入任何宿主。** 三个 `window_event` 都处理 `CursorMoved` 和左键 `MouseInput`，但没有处理 `WindowEvent::Touch`。核心有 `PointerSource::Touch` 和触摸手势逻辑，宿主到核心的输入链却没有把触点送进去。Windows 的触摸不会可靠地转成鼠标事件，不能把鼠标路径当触控支持。
+1. ~~**触控尚未接入任何宿主。**~~ **已于 2026-11-12 收口**：三个宿主都接上了 `WindowEvent::Touch`（相位 `Started` / `Moved` / `Ended` / `Cancelled` → core 的 `PointerPhase::Down` / `Move` / `Up` / `Cancel`），并补齐了触控该有的语义（双状态：触控不产生悬停；取消 ≠ 抬起，取消不提交点击；静态手势轻点/双击/长按；多点触控给平移/缩放/转角/速度的原始数据）。见 [2026-11-touch-and-multi-touch](../dev-log/2026-11-touch-and-multi-touch.md)。⚠ 仍需**物理触摸屏**的端到端验收（本轮用桥的 `touch` 命令在 D3D12 上验的是**注入路径**，它与真实 `WM_TOUCH` 共用同一个 `on_touch` 入口，但事件来源不同）。
 2. **输入能力不一致。** ~~D3D11、D3D12 有键盘和滚轮事件；Vulkan `InputState` 同步时固定提供空键盘事件与空滚轮。~~ **已于 2026-10-28 收口**：三个宿主共用 `zephyra-winit-input` 的同一份翻译，Vulkan 补上了键盘、滚轮与 IME 分支。见 [2026-10-28-input-keyboard-ime](../dev-log/2026-10-28-input-keyboard-ime.md)。
 3. **帧输出与截图能力不一致。** D3D11、D3D12 都有调试桥的按需截图；Vulkan 只有首次上屏时可选的 `ZEPHYRA_FRAME_DUMP` 诊断读回，没有 MCP `BridgeHost` 截图路径。
 4. **自绘扩展已接入三后端，但不是跨后端的统一 GPU 插件 API。** `Command::Custom` 与 payload/kind 身份跨后端共用；`RenderHook`、GPU 上下文和资源管理按后端分别实现。自绘源的非默认滤镜没有可用的离屏执行，Vulkan hook 也不能更换 render pass 或 attachment。
-5. **文档存在过时或不完整的能力描述。** `migration-seam.md` 描述了窗口系统替换时应接入的 Touch 事件，并不代表现有宿主已经接通；触控尺寸文档里“只在触摸路径放大”目前没有可用的宿主触摸路径。D3D12 宿主关于截图未接线的注释则与当前实现及 2026-10-26 真机验收记录相矛盾。
+5. **文档存在过时或不完整的能力描述。** ~~`migration-seam.md` 描述了窗口系统替换时应接入的 Touch 事件，并不代表现有宿主已经接通；触控尺寸文档里"只在触摸路径放大"目前没有可用的宿主触摸路径。~~ **已于 2026-11-12 收口**：触控路径已接通，`responsive-and-touch.md` §5 已更新为「已交付」。D3D12 宿主关于截图未接线的注释则与当前实现及 2026-10-26 真机验收记录相矛盾。
 
 ## 1. 触控与输入
 
 | 能力 | D3D11 | D3D12 | Vulkan | 证据与影响 |
 |---|---|---|---|---|
 | 鼠标移动 / 左键按下抬起 | 已接 | 已接 | 已接 | 三宿主用 `CursorMoved` / `MouseInput`，以 `PointerSource::Mouse` 路由 |
-| 原生触点 Down / Move / Up | **未接** | **未接** | **未接** | 三个宿主均无 `WindowEvent::Touch` 分支；触摸屏上无法保证产生鼠标事件 |
+| 原生触点 Down / Move / Up | **已接**（2026-11-12） | **已接**（2026-11-12） | **已接**（2026-11-12） | 三宿主都有 `WindowEvent::Touch` 分支（经 `zephyra_winit_input::PointerTranslator`）；相位映射含**取消** |
+| 触控**取消**（系统抢走手势） | 已接 | 已接 | 已接 | `PointerPhase::Cancel`：清按下态、**不**产出点击；`InputState.cancelled` 把它传到应用 |
 | 键盘逻辑键事件 | 已接 | 已接 | 已接（2026-10-28） | 三宿主都过 `zephyra_winit_input::Translator`，产出 core 的 `TextEvent::Key`（语义键 + 键名 + 重复 + 修饰键） |
 | 可打印字符 | 已接 | 已接 | 已接（2026-10-28） | 同一翻译器产出 `TextEvent::Char`；Ctrl/Alt/Super 与控制的字符被挡掉 |
 | IME（组字 / 提交 / 取消） | 已接 | 已接 | 已接（2026-10-28） | 同一翻译器产出 `TextEvent::Ime`；`Ime::Start` 的插入点暂用最近指针位置代理（焦点系统未建） |
 | 滚轮 / 触控板滚动 | 已接 | 已接 | 已接（2026-10-28） | Vulkan 补上了 `MouseWheel` 分支，`scroll` 不再写死 `None` |
-| 多指身份到应用输入状态 | **未接** | **未接** | **未接** | core `PointerEvent` 有 id/source，但 fx 的 `PointerInput` 只有坐标和相位；当前宿主队列无法将 id、触点来源交给 `View::on_input` |
+| 多指身份到应用输入状态 | **已接**（2026-11-12） | **已接**（2026-11-12） | **已接**（2026-11-12） | `PointerInput` 现在带 `id` 与 `source`；`InputState.manipulations` 给多指的平移/缩放/转角/速度 |
 
 核心与宿主的边界需要特别注意：
 
-- core 的 `PointerSource::{Touch, Pen, Mouse}`、固定容量指针表和手势识别证明**核心有部分触摸建模能力**，不能据此声称宿主支持触摸。
-- `InputState.pointer_events` 文档当前称其为“鼠标移动与按键边沿”，确实只有 `{x, y, phase}`；完整触控/笔输入需要先定跨后端公共事件契约，至少表达 pointer id、source、phase 和位置。
-- [响应式与触控规范](../developer/responsive-and-touch.md) 中触控路径放大目标尺寸的描述是**未兑现的设计口径**。当前宿主没有触摸 source，所以该尺寸策略不会被触摸输入路径触发。
-- Gallery 的 `touch_target()` 目前只有定义、没有调用点；它只按 scale 换算目标尺寸，不会识别触摸设备，也没有实际放大 Gallery 中的热区。
+- core 的 `PointerSource::{Touch, Pen, Mouse}`、固定容量指针表和手势识别证明**核心有部分触摸建模能力**，不能据此声称宿主支持触摸 —— 但 2026-11-12 起三个宿主**确实**接上了，所以这条判据现在只是「别只看 core 就下结论」的提醒。
+- ~~`InputState.pointer_events` 文档当前称其为"鼠标移动与按键边沿"，确实只有 `{x, y, phase}`；完整触控/笔输入需要先定跨后端公共事件契约，至少表达 pointer id、source、phase 和位置。~~ **已于 2026-11-12 收口**：`PointerInput` 现在是 `{id, x, y, phase, source}`。
+- ~~[响应式与触控规范](../developer/responsive-and-touch.md) 中触控路径放大目标尺寸的描述是**未兑现的设计口径**。~~ 触控路径已接通，该规则**有了可触发的路径**（但 Gallery 侧的 `touch_target()` 仍只有定义、没有调用点，见下）。
+- Gallery 的 `touch_target()` 目前只有定义、没有调用点；它只按 scale 换算目标尺寸，不会识别触摸设备，也没有实际放大 Gallery 中的热区。**这一条仍未兑现** —— 触控路径通了不等于热区放大了。
 
 ### 建议的补齐判据
 
-- 在三宿主接入同一语义的触点生命周期；包括取消/丢失触点的收尾，避免 pointer capture 残留。
-- 触点坐标应与命中测试的客户区物理像素坐标系一致；DPI/缩放换算只能有一个明确责任层。
-- `InputState` 向应用暴露稳定的 id/source，而不是把触点伪装成鼠标。触摸手势与鼠标合成行为分别验证，避免一次原生触摸被重复路由。
-- 将键盘、滚轮、触控的能力差异列为 backend capability 或补齐 Vulkan；当前只在 Vulkan 支持矩阵中标明空实现，容易导致同一应用在 Linux 上静默失去操作。
-- 加宿主无关的事件转换测试，以及 Windows 真触摸设备/注入层和 Linux 可用触摸设备上的端到端验收。纯 core 手势测试不能代替宿主事件接线测试。
+- ~~在三宿主接入同一语义的触点生命周期；包括取消/丢失触点的收尾，避免 pointer capture 残留。~~ **已收口**（2026-11-12）：三宿主共用 `PointerTranslator`，取消语义在 core 里统一。
+- 触点坐标应与命中测试的客户区物理像素坐标系一致；DPI/缩放换算只能有一个明确责任层。**已收口**：`PointerTranslator` 收物理像素，core 与命中测试同坐标系。
+- ~~`InputState` 向应用暴露稳定的 id/source，而不是把触点伪装成鼠标。~~ **已收口**（2026-11-12）。
+- 将键盘、滚轮、触控的能力差异列为 backend capability 或补齐 Vulkan；当前只在 Vulkan 支持矩阵中标明空实现，容易导致同一应用在 Linux 上静默失去操作。**已收口**（三后端同款）。
+- 加宿主无关的事件转换测试，以及 Windows 真触摸设备/注入层和 Linux 可用触摸设备上的端到端验收。纯 core 手势测试不能代替宿主事件接线测试。**部分收口**：`zephyra-winit-input` 有宿主无关的转换测试（含相位映射与取消），桥的 `touch` 命令让注入路径可验；**仍缺物理触摸屏的真机验收**。
+- Gallery 的触控热区放大（`touch_target()` 的调用点）**仍缺**。
 
 ## 2. 帧呈现、读回与诊断输出
 

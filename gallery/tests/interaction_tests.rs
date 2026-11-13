@@ -1,14 +1,16 @@
-//! 交互回归 —— **保留** `examples/demo_tests.rs` 的 10 条测试。
+//! 交互回归 —— 10 条，覆盖框架的**输入语义**。
 //!
-//! # 为什么复制而不是直接复用 `examples` 那份
+//! # 这批测试的来历
 //!
-//! `demo_tests.rs` 驱动的是 `demo::view`（demo 自己的按钮行）。本文件驱动的是
-//! **gallery 的真实控件**（按钮、复选框…）。两者测的是**同一批框架语义**
+//! 它们最早是 `examples/demo_tests.rs`（那个 crate 已于 2026-11 删除，
+//! 见 `docs/dev-log/2026-11-drop-examples-crate.md`）。当时那份驱动的是
+//! `demo::view`（demo 自己的按钮行），本文件驱动的是 **gallery 的真实控件**
+//! （按钮、复选框…）。两者测的是**同一批框架语义**
 //! —— hover 清理、press 捕获、click 配对、拖走不 click、theme 换色不动树、
-//! uv 裁剪只改命令不改几何 —— 但跑在**迁移后的代码**上，这才是"保留测试功能"
+//! uv 裁剪只改命令不改几何 —— 但跑在**被测对象本身**上，这就是"保留测试功能"
 //! 的意义：测试跟着被测对象走，而不是守着一个已被替换的 demo。
 //!
-//! # 逐条对照（与 demo_tests.rs 同名同义）
+//! # 逐条清单
 //!
 //! `no_input_means_diff_is_a_noop` / `hovering_a_button_changes_the_display_list` /
 //! `moving_off_all_controls_clears_hover` / `moving_between_buttons_hovers_exactly_one` /
@@ -108,6 +110,7 @@ impl Harness {
                 y: at.1,
                 phase,
                 source: PointerSource::Mouse,
+                time_ms: 0,
             },
             Context::new(&self.theme),
             &mut out,
@@ -129,6 +132,7 @@ impl Harness {
                 y: at.1,
                 phase,
                 source: PointerSource::Mouse,
+                time_ms: 0,
             },
             Context::new(&self.theme),
             &mut out,

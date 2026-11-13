@@ -77,6 +77,55 @@ pub enum Filter {
         offset: Point,
         sigma: f32,
     },
+    /// **SVG 式像素偏移玻璃** —— 便宜版液态玻璃。
+    ///
+    /// # 它替代的是什么
+    ///
+    /// [`Filter::Refraction`]（真实液态玻璃）要做两件事，而**两件都很贵**：
+    ///
+    /// 1. 把元素**背后**的画面拷一份（`g_dst`）—— MSAA 开着时那是一次
+    ///    **整幅解析**（D3D12 没有「按区解析」），而**每个**带滤镜的元素
+    ///    都要拷一次；
+    /// 2. 按**斯涅尔定律**算出折射位移，再**逐通道分色**地采样那张副本
+    ///    （色散 7 次采样）。
+    ///
+    /// 实测（gallery 1400×800 / Intel UHD 630 / D3D12）：材质页一帧 7 个带
+    /// 滤镜的元素 ⇒ **玻璃税 8.4 ms/帧**（占那一帧 GPU 开销的 74%），其中
+    /// 目标副本 5.15 ms、滤镜着色器 1.60 ms。
+    ///
+    /// # 这个变体怎么做
+    ///
+    /// 照 **SVG 的做法**（`feDisplacementMap` + `feSpecularLighting`）：
+    ///
+    /// - **位移图来自元素自己的形状**（SDF 的梯度），**不采样背景**；
+    /// - 于是**不需要背景副本**，也就不需要离屏 pass —— 整块玻璃只是主趟里
+    ///   的**一个四边形**；
+    /// - 边缘的高光（`feSpecularLighting` 那一步）由 SDF 的法线**解析**算出。
+    ///
+    /// ⇒ 代价从「每元素一次全屏拷贝 + 离屏 RT + 7 次分色采样」降到
+    /// 「主趟里多一个四边形」。
+    ///
+    /// # 参数
+    ///
+    /// - `amount`：边缘处形状被推开的最大距离（**像素**）。
+    /// - `bezel`：位移只作用在**靠边**的一条带上的宽度（像素）；带内用
+    ///   平滑过渡，形状内部**一点不动**（内部的位移对实心图形没有意义，
+    ///   只会把边推歪）。
+    ///
+    /// # 与 [`Filter::Refraction`] 的关系
+    ///
+    /// **不是替代，是取舍**：物理折射把**背景**掰弯，看得见「后面有什么」；
+    /// 像素偏移把**形状自己的边**掰弯，看得见「这是一块有厚度的玻璃」。
+    /// 后者便宜两个数量级，代价是**背景不再被折射**。
+    ///
+    /// 真实的液态玻璃那条路**完整保留**（[`Filter::Refraction`] +
+    /// [`Material::GlassRefract`]），要就用它。
+    PixelOffset {
+        /// 边缘位移的幅度（像素）。
+        amount: f32,
+        /// 位移作用带的宽度（像素）。
+        bezel: f32,
+    },
     /// 折射（"液态玻璃"）：把元素**背后**的画面按边缘法线推开再显示。
     ///
     /// # 与 [`Filter::Blur`] 的根本区别
@@ -271,6 +320,13 @@ impl Filter {
             // 全屏目标副本（或它的模糊产物），外扩只撑大 RT、解决不了任何问题。
             Filter::Lens { .. } => Outset::default(),
             Filter::BackdropBlur { .. } => Outset::default(),
+            // 像素偏移玻璃也**不外扩** —— 它的位移是**解析**的（位移形状自己的
+            // 边），不是采样来的，所以不需要多一圈 RT 来装位移后的内容。
+            // ⚠ 但位移本身会把边**推出去** `amount` 像素 ⇒ 几何必须留出那条
+            // 余量，否则被推出去的边会被裁掉（症状是「玻璃的角被削平」）。
+            // 那条余量由**样式表侧的尺寸**负责，不在滤镜的外扩里 ——
+            // 因为外扩会同时把**离屏矩形**撑大，而这条路径压根不开离屏。
+            Filter::PixelOffset { .. } => Outset::default(),
         }
     }
 
@@ -330,6 +386,12 @@ impl Filter {
             } => !(param_active(*refraction_height) && param_active(*refraction_amount)),
             // 背景模糊在 σ ≤ 0 时恒等（与 [`Filter::Blur`] 同判据）。
             Filter::BackdropBlur { sigma } => blur_radius(*sigma) <= 0.0,
+            // 像素偏移玻璃：`amount = 0` ⇒ 形状一点都不被推 ⇒ 恒等。
+            //
+            // ⚠ `bezel` **不参与**这条判据 —— 它只决定「位移作用带有多宽」，
+            // 带宽为 0 时位移落在一条零宽的线上 ⇒ 效果为零，但那是**参数写错**，
+            // 不是「这条链不生效」⇒ 判成非恒等（保守：宁可画一趟，不要静默不动）。
+            Filter::PixelOffset { amount, .. } => !param_active(*amount),
         }
     }
 }
@@ -524,6 +586,29 @@ impl FilterChain {
     /// `AutoLayerForImageFilter` 就只在 `getImageFilter()` 非空时才进）。
     pub fn is_identity(&self) -> bool {
         self.filters.iter().all(Filter::is_identity)
+    }
+
+    /// 这条链是不是**「SVG 式像素偏移玻璃」**（一条 [`Filter::PixelOffset`]）。
+    ///
+    /// # 为什么需要单独认出来
+    ///
+    /// 像素偏移玻璃**不开离屏 pass**：它的位移是**解析**的（掰形状自己的边），
+    /// 不采样任何背景 ⇒ 没有离屏 RT，也没有全屏目标副本。
+    ///
+    /// ⇒ 回放方（`zephyra-fx` 的图元展开）看到它就要**改画法**：把这条命令
+    /// 当成一个带玻璃参数的四边形画在**主趟**里，而不是交给离屏管线。
+    ///
+    /// # 为什么要求链**恰好**只有它
+    ///
+    /// 链里混了别的滤镜（模糊 / 投影 / 折射）时，那些要离屏 ⇒ 整条链都得
+    /// 走离屏 ⇒ 这时就不能再用解析画法（否则别的滤镜就丢了）。
+    ///
+    /// ⇒ 判据是「链长 1 且那一条是 `PixelOffset`」，多一条都不算。
+    pub fn pixel_offset(&self) -> Option<(f32, f32)> {
+        match self.filters.as_slice() {
+            [Filter::PixelOffset { amount, bezel }] => Some((*amount, *bezel)),
+            _ => None,
+        }
     }
 
     /// 整条链要求的外扩（逐边最大值）。
@@ -750,8 +835,28 @@ pub enum Material {
     Solid,
     /// 磨砂玻璃：把元素**背后**的画面高斯模糊后透出（σ 见 [`MaterialParams::amount`]）。
     Frosted,
-    /// 液态玻璃：把元素**背后**的画面按斯涅尔折射弯曲后透出（参数见 [`MaterialParams`]）。
+    /// **玻璃**（便宜版）：SVG 式像素偏移 —— 形状的边被推开，边上有一道高光。
+    ///
+    /// # 为什么它是默认的玻璃
+    ///
+    /// 「液态玻璃」那条路（[`Material::GlassRefract`]）要读元素**背后**的画面，
+    /// 而那要求一份**全屏**的目标副本 —— MSAA 开着时那是一次**整幅解析**
+    /// （D3D12 没有「按区解析」），**每个**带滤镜的元素都要拷一次。
+    ///
+    /// 实测（gallery 1400×800 / Intel UHD 630 / D3D12）：材质页一帧 7 个带滤镜的
+    /// 元素 ⇒ **玻璃税 8.4 ms/帧**（占那一帧 GPU 开销的 74%）。
+    ///
+    /// ⇒ 本变体把整块玻璃变成主趟里的**一个四边形**（位移是**解析**的，
+    /// 不采样背景）⇒ 玻璃税从 8.4 ms 降到 **~0**。
+    ///
+    /// 代价说清楚：**背景不再被折射**（像素偏移掰的是**形状自己的边**，
+    /// 不是背后的画面）。要真实液态玻璃就用 [`Material::GlassRefract`]。
     Glass,
+    /// **液态玻璃**（真实折射）：把元素**背后**的画面按斯涅尔折射弯曲后透出。
+    ///
+    /// 这条路**完整保留**，但它贵：每个带滤镜的元素都要一次全屏目标副本。
+    /// 参数见 [`MaterialParams`]。
+    GlassRefract,
 }
 
 impl Material {
@@ -765,6 +870,10 @@ impl Material {
     pub const GLASS_DISPERSION: f32 = 0.0;
     /// 液态玻璃的**默认折射率**。
     pub const GLASS_IOR: f32 = 1.5;
+    /// 像素偏移玻璃的**默认位移幅度**（像素）。
+    pub const GLASS_OFFSET_AMOUNT: f32 = 6.0;
+    /// 像素偏移玻璃的**默认作用带宽度**（像素）。
+    pub const GLASS_OFFSET_BEZEL: f32 = 14.0;
 
     /// 默认材质 = 纯色。
     pub const fn solid() -> Self {
@@ -779,6 +888,11 @@ impl Material {
     /// 液态玻璃（参数由 [`MaterialParams`] 覆盖）。
     pub const fn glass() -> Self {
         Material::Glass
+    }
+
+    /// 真实液态玻璃（斯涅尔折射那条路）。
+    pub const fn glass_refract() -> Self {
+        Material::GlassRefract
     }
 
     /// 本材质用**默认参数**展开成的滤镜链（等价 `filter_with(&MaterialParams::default())`）。
@@ -800,7 +914,14 @@ impl Material {
             Material::Frosted => FilterChain::single(Filter::BackdropBlur {
                 sigma: params.amount.unwrap_or(Self::FROSTED_SIGMA),
             }),
-            Material::Glass => FilterChain::single(Filter::Refraction {
+            // 玻璃（默认）= **SVG 式像素偏移**：形状的边被推开 + 边缘高光。
+            // 不采样背景 ⇒ 不开离屏 pass ⇒ 不拷全屏目标副本 ⇒ 玻璃几乎不花钱。
+            Material::Glass => FilterChain::single(Filter::PixelOffset {
+                amount: params.amount.unwrap_or(Self::GLASS_OFFSET_AMOUNT),
+                bezel: params.bezel.unwrap_or(Self::GLASS_OFFSET_BEZEL),
+            }),
+            // 真实液态玻璃：保留，但贵（每个元素一次全屏目标副本）。
+            Material::GlassRefract => FilterChain::single(Filter::Refraction {
                 strength: params.amount.unwrap_or(Self::GLASS_STRENGTH),
                 bezel: params.bezel.unwrap_or(Self::GLASS_BEZEL),
                 dispersion: params.dispersion.unwrap_or(Self::GLASS_DISPERSION),
@@ -858,5 +979,5 @@ impl MaterialParams {
 }
 
 #[cfg(test)]
-#[path = "tests/filter_tests.rs"]
+#[path = "../tests/unit/filter_tests.rs"]
 mod tests;

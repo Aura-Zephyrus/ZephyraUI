@@ -52,7 +52,7 @@ use zephyra_core::diff::DiffStats;
 use zephyra_core::element::Element;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
 use zephyra_core::id::NodeTag;
-use zephyra_core::input::{PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents};
+use zephyra_core::input::{PointerPhase, RoutedEvent, RoutedEvents};
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_core::theme::Theme;
@@ -186,6 +186,11 @@ pub struct HostWindow<V: View> {
     ///
     /// 与 D3D12 / Vulkan 宿主共用 `zephyra-winit-input` 里的同一份实现。
     translator: zephyra_winit_input::Translator,
+    /// winit 指针事件 → core 指针事件的翻译器（**含单调时钟**）。
+    ///
+    /// ⚠ 触控这条路**必须**有它：`winit` 的 `Touch` 事件不带时间戳，而静态
+    /// 手势（轻点 / 双击 / 长按）是计时的。
+    pointer_translator: zephyra_winit_input::PointerTranslator,
     /// 焦点状态机：Tab 移动、点击设焦点、失焦清空。跨帧持有。
     focus: zephyra_core::input::FocusState,
     /// 键盘激活状态机：焦点落在 ACTIVATABLE 节点上时 Space/Enter 闩住 pressed。
@@ -193,6 +198,16 @@ pub struct HostWindow<V: View> {
     activation: zephyra_core::input::ActivationState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     pending_pointer_events: Vec<zephyra_fx::PointerInput>,
+    /// 待发的**静态手势**（轻点 / 双击 / 长按）。
+    pending_gestures: Vec<zephyra_fx::GestureEvent>,
+    /// 最近一次**输入事件**到达的时刻（测「输入 → 帧就绪」的延迟）。
+    input_at: Option<std::time::Instant>,
+    /// 上一帧测到的「输入 → 帧就绪」耗时（微秒）。
+    input_latency_us: Option<u64>,
+    /// 待发的**操作增量**（多指平移 / 缩放 / 旋转 + 速度）。
+    pending_manipulations: Vec<zephyra_core::input::ManipulationDelta>,
+    /// 操作结束时的平移速度（px/秒）—— **惯性的初值**。
+    pending_inertia: Option<(f32, f32)>,
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
@@ -214,7 +229,11 @@ pub struct HostWindow<V: View> {
     /// 任何端口，不占一个字节缓冲。见 `zephyra_fx::bridge` 的模块文档。
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
-    last_stats: String,
+    /// 最近一帧的统计（`stats` 命令的答案）。结构体而不是文本：文本与 JSON
+    /// 两种形态从同一份数据出。
+    last_stats: zephyra_fx::bridge::FrameStats,
+    /// **渲染过**的帧数（`wait_frames` 按它算）。
+    rendered_frames: u64,
     resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
     profiler: zephyra_fx::bridge::PerformanceProfiler,
     /// 无障碍（UIA）接线。
@@ -381,16 +400,23 @@ impl<V: View> HostWindow<V> {
             pointer_pos: (0.0, 0.0),
             pending_text_events: Vec::new(),
             translator: zephyra_winit_input::Translator::new(),
+            pointer_translator: zephyra_winit_input::PointerTranslator::new(),
             focus: zephyra_core::input::FocusState::new(),
             activation: zephyra_core::input::ActivationState::new(),
             pending_scroll: None,
             pending_pointer_events: Vec::new(),
+            pending_gestures: Vec::new(),
+            input_at: None,
+            input_latency_us: None,
+            pending_manipulations: Vec::new(),
+            pending_inertia: None,
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             textures: TextureTable::new(),
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
-            last_stats: String::new(),
+            last_stats: zephyra_fx::bridge::FrameStats::default(),
+            rendered_frames: 0,
             resource_telemetry: None,
             profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
             uia: None,
@@ -649,11 +675,16 @@ impl<V: View> HostWindow<V> {
         // `Present` 之后后缓冲内容未定义。不画就 present 会把未定义的内容推上屏。
         // 什么都不做才是对的 —— 合成器继续显示上一帧。
         let render_started = frame_started.map(|_| std::time::Instant::now());
-        let report = if redrawn || capture.is_some() {
+        let painted = redrawn || capture.is_some();
+        let report = if painted {
             self.acquire_and_render_inner(true, Damage::Full, capture)
         } else {
             RenderReport::default()
         };
+        if painted {
+            // 渲染过的帧数（`wait_frames` 按它算）——本后端每帧都是整帧。
+            self.rendered_frames += 1;
+        }
         let render_submit_us = render_started
             .map(|started| started.elapsed().as_micros() as u64)
             .unwrap_or_default();
@@ -669,22 +700,59 @@ impl<V: View> HostWindow<V> {
 
         // 桥的 `stats` 答案在这里刷新——`Frame` 的消费者（trace 打印）与本字段
         // 同源同帧，不会出现「stats 落后一帧」。
-        self.last_stats = format!(
-            "quads={} skipped={} dirty={} needs_layout={} redrawn={} hovered={}",
-            report.quads,
-            report.skipped,
-            stats.dirtied,
-            stats.needs_layout,
-            redrawn,
-            self.hovered().unwrap_or_else(|| "-".into()),
-        );
+        //
+        // ⚠ `damage` 也在里面：本后端**每帧整帧**（D3D11 路径没有持久 MSAA
+        // 目标，脏区外的上一帧内容并不保留），所以这里恒为 `Full`。
+        // D3D12 侧可能是局部矩形 —— 那一侧的差别就是「脏区外的内容还在不在」。
+        // 「输入 → 帧就绪」的耗时（测应用这一段，不含 DWM 合成）。
+        self.input_latency_us = self.input_at.map(|at| at.elapsed().as_micros() as u64);
+        self.input_at = None;
 
-        if let Some(started) = frame_started {
-            self.profiler.record(zephyra_fx::bridge::FrameTiming {
-                update_us,
-                render_submit_us,
-                total_us: started.elapsed().as_micros() as u64,
-            });
+        let new_stats = zephyra_fx::bridge::FrameStats {
+            quads: report.quads,
+            skipped: report.skipped,
+            dirtied: stats.dirtied,
+            needs_layout: stats.needs_layout,
+            redrawn,
+            hovered: self.hovered(),
+            damage: Some(zephyra_core::frame::Damage::Full),
+            // 分段耗时：core 侧量的（对账 / 样式 / 脏区扫描 / 布局 / 绘制）。
+            // 「这一帧慢在哪」从此是**读出来的**，不用改代码加临时日志。
+            stages: Some(self.cache.timings()),
+            // 已渲染帧数：客户端靠它算 fps（两次采样相减 / 时间差）。
+            frames: self.rendered_frames,
+            // 「输入 → 帧就绪」的耗时（本后端每帧都画，所以这个数一直有）。
+            input_latency_us: self.input_latency_us,
+            render_submit_us: None,
+            // 离屏趟数 = 这一帧 GPU 干了多少活的**主指标**（一趟 ≈ 四趟全屏光栅化）。
+            offscreen_passes: report.offscreen_passes,
+            backdrop_blur_passes: report.backdrop_blur_passes,
+            lens_passes: report.lens_passes,
+            refraction_passes: report.refraction_passes,
+        };
+        // ⚠ **跳过的帧不覆盖「上一次画出来的东西」**（同 d3d12 侧，
+        // 规则见 `zephyra_fx::bridge::stats_after_skipped`）。
+        self.last_stats = if painted {
+            new_stats
+        } else {
+            zephyra_fx::bridge::stats_after_skipped(&self.last_stats, &new_stats)
+        };
+
+        // ⚠ **只记真的重画了的帧** —— 同 `zephyra-winit-d3d12` 的理由：
+        // 不记「跑过」的帧，否则 fps 会被空转的 tick 撑成假数字。
+        //
+        // 判据用 `painted`（`redrawn || capture.is_some()`）：截图也算
+        // 一次真的重画。
+        if painted {
+            if let Some(started) = frame_started {
+                self.profiler.record(zephyra_fx::bridge::FrameTiming {
+                    update_us,
+                    render_submit_us,
+                    total_us: started.elapsed().as_micros() as u64,
+                    // core 侧的分段：于是性能报告能说清「这一帧的 300 µs 花在哪」。
+                    stages: Some(self.cache.timings()),
+                });
+            }
         }
 
         Frame {
@@ -697,6 +765,15 @@ impl<V: View> HostWindow<V> {
     }
 
     fn sync_input(&mut self) {
+        // 长按是**时钟驱动**的：手指不动时没有任何输入事件，所以只能每帧查一次。
+        //
+        // 官方指南把长按列为静态手势之一（并明确它是「计时交互」的正当用例）。
+        // 没有这一行，长按就永远不会触发 —— 而长按恰恰是「手指一动不动」的场景。
+        if let Some((kind, target)) = self.router.tick(self.pointer_translator.now_ms()) {
+            self.pending_gestures
+                .push(zephyra_fx::GestureEvent { kind, target });
+            self.dirty = true;
+        }
         let size = self.size();
         let now = std::time::Instant::now();
         let dt_ms = self
@@ -704,6 +781,9 @@ impl<V: View> HostWindow<V> {
             .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
             .unwrap_or(0.0);
         self.last_frame_at = Some(now);
+        // ⚠ 这一批指针事件里有没有**取消**（系统抢走了手势）。
+        // 应用要靠它**不**把「按下 → 松开」当成点击 —— 用户的手指还在屏幕上。
+        let cancelled = zephyra_fx::has_cancelled(&self.pending_pointer_events);
         self.view.on_input(&InputState {
             hovered: self.router.hovered().cloned(),
             // 键盘激活复用指针的 pressed 通道：指针优先，键盘闩作后备。于是
@@ -714,6 +794,22 @@ impl<V: View> HostWindow<V> {
                 .pressed()
                 .or_else(|| self.activation.held())
                 .cloned(),
+            // **全部**按下态（多指各按一个控件时长度 > 1）。
+            //
+            // ⚠ 键盘激活（Space/Enter）也要在**里面**：`pressed` 那一栏是
+            // 「指针的按下态，否则是键盘激活」，这里必须**同款** ——
+            // 否则「按 key 找自己」那条路在键盘激活时找不到自己
+            // （症状：Space 激活的按钮画不出按下态）。
+            pressed_keys: {
+                let mut keys: Vec<zephyra_core::id::ElementKey> =
+                    self.router.pressed_keys().cloned().collect();
+                if keys.is_empty() {
+                    if let Some(held) = self.activation.held() {
+                        keys.push(held.clone());
+                    }
+                }
+                keys
+            },
             // 视觉焦点 = 焦点环可见时才报告（鼠标点击设焦点但不画环，见
             // `FocusState::is_visible`）。激活 / 无障碍另走 `self.focus.focused()`。
             focused: if self.focus.is_visible() {
@@ -725,6 +821,10 @@ impl<V: View> HostWindow<V> {
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
             pointer_events: std::mem::take(&mut self.pending_pointer_events),
+            cancelled,
+            gestures: std::mem::take(&mut self.pending_gestures),
+            manipulations: std::mem::take(&mut self.pending_manipulations),
+            inertia: self.pending_inertia.take(),
             viewport: (size.0 as f32, size.1 as f32),
             scale: self.scale_factor(),
             dt_ms,
@@ -828,14 +928,25 @@ impl<V: View> HostWindow<V> {
         report
     }
 
+    /// 记下「输入刚刚到达」。
+    ///
+    /// 用来测「输入 → 帧就绪」的延迟。
+    fn mark_input(&mut self) {
+        self.input_at = Some(std::time::Instant::now());
+    }
+
     /// 处理一次指针移动：命中测试 → 路由 → 是否需要重绘。
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
-        let id = *self.pointer.get_or_insert(0);
+        self.mark_input();
+        self.pointer.get_or_insert(0);
         self.pointer_pos = (x, y);
+        let ev = self.pointer_translator.mouse_move(x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
             x,
             y,
             phase: zephyra_fx::PointerInputPhase::Move,
+            source: ev.source,
         });
         let Some(node) = self.cache.node() else {
             return false;
@@ -843,55 +954,41 @@ impl<V: View> HostWindow<V> {
         let theme = self.theme;
         let before = self.router.revision();
         let mut out = RoutedEvents::new();
-        self.router.on_pointer(
-            node,
-            PointerEvent {
-                id,
-                x,
-                y,
-                phase: PointerPhase::Move,
-                source: PointerSource::Mouse,
-            },
-            Context::new(theme),
-            &mut out,
-        );
+        self.router
+            .on_pointer(node, ev, Context::new(theme), &mut out);
         let changed = self.router.revision() != before;
         if changed {
             self.dirty = true;
         }
+        self.collect_routed(&out);
         changed
     }
 
     /// 处理一次按下：返回是否产生了路由事件。
     pub fn on_pointer_down(&mut self) -> bool {
-        let id = *self.pointer.get_or_insert(0);
+        self.mark_input();
+        self.pointer.get_or_insert(0);
+        let (x, y) = self.pointer_pos;
+        let ev = self.pointer_translator.mouse_button(true, x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
-            x: self.pointer_pos.0,
-            y: self.pointer_pos.1,
+            id: ev.id,
+            x,
+            y,
             phase: zephyra_fx::PointerInputPhase::Down,
+            source: ev.source,
         });
         let Some(node) = self.cache.node() else {
             return false;
         };
-        let (x, y) = self.pointer_pos;
         let theme = self.theme;
         let mut out = RoutedEvents::new();
-        self.router.on_pointer(
-            node,
-            PointerEvent {
-                id,
-                x,
-                y,
-                phase: PointerPhase::Down,
-                source: PointerSource::Mouse,
-            },
-            Context::new(theme),
-            &mut out,
-        );
+        self.router
+            .on_pointer(node, ev, Context::new(theme), &mut out);
         let any = !out.is_empty();
         if any {
             self.dirty = true;
         }
+        self.collect_routed(&out);
         any
     }
 
@@ -901,30 +998,24 @@ impl<V: View> HostWindow<V> {
     /// （`inject_click`）要走**同一条**路径——合成事件与物理事件分叉的话，
     /// 「AI 点了但没反应」这类问题就永远查不清是哪条路的锅。
     pub fn on_pointer_up(&mut self) -> bool {
-        let id = self.pointer.unwrap_or(0);
+        self.mark_input();
+        self.pointer.unwrap_or(0);
+        let (x, y) = self.pointer_pos;
+        let ev = self.pointer_translator.mouse_button(false, x, y);
         self.pending_pointer_events.push(zephyra_fx::PointerInput {
-            x: self.pointer_pos.0,
-            y: self.pointer_pos.1,
+            id: ev.id,
+            x,
+            y,
             phase: zephyra_fx::PointerInputPhase::Up,
+            source: ev.source,
         });
         let Some(node) = self.cache.node() else {
             return false;
         };
-        let (x, y) = self.pointer_pos;
         let theme = self.theme;
         let mut out = RoutedEvents::new();
-        self.router.on_pointer(
-            node,
-            PointerEvent {
-                id,
-                x,
-                y,
-                phase: PointerPhase::Up,
-                source: PointerSource::Mouse,
-            },
-            Context::new(theme),
-            &mut out,
-        );
+        self.router
+            .on_pointer(node, ev, Context::new(theme), &mut out);
         // 点击设焦点：`RoutedEvent::Click` 是「按下 + 抬起在同一节点」。
         // 焦点设给被点到的那个 key —— 文本框点进去获得键盘焦点。
         let click_target: Option<zephyra_core::id::ElementKey> = out.iter().find_map(|e| match e {
@@ -937,7 +1028,79 @@ impl<V: View> HostWindow<V> {
                 self.dirty = true;
             }
         }
+        self.collect_routed(&out);
         !out.is_empty()
+    }
+
+    /// 处理一次**触摸**事件（多点触控的主入口）。
+    ///
+    /// # 为什么这条路径以前是**空的**
+    ///
+    /// `winit` 在 Windows 上会 `RegisterTouchWindow` —— 那会**关掉**系统的
+    /// 「触摸提升为鼠标」。于是触摸事件既不是触摸也不是鼠标，被整个丢掉：
+    /// **触控屏上点不动任何东西**。
+    ///
+    /// # 触控与鼠标的差别（都要在这一层体现）
+    ///
+    /// - **多指并存**：每根手指一个 id；
+    /// - **双状态**：触控**不产生悬停**（由 core 的路由器判）；
+    /// - **取消 ≠ 抬起**：系统接管手势时收到的是取消（core 清按下态、
+    ///   不提交点击）。
+    pub fn on_touch(&mut self, phase: winit::event::TouchPhase, id: u64, x: f32, y: f32) -> bool {
+        self.mark_input();
+        let ev = self.pointer_translator.touch(phase, id, x, y);
+        let fx_phase = match ev.phase {
+            PointerPhase::Down => zephyra_fx::PointerInputPhase::Down,
+            PointerPhase::Move => zephyra_fx::PointerInputPhase::Move,
+            PointerPhase::Up => zephyra_fx::PointerInputPhase::Up,
+            PointerPhase::Cancel => zephyra_fx::PointerInputPhase::Cancel,
+        };
+        self.pending_pointer_events.push(zephyra_fx::PointerInput {
+            id: ev.id,
+            x,
+            y,
+            phase: fx_phase,
+            source: ev.source,
+        });
+        // 触控也要更新「指针当前位置」—— IME 插入点用它当代理。
+        self.pointer_pos = (x, y);
+        let Some(node) = self.cache.node() else {
+            return false;
+        };
+        let theme = self.theme;
+        let before = self.router.revision();
+        let mut out = RoutedEvents::new();
+        self.router
+            .on_pointer(node, ev, Context::new(theme), &mut out);
+        let changed = self.router.revision() != before;
+        if changed {
+            self.dirty = true;
+        }
+        self.collect_routed(&out);
+        changed
+    }
+
+    /// 把路由结果里的**静态手势 / 操作增量**收进待发缓冲。
+    ///
+    /// 它们是「给应用的增量信息」，不是「宿主要据此决定重绘」的东西 ——
+    /// 所以不进 `revision`。
+    fn collect_routed(&mut self, out: &RoutedEvents) {
+        for ev in out.iter() {
+            match ev {
+                RoutedEvent::Static(kind, target) => {
+                    self.pending_gestures.push(zephyra_fx::GestureEvent {
+                        kind: *kind,
+                        target: target.clone(),
+                    });
+                }
+                RoutedEvent::Manipulation(delta) => self.pending_manipulations.push(*delta),
+                RoutedEvent::ManipulationEnded {
+                    velocity_x,
+                    velocity_y,
+                } => self.pending_inertia = Some((*velocity_x, *velocity_y)),
+                _ => {}
+            }
+        }
     }
 
     /// 按路径取节点（子下标链）——桥的 `props` 命令用。
@@ -1098,12 +1261,49 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
             .map(zephyra_fx::bridge::props_dump_of)
     }
 
-    fn stats(&self) -> String {
-        if self.last_stats.is_empty() {
-            "(还没有帧)".into()
-        } else {
-            self.last_stats.clone()
-        }
+    fn stats(&self) -> zephyra_fx::bridge::FrameStats {
+        self.last_stats.clone()
+    }
+
+    /// 布局树根节点：桥侧按 key / path 定位元素靠它。
+    fn root(&self) -> Option<&zephyra_core::node::Node> {
+        self.cache.node()
+    }
+
+    /// 渲染过的帧数（`wait_frames` 按它算）。
+    fn rendered_frames(&self) -> u64 {
+        self.rendered_frames
+    }
+
+    /// 改窗口客户区尺寸（**物理**像素）。
+    ///
+    /// AI 用它验「窄窗口下这个布局还成立吗」—— 读样式表猜不出来（弹性布局、
+    /// 换行、裁切都得真排一遍）。
+    ///
+    /// # 为什么是**物理**像素
+    ///
+    /// 桥的坐标系**全是**物理像素（`viewport` 明说 physical-pixels、树的坐标是
+    /// 物理、点击坐标是物理）。这里跟着走才不会让 AI 在两套单位之间换算。
+    ///
+    /// ⚠ winit 的 `request_inner_size` 收的是**逻辑**像素，所以要按缩放因子
+    /// 换算回去（125% 的屏幕上 `resize 1000 750` ⇒ 逻辑 800×600 ⇒ 物理
+    /// 1000×750）。
+    ///
+    /// ⚠ winit 0.30 的 Windows 后端**永远**返回 `None`（源码里是无条件
+    /// `None`，不是「失败」）。所以**不能**拿它的返回值当成败判据 ——
+    /// 早期版本据此报错，而窗口其实**已经改好了**（视口确实变了）。
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        use winit::dpi::LogicalSize;
+        let scale = self.window.scale_factor() as f32;
+        let logical_w = ((width as f32 / scale).round() as u32).max(1);
+        let logical_h = ((height as f32 / scale).round() as u32).max(1);
+        // ⚠ winit 0.30 的 Windows 后端**永远**返回 `None`（源码里是无条件 `None`，
+        // 不是「失败」）。所以返回值**没有判据意义** —— 早期版本据此报错，
+        // 而窗口其实**已经改好了**（视口确实变了）。
+        let _ = self
+            .window
+            .request_inner_size(LogicalSize::new(logical_w, logical_h));
+        Ok(())
     }
 
     fn resources(&mut self) -> Result<String, String> {
@@ -1169,6 +1369,14 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         self.dirty = true;
     }
 
+    fn inject_text(&mut self, text: &str) {
+        // 逐字符**插入**事件（不是按键）：见 `zephyra_winit_input::injected_text_events`
+        // 的说明——多发键边沿会让某些控件把每次输入当成一次提交。
+        self.pending_text_events
+            .extend(zephyra_winit_input::injected_text_events(text));
+        self.dirty = true;
+    }
+
     fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32) {
         self.on_cursor_moved(x, y);
         self.pending_scroll = Some(zephyra_fx::ScrollInput {
@@ -1180,9 +1388,38 @@ impl<V: View> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
         self.dirty = true;
     }
 
-    fn screenshot(&mut self) -> Option<Vec<u8>> {
+    /// 注入一次**触摸**（多点触控的主入口）。
+    ///
+    /// # 为什么走**同一条**路
+    ///
+    /// 真实触摸经 `WindowEvent::Touch` → [`Self::on_touch`]，注入的触摸也走
+    /// [`Self::on_touch`] —— 两条路分叉的话，「注入能过、真机不行」这类问题
+    /// 就永远查不清是哪条路的锅。
+    fn inject_touch(
+        &mut self,
+        phase: zephyra_fx::bridge::TouchPhase,
+        id: u64,
+        x: f32,
+        y: f32,
+    ) -> Result<(), String> {
+        use winit::event::TouchPhase as WPhase;
+        let phase = match phase {
+            zephyra_fx::bridge::TouchPhase::Down => WPhase::Started,
+            zephyra_fx::bridge::TouchPhase::Move => WPhase::Moved,
+            zephyra_fx::bridge::TouchPhase::Up => WPhase::Ended,
+            zephyra_fx::bridge::TouchPhase::Cancel => WPhase::Cancelled,
+        };
+        self.on_touch(phase, id, x, y);
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn screenshot(&mut self, _opts: zephyra_fx::bridge::ShotOptions) -> Option<Vec<u8>> {
         // `frame_inner(Some)` 强制渲一帧并在 present 前读回（见它的文档）——
         // 不依赖「界面正好在动」。读回失败（空缓冲）返回 None，桥回 ERR。
+        //
+        // ⚠ 本后端**每帧整帧**（没有持久 MSAA 目标，脏区外的上一帧内容并不保留），
+        // 所以 `repaint` 在这里是空操作：截出来的本来就是整帧。
         let mut buf = Vec::new();
         let _ = self.frame_inner(Some(&mut buf));
         if buf.is_empty() {
@@ -1215,6 +1452,7 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 self.dirty = true;
             }
             WindowEvent::CursorMoved { position, .. } => {
+                self.mark_input();
                 // `revision` 只在 hover/pressed **状态切换**时递增——拖拽中 hover 不变，
                 // `on_cursor_moved` 返回 false。不标脏，移动事件堆在队列里没人消费，
                 // 视图永远看不到 Move（慢速拖拽「卡住」）。
@@ -1239,6 +1477,18 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 if self.on_pointer_up() {
                     self.dirty = true;
                 }
+            }
+            WindowEvent::Touch(touch) => {
+                // ⚠ 触控**必须**接：winit 在 Windows 上 `RegisterTouchWindow`，
+                // 那会关掉「触摸提升为鼠标」—— 不接的话触摸事件被整个丢掉，
+                // 触控屏上点不动任何东西。
+                let _ = self.on_touch(
+                    touch.phase,
+                    touch.id,
+                    touch.location.x as f32,
+                    touch.location.y as f32,
+                );
+                self.dirty = true;
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.translator.on_modifiers(m.state());

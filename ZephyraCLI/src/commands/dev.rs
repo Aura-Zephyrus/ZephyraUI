@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::{app_config_path, cargo_path, CliError, Write};
+use super::{app_config_path, cargo_path, spawn_pumped, CliError, PumpedChild, Write};
 use crate::args::Args;
 use crate::ExitCode;
 
@@ -68,13 +68,17 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     let watch = !a.has("no-watch");
     let mut seen = snapshot(&style_dir, config_path.as_deref());
 
-    let mut child = match spawn_cargo(&cargo, &cmd, config_path.as_deref()) {
+    // `--log <path>`：把子进程的输出**另外**落一份（终端照旧全量显示）。
+    // 落盘那份是为了「滚过去了 / 崩了 / 当时没看屏幕」之后还能回查。
+    let log = a.option("log").map(PathBuf::from);
+    if let Some(path) = &log {
+        w.err_line(&format!("[log] {}", path.display()));
+    }
+
+    let mut child = match spawn_cargo(&cargo, &cmd, config_path.as_deref(), log.as_deref()) {
         Ok(c) => c,
         Err(e) => {
-            return Err(CliError::missing(format!(
-                "cannot run {}: {e}",
-                cargo.display()
-            )))
+            return Err(CliError::missing(e.message));
         }
     };
 
@@ -112,12 +116,11 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
             let now = snapshot(&style_dir, config_path.as_deref());
             if now != seen {
                 w.err_line("[dev] watched input changed, restarting");
-                let _ = child.kill();
-                let _ = child.wait();
-                child = match spawn_cargo(&cargo, &cmd, config_path.as_deref()) {
+                child.stop();
+                child = match spawn_cargo(&cargo, &cmd, config_path.as_deref(), log.as_deref()) {
                     Ok(c) => c,
                     Err(e) => {
-                        return Err(CliError::missing(format!("cannot restart: {e}")));
+                        return Err(CliError::missing(format!("cannot restart: {}", e.message)));
                     }
                 };
                 // ⚠ 重启后**继续**盯，而不是退出循环 —— 上一版在这里 return，
@@ -130,20 +133,64 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     }
 }
 
+/// dev 起的子进程。
+///
+/// 两种形态：**没有** `--log` 时直接继承输出（零线程、零延迟）；**有** `--log`
+/// 时走管道转发，顺带落一份盘。
+enum DevChild {
+    Plain(std::process::Child),
+    Pumped(PumpedChild),
+}
+
+impl DevChild {
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        match self {
+            DevChild::Plain(c) => c.try_wait(),
+            DevChild::Pumped(c) => c.try_wait(),
+        }
+    }
+
+    /// 杀掉子进程并**收尾**。
+    ///
+    /// ⚠ 转发线程也要 join（`Pumped` 那一支）：不等的话，子进程写完的最后
+    /// 一段（常常正是崩溃那一行）会丢 —— 而那正是要留证据的地方。
+    fn stop(&mut self) {
+        match self {
+            DevChild::Plain(c) => {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            DevChild::Pumped(c) => {
+                c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+}
+
 /// 目录里所有样式表和可选窗口配置的 `路径 -> 修改时刻`。**不含内容**：同一次改动
 /// 多次保存不该触发多次重启，而按内容看会；按修改时刻看，编辑器连续写两遍也只算
 /// 一次真正的变化（间隔会被轮询窗口吸收）。
+/// 起 cargo 子进程。`log` 非空 ⇒ 输出走管道并落盘；否则直接继承。
 fn spawn_cargo(
     cargo: &Path,
     args: &[String],
     config_path: Option<&Path>,
-) -> std::io::Result<std::process::Child> {
+    log: Option<&Path>,
+) -> Result<DevChild, CliError> {
+    if log.is_some() {
+        let child = spawn_pumped(cargo, args, config_path, log)?;
+        return Ok(DevChild::Pumped(child));
+    }
     let mut command = std::process::Command::new(cargo);
     command.args(args);
     if let Some(path) = config_path {
         command.env("ZEPHYRA_APP_CONFIG_PATH", path);
     }
-    command.spawn()
+    let child = command
+        .spawn()
+        .map_err(|e| CliError::missing(format!("cannot run {}: {e}", cargo.display())))?;
+    Ok(DevChild::Plain(child))
 }
 
 fn snapshot(dir: &Path, config_path: Option<&Path>) -> Vec<(PathBuf, SystemTime)> {

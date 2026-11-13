@@ -159,7 +159,7 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         // cargo fmt 自身的问题（装没装 nightly 等）：`?` 传播成退 3，
         // 而不是伪装成 0/1。`--check` 下要排 Rust 时它退 1 —— 与 DSL 那一档
         // 同一形状，所以并进同一个计数，最后统一退 1。
-        let code = spawn_inherit(&cargo, &args, None)?;
+        let code = spawn_inherit(&cargo, &args, None, None)?;
         if code == ExitCode::Failure {
             dirty += 1;
         }

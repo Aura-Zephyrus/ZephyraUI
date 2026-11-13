@@ -214,7 +214,7 @@ pub fn bmp_bytes(px: &PixelRead, encode_srgb: bool) -> Vec<u8> {
 }
 
 #[cfg(test)]
-#[path = "tests/pixels_channel_order_tests.rs"]
+#[path = "../tests/unit/tests/pixels_channel_order_tests.rs"]
 mod channel_order_tests;
 
 /// 线性 [0,1] → sRGB [0,255]。
@@ -234,5 +234,5 @@ pub fn srgb_bytes(c: zephyra_core::core::Color) -> [u8; 3] {
 }
 
 #[cfg(test)]
-#[path = "tests/pixels_tests.rs"]
+#[path = "../tests/unit/tests/pixels_tests.rs"]
 mod tests;

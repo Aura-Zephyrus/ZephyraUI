@@ -38,7 +38,7 @@
 
 ```xml
 <!-- ✗ class 在中间，且后面还跟着属性 -->
-<container key="swatch" class="swatch {fill}" filter="{filter}" blend="{blend}"/>
+<box key="swatch" class="swatch {fill}" filter="{filter}" blend="{blend}"/>
 
 <!-- ✓ 内容 / 结构在前，class 收尾 -->
 <container key="swatch" filter="{filter}" blend="{blend}" class="swatch {fill}"/>

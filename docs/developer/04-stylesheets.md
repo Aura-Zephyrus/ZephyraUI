@@ -8,13 +8,13 @@
 ```css
 /* 注释 */
 
-Container.root {
+box.root {
   width: 100%;
   height: 48px;
   background: #1f1f1f;
 }
 
-Control:disabled {
+control:disabled {
   opacity: 0.4;
 }
 
@@ -27,20 +27,23 @@ Control:disabled {
 
 | 写法 | 匹配 |
 |---|---|
-| `Control` | 按节点类型（`NodeTag`） |
+| `box` / `text` / `image` / `control` | 按裸元素/节点类型（小写词表；与 `.zypui` 裸标签一致） |
 | `.name` | 按分类名。`Element::style("x")` / `.styles([...])` 挂上去的那些 |
 | `A B` | 后代组合：`A` 里的 `B` |
 
-同一节点可以有多个分类名，所以 `Control.danger.primary` 是合法的。
+裸元素与类型选择器统一小写：`.zstyle` 写 `box.window`，`.zypui` 写 `<box>`；组件名仍是 PascalCase。旧的大写类型选择器（`Container`/`Text`/`Image`/`Control`）与旧定位关键字（`position: static|absolute|fixed`）已移除，编译器会给迁移提示。
+
+同一节点可以有多个分类名，所以 `control.danger.primary` 是合法的。
 
 ### 声明
 
 ```css
-Control {
+control {
   background: #1f1f1f;      /* 颜色 */
   width: 100%;              /* 百分比 / px / 数字 */
   text-size: 24;            /* 数字 */
   collapsed: false;         /* 布尔 */
+  /* 定位/布局见 layout-spec.md（position: flow|parent|root + anchor） */
 }
 ```
 
@@ -109,13 +112,13 @@ zephyra fmt --check        # 只报不写，给 CI 用（有要排版的退 1）
 
 ```css
 /* 注释照抄，续行的缩进也照抄 */
-Container.button.accent {
+box.button.accent {
     background: @accent_fill;
     border-width: 1px;
 }
 
 /* 状态规则：只碰 border */
-Container.button.hovered {
+box.button.hovered {
     border-color: @control_border_strong;
 }
 ```

@@ -87,6 +87,27 @@ impl Damage {
     }
 }
 
+impl std::fmt::Display for Damage {
+    /// 短形式：`Full` / `Rect(x,y,w,h)`。
+    ///
+    /// # 为什么要有这个形态
+    ///
+    /// 调试桥的 `stats` 要把「这一帧重画了多大范围」摆出来 —— 残影类缺陷的
+    /// 判据正是「这一帧是整帧还是局部」。而 `Debug` 的
+    /// `Rect(Rect { x: 0.0, y: 0.0, width: 40.0, height: 24.0 })`
+    /// 塞进一行统计里太长，读的人要自己截。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Damage::Full => f.write_str("Full"),
+            Damage::Rect(r) => write!(
+                f,
+                "Rect({:.0},{:.0},{:.0}x{:.0})",
+                r.x, r.y, r.width, r.height
+            ),
+        }
+    }
+}
+
 /// 一帧的结果。
 ///
 /// # 为什么 [`FrameOutcome::Unchanged`] 是独立变体而不是「列表为空」
@@ -108,6 +129,48 @@ pub enum FrameOutcome<'a> {
     },
 }
 
+/// 一帧内各阶段的耗时（微秒）。
+///
+/// # 为什么在 core 里测
+///
+/// 宿主只看得到「整帧多久」，看不到**哪一段**慢。而这几段的成本差着数量级：
+/// 对账是逐节点比属性，样式注入是逐节点查规则表，布局与绘制是递归。
+/// 没有分段就只能靠猜 —— 而本仓的 dev-log 里大半的性能结论都是「猜出来的」。
+///
+/// # 为什么不是「可选开关」
+///
+/// 每段一次 [`std::time::Instant::now`] 在 release 下约 20 ns，五段共约 100 ns ——
+/// 相对一帧 30~80 µs 是 0.1% 量级。而**恒开**有一个好处：任何一次
+/// 「这帧为什么慢了」都能直接读到分段数字，不需要改代码重编。
+///
+/// # 为什么用 `u32` 微秒
+///
+/// 一帧超过 4295 秒才溢出 —— 那不是「一帧」，那是程序挂住了。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StageTimings {
+    /// 声明 → 保留（`diff`）。
+    pub diff_us: u32,
+    /// 样式注入（`Styler::apply`）。
+    pub style_us: u32,
+    /// 脏区扫描（`tree_needs_layout` + `scan`）。
+    pub scan_us: u32,
+    /// 布局（`layout`）。
+    pub layout_us: u32,
+    /// 降级（`paint::render`）。
+    pub paint_us: u32,
+    /// `frame()` 整体（含上面五段之外的部分）。
+    pub total_us: u32,
+}
+
+impl StageTimings {
+    /// 各段之和（不含 `total_us`）。
+    ///
+    /// 用来判断「有没有代码没被计时」—— 差得远就说明计时点之间漏了东西。
+    pub fn sum_us(&self) -> u32 {
+        self.diff_us + self.style_us + self.scan_us + self.layout_us + self.paint_us
+    }
+}
+
 /// 跨帧存活的保留树 + `DisplayList`。
 ///
 /// # 为什么 `DisplayList` 也归它管
@@ -119,32 +182,28 @@ pub enum FrameOutcome<'a> {
 /// 不新增分配。
 // `Node` 不派生 `Debug`（它持 `PropertyStore`，而那里面有用户自定义值，
 // 打印出来没有可读性）。要打印整个缓存用 `node().map(|n| n.tag())`。
+/// 目标名。`RenderFrame` 是主名；`FrameCache` 保留为兼容别名。
 #[derive(Default)]
-pub struct FrameCache {
-    /// 保留树。`None` = 还没建过树（首帧）。
+pub struct RenderFrame {
     node: Option<Node>,
-    /// 本帧的绘制命令。
     list: DisplayList,
-    /// 上次布局用的视口（DIP）。
-    ///
-    /// 尺寸变了就必须重排 —— 视口不属于任何节点的属性，所以 diff **察觉不到**
-    /// 窗口尺寸变化。这是它必须被记下来的唯一原因。
     viewport: (f32, f32),
-    /// 强制下一帧重渲（见 [`Self::invalidate`]）。
     forced: bool,
-    /// 每帧在 diff 之后、布局之前被调用的样式注入点。
-    ///
-    /// ⚠️ 用 `Box<dyn Styler>` 而不是泛型参数：宿主**持有**这个 cache，
-    /// 而它可能要在运行期换样式表（热重载）。泛型会把「换样式表」变成
-    /// 「换掉整个 cache 的类型」，那做不到。
     styler: Option<Box<dyn crate::styler::Styler>>,
-    /// diff 的跨帧复用缓冲。见 [`crate::diff::Scratch`] 的说明。
-    ///
-    /// 没有它时，子节点对账每个父节点每帧要开两个 `Vec`，且每个子节点被搬 3 次。
     diff_scratch: crate::diff::Scratch,
+    /// 脏矩形暂存。**跨帧复用** —— 每帧新建一个 `Vec` 是一次堆分配，
+    /// 而稳态下这一段每帧都跑（脏区扫描不因「没变化」而跳过）。
+    dirty_rects: Vec<Rect>,
+    /// 上一帧的分段耗时。
+    timings: StageTimings,
+    #[cfg(debug_assertions)]
+    debug_paint_oracle: bool,
 }
 
-impl FrameCache {
+/// 兼容别名（P4：主名为 [`RenderFrame`]）。
+pub type FrameCache = RenderFrame;
+
+impl RenderFrame {
     /// 空缓存。首帧 [`Self::frame`] 会建树。
     pub fn new() -> Self {
         Self::default()
@@ -198,16 +257,15 @@ impl FrameCache {
     }
 
     /// 装一个样式注入点（每帧 diff 之后、布局之前调用）。
-    ///
-    /// # 为什么必须立刻 invalidate
-    ///
-    /// 新装上的 styler 还没跑过，所以树上**没有**它那份样式。若这一帧正好是
-    /// 稳态（`Unchanged`），宿主会整帧跳过，那份样式就要等到下一次别的事件
-    /// 才出现 —— 症状是「改了样式表，顿一下才生效」，而那个「顿一下」
-    /// 取决于用户接下来点什么，完全不可预测。
     pub fn set_styler(&mut self, styler: Box<dyn crate::styler::Styler>) {
         self.styler = Some(styler);
         self.invalidate();
+    }
+
+    /// P2b：开启后，`Updated` 帧会与全量重绘 oracle 比较 `DisplayList`（debug only）。
+    #[cfg(debug_assertions)]
+    pub fn set_debug_paint_oracle(&mut self, enabled: bool) {
+        self.debug_paint_oracle = enabled;
     }
 
     /// 推进一帧：声明 → 对账 → （必要时）布局 → 降级。
@@ -224,10 +282,13 @@ impl FrameCache {
         viewport: (f32, f32),
     ) -> FrameOutcome<'_> {
         let first = self.node.is_none();
+        let frame_started = std::time::Instant::now();
+        let mut timings = StageTimings::default();
 
         // ---- 1. 声明 → 保留 ----
         //
         // 首帧走 `Node::from_element` + 一次 `diff`，与今天宿主侧的写法逐字相同。
+        let t0 = std::time::Instant::now();
         let stats = match &mut self.node {
             None => {
                 let mut n = Node::from_element(element);
@@ -237,15 +298,18 @@ impl FrameCache {
             }
             Some(node) => crate::diff::diff_with(node, element, &mut self.diff_scratch),
         };
+        timings.diff_us = t0.elapsed().as_micros() as u32;
 
         // ---- 1.5 应用样式 ----
         //
         // ⚠️ **必须在 diff 之后、布局之前**，这是硬契约：
         // diff 在 tag 变化时整个替换节点，替换会把 `Styled` 层一起丢掉 ——
         // 排在 diff 之前等于白写；排在布局之后，改尺寸的样式要等下一帧。
+        let t0 = std::time::Instant::now();
         if let (Some(styler), Some(node)) = (self.styler.as_mut(), self.node.as_mut()) {
             styler.apply(node);
         }
+        timings.style_us = t0.elapsed().as_micros() as u32;
 
         // ---- 2. 要不要重排 ----
         //
@@ -266,8 +330,11 @@ impl FrameCache {
         // 判据改成直接读树上的脏标记：谁标了 `Dirty::Layout` 就要重排，
         // 不问它是 diff 标的还是 apply 标的。
         let resized = !first && self.viewport != viewport;
-        let mut dirty_rects: Vec<Rect> = Vec::new();
+        // 脏矩形暂存**跨帧复用**（[`Self::dirty_rects`]）：稳态下这一段每帧都跑，
+        // 每帧新建一个 `Vec` 就是一次堆分配。
+        self.dirty_rects.clear();
         let mut force_full = false;
+        let t0 = std::time::Instant::now();
         let (need_layout, some_dirty) = match self.node.as_ref() {
             // 首帧 / 视口变了 ⇒ 一定重排，也就不必再遍历。
             Some(_) if first || resized => (true, true),
@@ -279,7 +346,7 @@ impl FrameCache {
                         node,
                         ctx,
                         crate::visual::VisualState::ROOT,
-                        &mut dirty_rects,
+                        &mut self.dirty_rects,
                         &mut force_full,
                     ) || layout_dirty,
                 )
@@ -287,10 +354,13 @@ impl FrameCache {
             // 树建不起来（`element` 与 `Node::from_element` 抛不出东西，纯防御）。
             None => (true, true),
         };
+        timings.scan_us = t0.elapsed().as_micros() as u32;
         if need_layout {
+            let t0 = std::time::Instant::now();
             if let Some(node) = self.node.as_mut() {
                 crate::layout::layout(node, Rect::new(0.0, 0.0, viewport.0, viewport.1), ctx);
             }
+            timings.layout_us = t0.elapsed().as_micros() as u32;
         }
 
         // ---- 3. 能不能整帧跳过 ----
@@ -305,41 +375,64 @@ impl FrameCache {
 
         if !forced && !some_dirty {
             // 稳态：树没变、列表还是上次那份。宿主可整帧跳过，连 present 都省。
+            //
+            // ⚠ 分段耗时**照样记**：稳态帧同样跑了 diff / 样式 / 脏区扫描三段，
+            // 而那三段正是稳态下的全部成本。不记的话，调试桥读到的永远是
+            // 「上一次真的重画了」的那一帧 —— 排查「静止时为什么还吃 CPU」时
+            // 看到的会是重画帧的数字，答非所问。
+            timings.total_us = frame_started.elapsed().as_micros() as u32;
+            self.timings = timings;
             return FrameOutcome::Unchanged;
         }
 
         // ---- 4. 脏区 ----
         //
         // 收窄只在**确定没东西被移走**时才是对的：脏矩形之外的像素必须已经被
-        // 上一帧画对，否则就会留下残影。所以四种情况一律退让成 `Full`：
+        // 上一帧画对，否则就会留下残影。所以这些情况一律退让成 `Full`：
         //
         // | 情况 | 为什么不能收窄 |
         // |---|---|
+        // | `forced` | 宿主显式要求可靠重画（主题切换 / present 恢复等），即便树上
+        //   只有局部脏节点，清屏色与全局解析上下文也可能已变，必须整帧重来 |
         // | 重排过 | 节点会移动/收缩，**旧**位置必须重画而我们没有旧矩形快照 |
         // | 结构增删/移动 | 被删节点留下的像素没人负责重画 |
-        // | 有脏节点被折叠 | 折叠让它**不再产出命令**，上一帧的命令要抹掉 |
+        // | 有脏节点被折叠/变换移走 | 折叠或绘制变换让旧位置必须重画而我们没有旧矩形快照 |
         //
         // 「重排 → Full」省掉的是整个「布局前给每节点快照绝对矩形」的机制。
         // 代价是窗口内任何重排都退化成整帧 —— 而重排本来就意味着大面积变化，
         // 那时脏矩形也帮不上多少。真正受益的是纯交互帧（hover / 按下 / 改色），
         // 它们不重排。
         let structural = stats.inserted > 0 || stats.removed > 0 || stats.moved > 0;
-        // `force_full`：有脏节点的**绘制变换**（translate / scale）非恒等。
+        // `force_full`：有脏节点的**绘制变换**变过（translate / scale）。
         // 这类节点会「移走」——旧位置的像素得有人清，但我们没有上一帧的旧矩形
         // 快照。不整帧重来就会在旧位置留残影（长按把手续涨到 1.5 时最明显）。
-        let damage = if need_layout || structural || force_full || dirty_rects.is_empty() {
-            Damage::Full
-        } else {
-            Damage::Rect(union(&dirty_rects))
-        };
+        let damage =
+            if forced || need_layout || structural || force_full || self.dirty_rects.is_empty() {
+                Damage::Full
+            } else {
+                Damage::Rect(union(&self.dirty_rects))
+            };
 
         // ---- 5. 降级 + 清脏 ----
         //
         // 顺序不能反：脏标记是 `damage` 的**输入**，清掉了就再也算不出矩形。
+        let t0 = std::time::Instant::now();
         if let Some(node) = self.node.as_mut() {
             crate::paint::render(node, ctx, &mut self.list);
+            #[cfg(debug_assertions)]
+            if self.debug_paint_oracle {
+                let mut oracle = DisplayList::default();
+                crate::paint::render(node, ctx, &mut oracle);
+                debug_assert_eq!(
+                    self.list, oracle,
+                    "P2b paint oracle: DisplayList diverged from full repaint"
+                );
+            }
             clear_dirty(node);
         }
+        timings.paint_us = t0.elapsed().as_micros() as u32;
+        timings.total_us = frame_started.elapsed().as_micros() as u32;
+        self.timings = timings;
         self.viewport = viewport;
 
         FrameOutcome::Updated {
@@ -347,6 +440,17 @@ impl FrameCache {
             stats,
             damage,
         }
+    }
+
+    /// 上一帧的分段耗时。
+    ///
+    /// 宿主与调试桥据此回答「这一帧慢在哪一段」—— 这是**读出来的**，不用猜。
+    ///
+    /// ⚠ 稳态帧（宿主走了 `Unchanged` 分支）只跑了 diff / 样式 / 脏区扫描三段，
+    /// 于是 `layout_us` 与 `paint_us` 是 **0**。这不是「那两段不花钱」，而是
+    /// 「那两段**没跑**」—— 读的人要按「没画 = 没花」理解。
+    pub fn timings(&self) -> StageTimings {
+        self.timings
     }
 }
 
@@ -385,9 +489,15 @@ fn scan(
     if dirty {
         let bounds = crate::visual::damage_bounds(node, ctx, own_translate);
         out.push(bounds);
-        // 绘制变换非恒等的脏节点会「移走」：新位置清得掉，旧位置的像素却没人
+        // 绘制变换**变过**的脏节点会「移走」：新位置清得掉，旧位置的像素却没人
         // 负责清（没有旧矩形快照）=> 只能整帧重来，否则留下把手/投影的残影。
-        if node.translate_x(ctx) != 0.0
+        //
+        // ⚠ 判据是「变过」（`moved`），**不是**「当前变换非恒等」：
+        // 把手从 20px 滑回 0 时，落点那一帧的变换恰好是恒等 —— 按「非恒等」判
+        // 会漏掉它，于是脏区收窄成把手的新矩形，旧位置的把手就留在屏幕上
+        // （两个把手并排）。见 `damage_falls_back_to_full_when_a_dirty_node_returns_to_identity_transform`。
+        if node.moved()
+            || node.translate_x(ctx) != 0.0
             || node.translate_y(ctx) != 0.0
             || node.scale_x(ctx) != 1.0
             || node.scale_y(ctx) != 1.0

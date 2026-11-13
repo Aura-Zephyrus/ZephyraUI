@@ -34,6 +34,7 @@ pub mod expr;
 pub mod instantiate;
 pub mod intern;
 pub mod ir;
+pub mod runtime;
 pub mod val;
 
 #[cfg(test)]
@@ -43,6 +44,7 @@ pub use expr::{BinOp, Expr};
 pub use instantiate::{Host, Ui};
 pub use intern::Interner;
 pub use ir::{ClassTok, Component, ElementNode, ForNode, IfNode, Node, Page, RawUi, UseNode};
+pub use runtime::{CacheStats, UiRuntime};
 pub use val::Val;
 
 use std::fmt;

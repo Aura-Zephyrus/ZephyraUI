@@ -170,25 +170,36 @@ pub(crate) fn solid_knob_bg_value() -> zypui::Val {
     )))
 }
 
-/// 把手滤镜 = `[BackdropBlur(8dp · (1−press)), Lens(5dp · press, 10dp · press)]`
-/// —— 原版 `effects` 的 `blur(8.dp * (1 - progress))` 与
-/// `lens(5.dp * progress, 10.dp * progress, chromaticAberration = true)`。
+/// 把手滤镜 = **SVG 式像素偏移玻璃**。
 ///
-/// `chromaticAberration = true` 由 [`Filter::Lens`] 固定实现（7 通道分色），
-/// 不另给开关 —— 原版液态开关把这一个参数写死为 true。
+/// # 为什么不再是 `[BackdropBlur(8dp · (1−press)), Lens(5dp · press, 10dp · press)]`
+///
+/// 原版液态开关的把手是「磨砂 + 透镜」两条滤镜 —— 而**透镜要读元素背后的画面**
+/// ⇒ 每个带滤镜的元素都要拷一份**全屏**的目标副本（MSAA 开着时那是一次
+/// **整幅解析**，D3D12 没有「按区解析」）。
+///
+/// ⇒ 一颗 20×20 的把手，代价是**一次全屏拷贝** —— 实测（gallery 1400×800 /
+/// Intel UHD 630）：材质页一帧 7 个带滤镜的元素 ⇒ **玻璃税 8.4 ms/帧**，
+/// 占那一帧 GPU 开销的 74%。而其中**最大的一笔就是这些把手**。
+///
+/// 现在把手走 [`Filter::PixelOffset`]：位移是**解析**的（掰形状自己的边），
+/// 不采样背景 ⇒ 不开离屏 pass ⇒ 不拷全屏副本 ⇒ **几乎不花钱**。
+///
+/// 视觉上的差别说清楚：**背景不再被透镜掰弯**（像素偏移掰的是把手自己的边）。
+/// 真实液态玻璃那条路**完整保留**（`material: glass-refract` /
+/// [`Filter::Lens`]），要就用它。
 pub(crate) fn switch_knob_filter_value(model: &zephyra_ui::ToggleSwitch) -> zypui::Val {
     use zephyra_core::filter::{Filter, FilterChain};
     let p = model.press_progress();
     zypui::Val::Raw(zephyra_core::property::PropertyValue::filter(
-        FilterChain::new(vec![
-            Filter::BackdropBlur {
-                sigma: 8.0 * (1.0 - p),
-            },
-            Filter::Lens {
-                refraction_height: 5.0 * p,
-                refraction_amount: 10.0 * p,
-            },
-        ]),
+        FilterChain::single(Filter::PixelOffset {
+            // 按下时位移变大（原版是 `lens(5·press, 10·press)` 的位移随按压长大）。
+            // ⚠ 把手只有 40×24：位移是**形状位移**，给 10px 会推掉一半高度。
+            // 着色器另有一道短边 40% 的夹（这里 = 4.8px）。
+            amount: 4.0 * p,
+            // 作用带：边缘多宽的一带上才有位移。
+            bezel: 8.0,
+        }),
     ))
 }
 
@@ -235,15 +246,13 @@ pub(crate) fn slider_thumb_filter_value(model: &zephyra_ui::Slider) -> zypui::Va
     use zephyra_core::filter::{Filter, FilterChain};
     let p = model.press_progress();
     zypui::Val::Raw(zephyra_core::property::PropertyValue::filter(
-        FilterChain::new(vec![
-            Filter::BackdropBlur {
-                sigma: 8.0 * (1.0 - p),
-            },
-            Filter::Lens {
-                refraction_height: 10.0 * p,
-                refraction_amount: 14.0 * p,
-            },
-        ]),
+        // 同把手：**SVG 式像素偏移**（不采样背景 ⇒ 不拷全屏副本）。
+        // 原版是 `blur(8·(1-p)) + lens(10·p, 14·p)`。
+        // ⚠ 拇指只有 40×24：给 14px 会推掉一半高度（着色器夹到 4.8px）。
+        FilterChain::single(Filter::PixelOffset {
+            amount: 5.0 * p,
+            bezel: 8.0,
+        }),
     ))
 }
 

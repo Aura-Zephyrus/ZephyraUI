@@ -1,8 +1,8 @@
-# 布局与定位规范（layout-spec，R1 冻结草案）
+# 布局与定位规范（layout-spec）
 
-> 对应计划：`C:\Users\Levy\.opencode\plan\zephyra-box-layout-positioning-plan.md`（D1–D19）。  
-> 本文是 R2 实现的唯一依据；与计划 §0/§1 冲突时，以“先改计划再改实现”为原则。  
-> 状态：R1 冻结（D1–D19）；R2/R3/R4 在 2026-11-08 工作区推进中，实测与阻断见 `docs/dev-log/2026-11-layout-refactor-box.md`。
+> 对应计划：`docs/plan/zephyra-box-layout-positioning-plan.md`（D1–D19）。  
+> 本文是实现与评审依据；与计划 §0/§1 冲突时，以“先改计划再改实现”为原则。  
+> 状态：D1–D19 已冻结；R2/R3/R4 核心实现与迁移已落地（2026-11-08），实测与门禁见 `docs/dev-log/2026-11-layout-refactor-box.md`。
 
 ## 1. 坐标、盒模型、模式
 
@@ -89,7 +89,71 @@ layout(node, bounds, ctx):
 - 裸标签小写 `box/text/image/control`；组件 PascalCase；`<container>`/未知裸标签报错并给迁移提示。
 - 布局属性 `.zstyle`-only。
 
-## 9. R2/R3 实施顺序（执行提示）
+## 9. 快速参考（R4）
+
+### 9.1 居中首选布局，不要首选手动定位
+
+**文档首推**：优先用 `main-align` / `cross-align` / `justify-content` / `align-items` 等布局能力把内容居中或对齐。手动 `position` 只用于明确的脱流叠放（浮层、角标、相对父/根的固定几何），不要用 `left/top + anchor` 代替普通流式居中。
+
+### 9.2 `position` 模式对照
+
+| 模式 | 参与父布局 | 参照系 | `left/top` 含义 | 祖先 `translate` | 典型用途 |
+|---|---:|---|---|---|---|
+| `flow`（默认） | 是（Stack/Flex） | 由父布局决定 | **不应显式设置**；同规则块显式设置按 D10 诊断 | 正常累计 | 普通文档流子项 |
+| `parent` | 否（脱流） | 直接父**内容区**左上角 | 锚点在父内容区参考系中的坐标 | 正常累计 | 角标、相对容器定位 |
+| `root` | 否（脱流） | 窗口/根客户端区 `(0,0)` | 锚点在根参考系中的坐标 | 进入时清零祖先累计；自身 `translate` 仍生效 | 全局浮层、相对窗口定位 |
+
+旧关键字（编译期报错并给迁移提示）：
+
+| 旧写法 | 迁移 |
+|---|---|
+| `position: static` | `position: flow` |
+| `position: absolute` | `position: root; anchor: center`（按旧“窗口+中心”语义） |
+| `position: fixed` | `position: root` |
+
+v1b 计划项（**尚未实现**）：`right/bottom`、`min/max/margin`、拉伸、`pin`（如 `pin: center` / `pin: fill` / 四边+margins）。不要在 v1a 代码/样式中假设这些已生效。
+
+### 9.3 盒模型与 `anchor` 参考系（ASCII）
+
+```text
+父节点 (position: parent 的参照 = 父 content box 左上角)
+┌──────────────────────────────────────────────┐  ← parent border box
+│ padding                                      │
+│  ┌────────────────────────────────────────┐  │  ← parent content box (origin for parent)
+│  │  (Px,Py) = content origin             │  │
+│  │                                        │  │
+│  │     child arranged_rect = border box   │  │
+│  │     ┌───────────────┐                  │  │
+│  │     │ TL  TC   TR   │  ← anchor 点在 border box 上
+│  │     │ CL   C   CR   │     (ax,ay)∈{0,.5,1}
+│  │     │ BL  BC   BR   │
+│  │     └───────────────┘                  │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┘
+
+求解（某轴有显式坐标时）: rect_origin = P - a * size
+  P   = 参考系中的锚点坐标（来自 left/top）
+  a   = anchor 分量（top-left => 0, center => 0.5, bottom-right => 1）
+缺轴: 放在参考系原点，且该轴不应用 anchor 分量（D6/D9）
+```
+
+### 9.4 诊断示例（zstylec）
+
+`position: static|absolute|fixed` 会报错并给出可直接替换的建议；`flow + 显式手动属性` 按 D10 分级。示例（实际文案以当前 `zstylec` 为准）：
+
+```text
+app.zstyle:N:1: error: position: absolute is no longer supported.
+  position: absolute;
+  ^^^^^^^^^^^^^^^^^^
+  help: use `position: root; anchor: center;` (maps old window+center behavior)
+```
+
+```text
+app.zstyle:N:1: error: position: static is no longer supported.
+  help: use `position: flow;`
+```
+
+## 10. R2/R3 实施顺序（历史记录）
 
 1. core：`LayoutEnv` + measure 缓存键 + `Position` 语义/数据结构准备（保持迁移可编译）。
 2. core：`visual_rect`/`damage_bounds`/`VisualState` helper，paint/frame/hit 共用；文字 bounds fallback。

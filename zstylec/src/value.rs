@@ -455,6 +455,10 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
         if eq("glass") {
             return Some(PropertyValue::material(Material::glass()));
         }
+        // 真实液态玻璃（斯涅尔折射）—— 保留，但贵（每个元素一次全屏副本）。
+        if eq("glass-refract") {
+            return Some(PropertyValue::material(Material::glass_refract()));
+        }
         return None;
     }
 

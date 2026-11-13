@@ -72,7 +72,7 @@ zephyra/
     zephyra-bezier/      可配置三次方贝塞尔缓动
 zstylec/             .zstyle 编译器（解析 + 检查）
 ZephyraCLI/          命令行：new / check / dev / run / build / info / props
-examples/            验收基线 + 窗口化 demo
+                     （+ mcp / bridge / perf / debug：直连运行中应用的调试设施）
 ZephyraUI/           控件层 + RinUI 风格 gallery
 ```
 

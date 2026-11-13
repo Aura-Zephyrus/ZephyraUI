@@ -206,5 +206,5 @@ pub fn fan_triangulate(poly: &[Point]) -> Vec<[Point; 3]> {
 }
 
 #[cfg(test)]
-#[path = "tests/geom_clip_tests.rs"]
+#[path = "../tests/unit/tests/geom_clip_tests.rs"]
 mod tests;

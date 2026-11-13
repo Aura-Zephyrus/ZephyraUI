@@ -18,6 +18,8 @@
 /// 档位把这件事变成整数运算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Glass {
+    /// 用哪条**算法**（见 [`GlassMode`]）。
+    pub mode: GlassMode,
     /// 玻璃**厚度**（像素）档位，见 [`THICKNESS`]。
     pub thickness: usize,
     /// 倒角带**宽度**（像素）档位，见 [`BEZEL`]。
@@ -55,12 +57,42 @@ impl Default for Glass {
     /// 四成以上，画面变成一团涂抹 —— 那是**参数演示**该给用户去拧的，不是默认值。
     fn default() -> Self {
         Self {
+            mode: GlassMode::Cheap,
             thickness: 12,
             bezel: 19,
             dispersion: 4,
             ior: 10,
         }
     }
+}
+
+/// 玻璃块的**两种算法**。
+///
+/// # 为什么有两种
+///
+/// - [`GlassMode::Cheap`] = **SVG 式像素偏移**：形状的边被**向内**推开 + 边缘高光。
+///   位移是**解析**的（掰形状自己的边）⇒ **不采样背景** ⇒ 不开离屏 pass ⇒
+///   **不拷全屏副本**。
+/// - [`GlassMode::Physical`] = **物理折射**（斯涅尔）：背景真的被掰弯。
+///   但那要求一份**全屏**的目标副本 ⇒ 每个玻璃元素一次**整幅解析**
+///   （D3D12 没有「按区解析」，MSAA 开着时必然是整幅的）。
+///
+/// 实测（gallery 1400×800 / Intel UHD 630 / D3D12 / MSAA 开）：
+/// 材质页三块玻璃走物理折射时，**整个离屏路径**要 **5.06 ms/帧**
+/// （三块玻璃 + 一块磨砂样板），换成像素偏移后 **~0**。
+///
+/// # 为什么默认是便宜的那条
+///
+/// 需求是「用玻璃的成本压下来」，而**物理折射那条路完整保留** ——
+/// [`GlassMode::Physical`] 一键切过去就能看到、能调、能对比。
+/// 默认跑贵的那条，等于默认把预算花掉。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlassMode {
+    /// SVG 式像素偏移（默认）。
+    #[default]
+    Cheap,
+    /// 物理折射（斯涅尔）。
+    Physical,
 }
 
 impl Glass {
@@ -104,12 +136,36 @@ impl Glass {
     pub fn filter_with_thickness_offset(&self, offset: isize) -> zephyra_core::filter::Filter {
         let idx =
             (self.thickness as isize + offset).clamp(0, THICKNESS.len() as isize - 1) as usize;
-        zephyra_core::filter::Filter::Refraction {
-            strength: THICKNESS[idx],
-            bezel: BEZEL[self.bezel],
-            dispersion: DISPERSION[self.dispersion],
-            ior: IOR[self.ior],
+        match self.mode {
+            GlassMode::Cheap => zephyra_core::filter::Filter::PixelOffset {
+                // ⚠ 像素偏移的 `amount` 是**形状位移**（把边往里推），
+                // 而物理折射的 `strength` 是**折射位移**（掰背景）—— 量级完全不同。
+                // 同一张档位表乘 1/4 之后落在「看得见有厚度、形状还站得住」的区间
+                // （玻璃块 220×120 ⇒ 短边半高 60，着色器另夹一道 40% ⇒ 24px 上限）。
+                amount: THICKNESS[idx] * 0.25,
+                // 作用带宽度同理乘 1/2：折射的倒角带是 2..48px，
+                // 而像素偏移的作用带超过元素尺寸就没有意义了。
+                bezel: BEZEL[self.bezel] * 0.5,
+            },
+            GlassMode::Physical => zephyra_core::filter::Filter::Refraction {
+                strength: THICKNESS[idx],
+                bezel: BEZEL[self.bezel],
+                dispersion: DISPERSION[self.dispersion],
+                ior: IOR[self.ior],
+            },
         }
+    }
+
+    /// 便宜模式下面板显示的两个值（位移幅度 / 作用带宽度）。
+    ///
+    /// ⚠ 物理折射的四个参数（厚度 / 倒角 / 色散 / IOR）在便宜模式下**没有对应物**
+    /// —— 像素偏移不掰背景，所以既没有色散也没有折射率。
+    /// ⇒ 便宜模式只给**两个**旋钮，而不是把那两个旋钮留成「点了不动」的摆设。
+    pub fn cheap_texts(&self) -> (&'static str, &'static str) {
+        (
+            OFFSET_AMOUNT_TEXT[self.thickness],
+            OFFSET_BEZEL_TEXT[self.bezel],
+        )
     }
 
     /// 四个参数各自的显示文本（查表，见 [`Glass`] 的理由）。
@@ -202,6 +258,18 @@ impl Param {
         }
     }
 
+    /// 参数名（面板上的标签）—— 按当前**算法**取。
+    ///
+    /// ⚠ 便宜模式下「Thickness」这个叫法是错的：像素偏移的 `amount` 不是厚度，
+    /// 是**把边往里推多少像素**。两个算法共用同一个档位槽位，但那一槽的
+    /// **物理含义不同** —— 标签必须跟着算法走，否则面板在说一件假事。
+    pub fn label_for(self, mode: GlassMode) -> &'static str {
+        match (mode, self) {
+            (GlassMode::Cheap, Param::Thickness) => "Amount",
+            _ => self.label(),
+        }
+    }
+
     /// 该参数的**唯一 key 前缀**（`glass-<name>` 与 `glass-<name>:dec`）。
     pub fn slug(self) -> &'static str {
         match self {
@@ -290,6 +358,21 @@ pub const DISPERSION: [f32; 21] = [
 pub const IOR: [f32; 21] = [
     1.00, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.35, 1.40, 1.45, 1.50, 1.55, 1.60, 1.65, 1.70, 1.75,
     1.80, 1.85, 1.90, 1.95, 2.00,
+];
+
+/// 便宜模式下的**位移幅度**显示文本（= [`THICKNESS_TEXT`] × 1/4）。
+///
+/// 为什么要另开一张表而不是 `format!`：见 [`Glass`] 的理由（每帧重建的视图里
+/// `format!` 会走 `Box::leak`）。
+pub const OFFSET_AMOUNT_TEXT: [&str; 21] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20",
+];
+
+/// 便宜模式下的**作用带宽度**显示文本（= [`BEZEL_TEXT`] × 1/2）。
+pub const OFFSET_BEZEL_TEXT: [&str; 24] = [
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17",
+    "18", "19", "20", "21", "22", "23", "24",
 ];
 
 /// 各档的显示文本。

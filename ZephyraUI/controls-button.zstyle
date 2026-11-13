@@ -104,17 +104,26 @@ control.button.frosted.hovered {
     background: @control_fill_hover;
 }
 
-/* 液态玻璃：不写 background（默认透明）+ 背后折射。
+/* 玻璃：不写 background（默认透明）+ 边缘高光。
  *
- * 液态玻璃要的是「透过按钮看见**被弯曲**的背景」，所以填充必须完全透明 ——
- * 不写 `background` 即默认透明（core 读不到 background 时按 `rgba(0,0,0,0)`），
- * 不必显式写 `background: transparent`。
+ * 玻璃要的是「透过按钮看见背景」+ 「这是一块有厚度的玻璃」的边缘高光，
+ * 所以填充完全透明 —— 不写 `background` 即默认透明（core 读不到 background
+ * 时按 `rgba(0,0,0,0)`），不必显式写 `background: transparent`。
  *
- * `material-params` 独立于 `material`：顺序 `<厚度> <倒角> <色散> <折射率>`，
- * 这里调成厚 26px（默认 20）、倒角 18px（默认 16）、无仍色散、IOR 1.5。 */
+ * ⚠ 填充透明是**刻意的**：`material: glass` 展开成 [`Filter::PixelOffset`]，
+ * 它的位移是**解析**的（掰形状自己的边），**不采样背景** ⇒ 背景直直透过来。
+ * 边缘那道高光是**自发光**的（着色器里 `kind == 5` 那一支），所以填充透明
+ * 也照样看得见玻璃 —— 那正是「清玻璃」该有的样子。
+ *
+ * `material-params` 独立于 `material`：顺序 `<位移幅度> <作用带宽度>`。
+ * ⚠ 这两个数是**形状位移**（像素），不是物理折射的强度 ——
+ * 写 26 会把这颗 36px 高的按钮的边推掉 26px（着色器夹到短边 40%，
+ * 但仍然是「按钮小了一圈」）。5px 是「看得见有厚度、形状还站得住」的量。
+ *
+ * 要真实液态玻璃（背景被折射弯曲）用 `material: glass-refract`。 */
 control.button.glass {
     material: glass;
-    material-params: 26 18 0 1.5;
+    material-params: 5 12;
     border-color: #ffffffb3;
 }
 

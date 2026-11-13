@@ -180,6 +180,27 @@ pub mod kind {
     /// 让模糊四边形也走 `PSMain`，它会落进多边形分支"直接返回顶点色"——
     /// 症状是模糊结果变成一块纯色，且没有任何错误。
     pub const BLUR: f32 = 4.0;
+    /// **SVG 式像素偏移玻璃**（便宜版液态玻璃）。
+    ///
+    /// # 它为什么是 5.0
+    ///
+    /// 它要算 SDF（圆角矩形）⇒ 必须**大于** `kind_thresholds::PATH_MIN`，
+    /// 否则会落进图像分支去采样纹理（症状是「玻璃变成绑着的那张纹理的内容」）。
+    /// 而它又必须**小于**离屏 pass 的铺满四边形…… 那��个是 4.0，所以玻璃取 5.0。
+    ///
+    /// 着色器里这一支排在**最前面**（`kind > 4.5`），于是它抢在多边形分支之前。
+    ///
+    /// # 它带什么参数
+    ///
+    /// `uv`（圆角矩形本来空着的通道）：`uv.x` = 位移幅度（像素）、
+    /// `uv.y` = 作用带宽度（像素）。两个都是**逐顶点常量**。
+    ///
+    /// # 它省掉了什么
+    ///
+    /// **不采样背景** ⇒ 不需要目标副本 ⇒ 不开离屏 pass ⇒
+    /// 一个带滤镜的元素**不再**要付一次全屏拷贝（D3D12 没有「按区解析」，
+    /// MSAA 开着时那就是一次整幅解析）。
+    pub const GLASS: f32 = 5.0;
 }
 
 /// `zephyra.hlsl` 里 `PSMain` 用来把图元分成三类的那三个阈值。
@@ -332,6 +353,41 @@ impl Vertex {
             [0.0; 2],
             [0.0, 1.0],
             kind::RECT,
+            shape_k,
+        )
+    }
+
+    /// **SVG 式像素偏移玻璃**的四个顶点。
+    ///
+    /// # 参数放在 `uv` 里
+    ///
+    /// `uv.x` = 位移幅度（像素）、`uv.y` = 作用带宽度（像素）。
+    /// 四个角填**同一个** `uv` ⇒ 插值后仍恒定（常量属性的常量插值）。
+    ///
+    /// 圆角矩形的 `uv` 本来就空着（只有字形 / 图像用它）⇒ **不占新的顶点通道**。
+    ///
+    /// # 为什么位移是**向内**的
+    ///
+    /// 四边形的几何只按 AA 带扩（[`AA_BAND`]）⇒ 向外推的位移会被裁掉
+    /// （症状是「玻璃的角被削平」）。向内推不需要扩几何。
+    pub fn from_rect_glass(
+        rect: Rect,
+        px: (f32, f32),
+        color: [f32; 4],
+        corner: [f32; 2],
+        shape_k: f32,
+        amount: f32,
+        bezel: f32,
+    ) -> [Vertex; 4] {
+        // uv0 == uv1 ⇒ 四个角的 uv 全同 ⇒ 插值后恒定。
+        Self::quad(
+            rect,
+            px,
+            color,
+            corner,
+            [amount, bezel],
+            [amount, bezel],
+            kind::GLASS,
             shape_k,
         )
     }
@@ -497,6 +553,8 @@ impl Vertex {
         // `corner.x > 0` 的分支虽然不进、外扩却已经改变了几何。
         let pad = match kind {
             k if k == kind::RECT => AA_BAND,
+            // 玻璃也要算 SDF（位移后的形状）⇒ 同样需要 AA 余量。
+            k if k == kind::GLASS => AA_BAND,
             k if k == kind::IMAGE && corner[0] > 0.0 => AA_BAND,
             _ => 0.0,
         };
@@ -607,7 +665,7 @@ pub struct RenderReport {
     /// 那**不代表**顶点流是空的，只代表这一层还没算。
     ///
     /// 早先这里写的是「本次写入的顶点字节数」，读起来像是 `expand` 会填 —— 于是
-    /// `examples/demo.rs --dump-cpu` 打出「顶点字节 0」，看着像"一个字形都没进去"，
+    /// `gallery --dump-cpu` 打出「顶点字节 0」，看着像"一个字形都没进去"，
     /// 而同一次调用里 `quads = 135`。两个数字摆在一起还互相矛盾。
     ///
     /// 要判断顶点流是否真的非空，用 [`Self::quads`] 或 `QuadBatch::solid.len()`。
@@ -1382,7 +1440,11 @@ pub fn expand_range_translated_into(
                 //
                 // ⚠ 命令**照常画**（不 skip）—— 否则"加了效果"会表现成"元素凭空
                 // 消失"，比"效果没生效"更难排查。
-                if !filter.is_identity() {
+                //
+                // ⚠ **例外**：SVG 式像素偏移玻璃是**这一层自己**实现的（它不需要
+                // 背景、不开离屏 pass）⇒ 它**不算**「未实现的滤镜」。
+                let glass = filter.pixel_offset();
+                if !filter.is_identity() && glass.is_none() {
                     out.report.unimplemented_filters += 1;
                 }
                 if blend_is_unimplemented(*blend) {
@@ -1392,7 +1454,19 @@ pub fn expand_range_translated_into(
                     Some((c, w)) if *w > 0.0 && c.a > 0.0 => (*c, *w),
                     _ => (Color::rgba(0.0, 0.0, 0.0, 0.0), 0.0),
                 };
-                if fill.a <= 0.0 && stroke_w <= 0.0 {
+                // ⚠ **像素偏移玻璃即使填充全透明也要画**。
+                //
+                // 玻璃的视觉主体是**边缘高光**（`PSMain` 里 `kind == 5` 那一支
+                // 的 rim 是**自发光**的，不依赖填充的 alpha）—— 所以「一块全透明的
+                // 玻璃」应当是一块**边缘发亮的清玻璃**，而不是什么都不画。
+                //
+                // 而 `.zstyle` 里两块玻璃恰好都是全透明填充：
+                // `control.button.glass`（注释写着「不写 background 即默认透明，
+                // 填充必须完全透明」）与 `box.material-swatch.material-glass`。
+                // 它们以前靠**物理折射**（把元素区域整个换成被掰弯的背景）出画面，
+                // 所以全透明也能看见东西；换成像素偏移后，没有填充就没有表面 ——
+                // 症状正是「玻璃按钮/样板只剩一圈描边，中间是空的」。
+                if fill.a <= 0.0 && stroke_w <= 0.0 && glass.is_none() {
                     continue;
                 }
                 // 平移必须发生在**裁剪之前**：`clip` 在 [`Command::PushClip`] 时已经平移到目标
@@ -1418,14 +1492,47 @@ pub fn expand_range_translated_into(
                 // 描边单独画一遍环带，而不是把描边色混进填充 ——
                 // 混进去会让描边与填充重叠处被填充盖住。
                 let solid_before = out.solid.len();
-                if fill.a > 0.0 {
-                    out.solid.extend_from_slice(&Vertex::from_rect_shaped(
-                        rect,
-                        px,
-                        [fill.r, fill.g, fill.b, fill.a],
-                        [radius.radius, 0.0],
-                        shape.k,
-                    ));
+                //
+                // ⚠ 玻璃**即使填充全透明也要画**（`fill.a > 0.0 || glass.is_some()`）。
+                //
+                // 玻璃的视觉主体是**边缘高光**（着色器里 `kind == 5` 那一支的 rim
+                // 是**自发光**的，不依赖填充的 alpha）—— 所以「一块全透明的玻璃」
+                // 应当是一块**边缘发亮的清玻璃**，而不是什么都不画。
+                //
+                // 而 `.zstyle` 里两块玻璃恰好都是全透明填充：
+                // `control.button.glass`（注释写着「不写 background 即默认透明，
+                // 填充必须完全透明」）与 `box.material-swatch.material-glass`。
+                // 它们以前靠**物理折射**（把元素区域整个换成被掰弯的背景）出画面，
+                // 所以全透明也能看见东西；换成像素偏移后，没有填充就没有表面 ——
+                // 症状正是「玻璃按钮/样板只剩一圈描边，中间是空的」。
+                if fill.a > 0.0 || glass.is_some() {
+                    match glass {
+                        // ★ SVG 式像素偏移玻璃：这一层就把「怎么画」定下来 ——
+                        // 顶点带上玻璃参数，主趟的 PS 解析地掰形状的边。
+                        //
+                        // 为什么能这样：它**不采样背景** ⇒ 不需要离屏 RT ⇒
+                        // 不需要后端的离屏管线参与。
+                        Some((amount, bezel)) => {
+                            out.solid.extend_from_slice(&Vertex::from_rect_glass(
+                                rect,
+                                px,
+                                [fill.r, fill.g, fill.b, fill.a],
+                                [radius.radius, 0.0],
+                                shape.k,
+                                amount,
+                                bezel,
+                            ));
+                        }
+                        None => {
+                            out.solid.extend_from_slice(&Vertex::from_rect_shaped(
+                                rect,
+                                px,
+                                [fill.r, fill.g, fill.b, fill.a],
+                                [radius.radius, 0.0],
+                                shape.k,
+                            ));
+                        }
+                    }
                     out.report.quads += 1;
                 }
                 if stroke_w > 0.0 {
@@ -1799,10 +1906,10 @@ pub fn shrink(r: Rect, inset: f32) -> Rect {
 }
 
 #[cfg(test)]
-#[path = "tests/quad_stress_tests.rs"]
+#[path = "../tests/unit/tests/quad_stress_tests.rs"]
 mod stress_tests;
 #[cfg(test)]
-#[path = "tests/quad_tests.rs"]
+#[path = "../tests/unit/tests/quad_tests.rs"]
 mod tests;
 
 /// 顶点色必须是**预乘**的：rgb 已经乘过自己的 alpha。
@@ -1861,5 +1968,5 @@ fn path_vertex_color_is_premultiplied() {
 /// 三类共用一条指令流，靠这个标量在片元里分支，所以"落进哪个区间"就是
 /// "画成什么"。配对关系的完整说明见 [`kind`]。
 #[cfg(test)]
-#[path = "tests/quad_kind_branch_tests.rs"]
+#[path = "../tests/unit/tests/quad_kind_branch_tests.rs"]
 mod kind_branch_tests;

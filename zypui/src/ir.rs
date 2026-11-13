@@ -119,6 +119,9 @@ pub struct ForNode {
     pub var: &'static str,
     /// 可选下标变量名（`for="name, i in @icons"`）。
     pub index: Option<&'static str>,
+    /// 可选稳定键表达式（`key="..."` / `track-by="..."`，在 item/index 作用域求值）。
+    /// 提供时，P3 运行时按键重排/复用 item 单元；不提供时保持 P1 位置化语义。
+    pub track_key: Option<Expr>,
     /// 列表表达式（`@icons` 之类）。
     pub list: Expr,
     /// 循环体（每项实例化一份）。

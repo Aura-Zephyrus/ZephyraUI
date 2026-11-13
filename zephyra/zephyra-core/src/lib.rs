@@ -111,22 +111,31 @@ pub mod visual;
 // `#[test]` 函数在非测试构建里被剥掉，于是所有 `use` 变成"未使用"——
 // 一批纯属噪声、且会淹没真正警告的告警。
 #[cfg(test)]
+#[path = "../tests/unit/frame_tests.rs"]
 mod frame_tests;
 #[cfg(test)]
+#[path = "../tests/unit/geom_tests.rs"]
 mod geom_tests;
 #[cfg(test)]
+#[path = "../tests/unit/icon_tests.rs"]
 mod icon_tests;
 #[cfg(test)]
-mod input_tests;
-#[cfg(test)]
+#[path = "../tests/unit/layout_classification_tests.rs"]
 mod layout_classification_tests;
 #[cfg(test)]
+#[path = "../tests/unit/layout_tests.rs"]
 mod layout_tests;
 #[cfg(test)]
+#[path = "../tests/unit/paint_tests.rs"]
 mod paint_tests;
 #[cfg(test)]
+#[path = "../tests/unit/style_tests.rs"]
 mod style_tests;
 #[cfg(test)]
+#[path = "../tests/unit/support.rs"]
+mod test_support;
+#[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;
 
 /// 框架版本。

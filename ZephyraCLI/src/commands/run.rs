@@ -43,5 +43,11 @@ fn dispatch(a: &Args, w: &mut dyn Write, is_build: bool) -> Result<ExitCode, Cli
 
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let config = app_config_path(a)?;
-    spawn_inherit(&cargo, &refs, config.as_deref())
+    // `--log <path>`：把子进程的输出**另外**落一份。终端照旧能看到全部内容 ——
+    // 落盘那份是为了「滚过去了 / 崩了 / 当时没看屏幕」之后还能回查。
+    let log = a.option("log").map(std::path::PathBuf::from);
+    if let Some(path) = &log {
+        w.err_line(&format!("[log] {}", path.display()));
+    }
+    spawn_inherit(&cargo, &refs, config.as_deref(), log.as_deref())
 }

@@ -1,4 +1,4 @@
-//! Gallery 宿主：三条路（照 `examples/demo.rs` 的成熟形态）。
+//! Gallery 宿主：三条路。
 //!
 //! 1. **窗口路**（默认）：winit + `zephyra-winit-d3d12::HostWindow`。
 //! 2. **`--dump-cpu`**：`zephyra_fx::cpu_only::CpuHost` 画第一帧写 BMP，
@@ -442,12 +442,13 @@ fn build_sheet() -> StyleSheet {
 
 /// 把整份样式表装成宿主的样式注入点。
 fn install(sheet: StyleSheet) -> Box<dyn Styler> {
-    Box::new(SheetStyler(std::sync::Arc::new(sheet)))
+    Box::new(SheetStyler::new(std::sync::Arc::new(sheet)))
 }
 
-/// 分阶段计时 + 分配探针 —— 逐字照抄 examples/demo.rs::bench_cpu。
+/// 分阶段计时 + 分配探针。
 ///
-/// bench 的价值全在**可比**：两处独立实现的时间数字不能对比。改动时两处同步。
+/// bench 的价值全在**可比**：改动时别把「测的东西」换掉 ——
+/// 换掉的不是数字不可比，是这个数字不再说明任何事。
 fn bench_cpu(probe: bool, light: bool) {
     /// 参与统计的帧数。
     const FRAMES: usize = 120;
@@ -550,16 +551,16 @@ fn bench_cpu(probe: bool, light: bool) {
     );
     // 各阶段的占比之和是判据：它应当约等于 100%。明显小于 100% 说明**有阶段没被
     // 计时**（计时点之间漏了代码），那时"占比"这列数字会误导 —— 所以直接印出来。
-    let sum: u64 = samples
-        .iter()
-        .map(|s| {
-            s.view_us as u64
-                + s.diff_us as u64
-                + s.layout_us as u64
-                + s.paint_us as u64
-                + s.expand_us as u64
-        })
-        .sum();
+    //
+    // ⚠ 这里加的是 `view_us + cache_us + expand_us`，**不是**把五个分段全加起来：
+    // `cache_us`（`FrameCache::frame` 整体）**已经包含** diff / style / scan /
+    // layout / paint 五段。全加起来会把 core 那部分**算两遍**，于是「占比之和」
+    // 会大于 100% —— 而这份报表原先恰恰是**小于** 100%（62%），因为它加的是
+    // 恒为 0 的 diff / layout / paint，漏掉了 `cache_us`。
+    //
+    // 那个 62% 一直在那儿没人管：读的人以为「38% 的帧时间没被计时」，于是去找
+    // 「漏掉的代码」—— 而那 38% 就是 `cache_us`（core 的整段）。
+    let sum: u64 = samples.iter().map(|s| s.sum() as u64).sum();
     let sum_total: u64 = samples.iter().map(|s| s.total_us as u64).sum();
     let accounted = if sum_total == 0 {
         0.0
@@ -572,7 +573,10 @@ fn bench_cpu(probe: bool, light: bool) {
         sum_total,
     );
     report("view", samples.iter().map(|s| s.view_us).collect(), sum);
+    report("cache", samples.iter().map(|s| s.cache_us).collect(), sum);
     report("diff", samples.iter().map(|s| s.diff_us).collect(), sum);
+    report("style", samples.iter().map(|s| s.style_us).collect(), sum);
+    report("scan", samples.iter().map(|s| s.scan_us).collect(), sum);
     report("layout", samples.iter().map(|s| s.layout_us).collect(), sum);
     report("paint", samples.iter().map(|s| s.paint_us).collect(), sum);
     report("expand", samples.iter().map(|s| s.expand_us).collect(), sum);
@@ -670,6 +674,11 @@ fn bench_resize(probe: bool, light: bool) {
         }
         let mut cache: Vec<u32> = Vec::with_capacity(FRAMES);
         let mut total: Vec<u32> = Vec::with_capacity(FRAMES);
+        // 分段：resize 路径上 `layout` 与 `paint` 真的跑，而**哪一段更贵**
+        // 决定了优化该往哪走（重排 vs 文字重排）。
+        //
+        // 用数组而不是元组：元组不支持 `Index`，按下标取会写不成。
+        let mut by_stage: Vec<[u32; 5]> = Vec::with_capacity(FRAMES);
         let mut before = alloc_probe::Counts::now();
         let mut probing = false;
         for i in 0..FRAMES {
@@ -694,6 +703,13 @@ fn bench_resize(probe: bool, light: bool) {
             if i >= WARMUP {
                 cache.push(times.cache_us);
                 total.push(times.total_us);
+                by_stage.push([
+                    times.diff_us,
+                    times.style_us,
+                    times.scan_us,
+                    times.layout_us,
+                    times.paint_us,
+                ]);
             }
         }
         if probing {
@@ -722,6 +738,24 @@ fn bench_resize(probe: bool, light: bool) {
             "[resize:{label}] layout+diff+paint 中位 {:>4} µs（最小 {:>4} / 最大 {:>4}），整帧中位 {:>4} µs",
             cache[n / 2], cache[0], cache[n - 1], total[n / 2]
         );
+        // 分段中位数。⚠ 用**中位数**而不是平均：resize 的耗时分布是双峰的，
+        // 平均值会把「宽度变化全量重排」与「高度变化几乎免费」抹成同一个数
+        // （实测三者都是 80 µs —— 抹平后的数字看不出该优化哪一段）。
+        for (name, pick) in [
+            ("diff", 0usize),
+            ("style", 1),
+            ("scan", 2),
+            ("layout", 3),
+            ("paint", 4),
+        ] {
+            let mut xs: Vec<u32> = by_stage.iter().map(|s| s[pick]).collect();
+            xs.sort_unstable();
+            println!(
+                "[resize:{label}]   {name:<7} 中位 {:>4} µs  最大 {:>4} µs",
+                xs[xs.len() / 2],
+                xs[xs.len() - 1]
+            );
+        }
     };
 
     run("只改高度", false, true);
@@ -921,11 +955,13 @@ fn dump_cpu(light: bool) {
     }
 }
 
-/// demo 自带的 MiSans 字体（含 CJK）。不放副本，直接内嵌仓库里那一份 ——
-/// 7.7MB 进两次二进制没有意义。
-const DEMO_FONT: &[u8] = include_bytes!("../../../examples/fonts/MiSans-Regular.ttf");
+/// 自带的 MiSans 字体（含 CJK）。放在 `gallery/fonts/` 下 ——
+/// 它是**这个应用**的字体，不是框架的（框架用 `ZEPHYRA_FONT` 让应用自己指定）。
+///
+/// 7.7MB 进两次二进制没有意义，所以直接内嵌仓库里那一份。
+const DEMO_FONT: &[u8] = include_bytes!("../../fonts/MiSans-Regular.ttf");
 
-/// 让 `zephyra_fx` 选中自带字体（与 `examples/demo.rs` 同手法）。
+/// 让 `zephyra_fx` 选中自带字体（不走系统字体候选表）。
 fn use_demo_font() {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in DEMO_FONT {
@@ -1101,7 +1137,7 @@ impl winit::application::ApplicationHandler for Bootstrap {
 
         // 首帧必须在这里补：交换链建好了、DComp 提交了，但从未 present 过的话，
         // 屏幕上是一个还没被写过的白色合成交换链 —— 唯一症状是「窗口全白」，
-        // 极易被当成渲染问题查。（同 examples/demo.rs 的注释。）
+        // 极易被当成渲染问题查。
         app.sync_input();
         let frame = app.frame();
         // 首帧报告打出来。不打的话，你得靠目测「是不是滤镜没接上」——

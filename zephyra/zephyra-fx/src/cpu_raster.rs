@@ -533,5 +533,5 @@ pub fn draw_batch(canvas: &mut CpuCanvas, batch: &quad::QuadBatch, atlas: Option
 }
 
 #[cfg(test)]
-#[path = "tests/cpu_raster_tests.rs"]
+#[path = "../tests/unit/tests/cpu_raster_tests.rs"]
 mod tests;

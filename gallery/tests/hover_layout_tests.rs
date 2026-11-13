@@ -45,7 +45,7 @@ fn cache_with(name: &str) -> FrameCache {
     assert!(parsed.is_ok(), "stylesheet must parse: {:?}", parsed.errors);
     let sheet = Arc::new(StyleSheet::new().merge(parsed.sheet));
     let mut cache = FrameCache::new();
-    cache.set_styler(Box::new(SheetStyler(sheet)));
+    cache.set_styler(Box::new(SheetStyler::new(sheet)));
     cache
 }
 

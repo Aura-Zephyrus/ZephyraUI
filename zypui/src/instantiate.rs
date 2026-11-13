@@ -37,6 +37,8 @@ use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// 宿主为 `.zypui` 提供的运行期数据。见模块文档的契约表。
 pub trait Host {
@@ -76,6 +78,28 @@ pub trait Host {
         let _ = name;
         None
     }
+
+    /// 可选：全局状态修订号。`None` = 不提供，缓存退化为逐依赖求值比较。
+    ///
+    /// 宿主在可能影响 `.zypui` 求值结果的状态变化时递增它。它只是加速，
+    /// **不能单独作为正确性来源**；debug/test 可在 revision 命中时抽样比对。
+    fn state_revision(&self) -> Option<u64> {
+        None
+    }
+
+    /// 可选：单个 `@binding(name)` 的修订号。`None` = 不提供，缓存求值该绑定并比较 `Val`。
+    ///
+    /// 适用于 `binding()` 每帧会分配（如构造 `Vec<Rec>`）但值语义稳定的场景。
+    /// 返回值与 `binding()` 的实际结果不一致是宿主 bug；debug/test 应尽可能断言。
+    fn binding_revision(&self, _name: &str) -> Option<u64> {
+        None
+    }
+
+    /// 可选：宿主实例作用域。共享 `UiRuntime` 缓存时，不同宿主实例应返回不同值，
+    /// 避免相同 revision/快照形状下跨实例复用陈旧结果（测试/多窗口场景）。
+    fn cache_scope(&self) -> u64 {
+        0
+    }
 }
 
 /// 一个加载好的 `.zypui` 工件：IR + 组件名索引。应用持一份，跨帧复用。
@@ -83,7 +107,7 @@ pub struct Ui {
     /// 解码/解析出的原始 IR。
     pub raw: RawUi,
     /// 组件名 → `raw.components` 下标（`Ui::new` 建一次，每帧查 O(1)）。
-    idx: HashMap<&'static str, usize>,
+    pub(crate) idx: HashMap<&'static str, usize>,
 }
 
 impl Ui {
@@ -121,6 +145,7 @@ impl Ui {
             comps: &self.idx,
             raw: &self.raw,
             depth: 0,
+            cache: None,
         };
         build_list(
             &page.root,
@@ -128,6 +153,54 @@ impl Ui {
             &mut ctx,
             None,
             &mut None,
+            1,
+            &mut out,
+        )?;
+        Ok(out)
+    }
+
+    /// P1：带 per-element cache 的构建路径。`cache: None` 时语义同 [`Self::build`]。
+    pub(crate) fn build_cached(
+        &self,
+        page: &str,
+        host: &dyn Host,
+        it: &mut Interner,
+        masks: Option<&crate::runtime::UiMasks>,
+        store: Option<&mut crate::runtime::ElementCacheStore>,
+    ) -> Result<Vec<Element>, ZypuiError> {
+        let page = self
+            .raw
+            .pages
+            .iter()
+            .find(|p| p.name == page)
+            .ok_or_else(|| ZypuiError {
+                msg: format!("页 `{page}` 不存在"),
+            })?;
+        let mut out = Vec::new();
+        let cache = match (masks, store) {
+            (Some(m), Some(s)) => Some(CacheCtx {
+                masks: m,
+                store: s,
+                parent_id: 0,
+            }),
+            _ => None,
+        };
+        let mut ctx = Ctx {
+            host,
+            cur_key: "",
+            it,
+            comps: &self.idx,
+            raw: &self.raw,
+            depth: 0,
+            cache,
+        };
+        build_list(
+            &page.root,
+            &Scope::ROOT,
+            &mut ctx,
+            None,
+            &mut None,
+            1,
             &mut out,
         )?;
         Ok(out)
@@ -135,7 +208,7 @@ impl Ui {
 }
 
 /// children 槽位回填时需要的调用方现场：作用域、子树、当时的实例 key。
-struct SlotFrame<'a> {
+pub(crate) struct SlotFrame<'a> {
     scope: &'a Scope<'a>,
     children: &'a [Node],
     /// 调用方当时的实例 key（恒 `&'static`，同 `Ctx::cur_key`）。
@@ -143,25 +216,30 @@ struct SlotFrame<'a> {
 }
 
 /// 等第一个模板元素认领的实例级补丁（Use 的 key 与追加分类名）。
-struct RootPatch<'a> {
+pub(crate) struct RootPatch<'a> {
     key: Option<&'static str>,
     classes: &'a [ClassTok],
     caller: &'a Scope<'a>,
 }
 
 /// 求值 + 分派的遍历上下文。
-struct Ctx<'a> {
-    host: &'a dyn Host,
+pub(crate) struct Ctx<'a> {
+    pub(crate) host: &'a dyn Host,
     /// 当前实例 key（`hover`/`press` 基准）。只在 Use 边界更新。
-    ///
-    /// 恒为 `&'static`：来源只有求值产物（`Val::S` 即 `&'static`）与另一个
-    /// `cur_key` —— 不需要生命周期参数，遍历的借用也就不必互绑。
-    cur_key: &'static str,
-    it: &'a mut Interner,
-    comps: &'a HashMap<&'static str, usize>,
-    raw: &'a RawUi,
+    pub(crate) cur_key: &'static str,
+    pub(crate) it: &'a mut Interner,
+    pub(crate) comps: &'a HashMap<&'static str, usize>,
+    pub(crate) raw: &'a RawUi,
     /// 组件嵌套深度（防引用环打穿栈）。
-    depth: u32,
+    pub(crate) depth: u32,
+    /// P1 per-element cache（可选）；`None` = 全量 oracle 路径。
+    pub(crate) cache: Option<CacheCtx<'a>>,
+}
+
+pub(crate) struct CacheCtx<'a> {
+    pub(crate) masks: &'a crate::runtime::UiMasks,
+    pub(crate) store: &'a mut crate::runtime::ElementCacheStore,
+    pub(crate) parent_id: u64,
 }
 
 impl<'a> Ctx<'a> {
@@ -175,26 +253,29 @@ impl<'a> Ctx<'a> {
     }
 }
 
-fn build_list(
+pub(crate) fn build_list(
     nodes: &[Node],
     scope: &Scope,
     ctx: &mut Ctx,
     slot: Option<&SlotFrame>,
     root_patch: &mut Option<RootPatch>,
+    site_scope: u64,
     out: &mut Vec<Element>,
 ) -> Result<(), ZypuiError> {
-    for n in nodes {
-        build_node(n, scope, ctx, slot, root_patch, out)?;
+    for (i, n) in nodes.iter().enumerate() {
+        let child_site = crate::runtime::mix_site(site_scope, i as u64, node_kind_tag(n));
+        build_node(n, scope, ctx, slot, root_patch, child_site, out)?;
     }
     Ok(())
 }
 
-fn build_node(
+pub(crate) fn build_node(
     node: &Node,
     scope: &Scope,
     ctx: &mut Ctx,
     slot: Option<&SlotFrame>,
     root_patch: &mut Option<RootPatch>,
+    site_scope: u64,
     out: &mut Vec<Element>,
 ) -> Result<(), ZypuiError> {
     match node {
@@ -388,7 +469,15 @@ fn build_node(
             // 4. 子树（槽位帧与实例补丁原样传下去，直到被消费）。
             if !el.children.is_empty() {
                 let mut kids = Vec::with_capacity(el.children.len());
-                build_list(&el.children, scope, ctx, slot, root_patch, &mut kids)?;
+                build_list(
+                    &el.children,
+                    scope,
+                    ctx,
+                    slot,
+                    root_patch,
+                    site_scope,
+                    &mut kids,
+                )?;
                 el_el = el_el.with_children(kids);
             }
 
@@ -397,9 +486,11 @@ fn build_node(
 
         Node::If(node) => {
             if eval(&node.cond, scope, &mut ctx.ev()).truthy() {
-                build_list(&node.then, scope, ctx, slot, root_patch, out)?;
+                let s = crate::runtime::mix_site(site_scope, 0, 21);
+                build_list(&node.then, scope, ctx, slot, root_patch, s, out)?;
             } else {
-                build_list(&node.els, scope, ctx, slot, root_patch, out)?;
+                let s = crate::runtime::mix_site(site_scope, 1, 22);
+                build_list(&node.els, scope, ctx, slot, root_patch, s, out)?;
             }
         }
 
@@ -407,18 +498,68 @@ fn build_node(
             let list = eval(&node.list, scope, &mut ctx.ev());
             let items = match list {
                 Val::L(items) => items,
-                // 空绑定/类型不对 = 迭代零次（与「缺绑定判假」同一降级）。
                 _ => Vec::new(),
             };
+            let for_base = crate::runtime::mix_site(site_scope, 0, 30);
+            let body_mask = if ctx.cache.is_some() {
+                Some(crate::runtime::mask_nodes(&node.body, ctx.comps, ctx.raw))
+            } else {
+                None
+            };
+            let can_cache_for = body_mask.as_ref().is_some_and(|m| {
+                m.can_cache()
+                    && !m.dynamic_interaction
+                    && (!m.uses_tr || ctx.host.state_revision().is_some())
+                    && !m.uses_render_source_attr
+            });
             for (i, item) in items.into_iter().enumerate() {
-                // 变量层压进作用域链；for 变量遮蔽组件实参（查链顺序天然如此）。
                 let mut vars: Vec<(&'static str, Val)> = Vec::with_capacity(2);
                 vars.push((node.var, item));
                 if let Some(ix) = node.index {
                     vars.push((ix, Val::F(i as f32)));
                 }
                 let inner = scope.push(&vars);
-                build_list(&node.body, &inner, ctx, slot, root_patch, out)?;
+                let iter_scope = crate::runtime::mix_site(for_base, i as u64, 31);
+                let variant = if let Some(tk) = &node.track_key {
+                    let kv = eval(tk, &inner, &mut ctx.ev());
+                    let ks = crate::runtime::val_to_cache_key(kv, ctx.it);
+                    crate::runtime::CacheVariant::Key(ks)
+                } else {
+                    crate::runtime::CacheVariant::Index(i)
+                };
+                if can_cache_for {
+                    let host = ctx.host;
+                    let cur_key = ctx.cur_key;
+                    let snap = crate::runtime::take_snapshot(
+                        body_mask.as_ref().unwrap(),
+                        host,
+                        cur_key,
+                        vars.clone(),
+                    );
+                    let id = crate::runtime::CacheId {
+                        parent: ctx.cache.as_ref().unwrap().parent_id,
+                        site: crate::runtime::SiteId(for_base),
+                        variant,
+                    };
+                    if let Some(hit) = ctx.cache.as_mut().unwrap().store.get(&id, &snap) {
+                        for e in hit {
+                            out.push(e.as_ref().clone());
+                        }
+                        continue;
+                    }
+                    let saved_parent = ctx.cache.as_ref().unwrap().parent_id;
+                    ctx.cache.as_mut().unwrap().parent_id = cache_id_hash(&id);
+                    let mut built = Vec::new();
+                    build_list(
+                        &node.body, &inner, ctx, slot, root_patch, iter_scope, &mut built,
+                    )?;
+                    ctx.cache.as_mut().unwrap().parent_id = saved_parent;
+                    let arcs: Vec<Arc<Element>> = built.iter().cloned().map(Arc::new).collect();
+                    ctx.cache.as_mut().unwrap().store.insert(id, snap, arcs);
+                    out.extend(built);
+                    continue;
+                }
+                build_list(&node.body, &inner, ctx, slot, root_patch, iter_scope, out)?;
             }
         }
 
@@ -437,9 +578,7 @@ fn build_node(
                 Some(e) => eval(e, scope, &mut ctx.ev()).as_str(),
                 None => None,
             };
-            if let Some(k) = inst_key {
-                ctx.cur_key = k;
-            }
+            let comp_cur_key = inst_key.unwrap_or(saved);
 
             let ci = *ctx.comps.get(u.comp).ok_or_else(|| ZypuiError {
                 msg: format!("组件 `{}` 不存在", u.comp),
@@ -454,8 +593,9 @@ fn build_node(
             }
 
             // 模板没写 <children/> 槽位却传了子树 → 报错（现在查，别等画面静默吞子树）。
-            if !u.children.is_empty() && count_slots(&comp.body) == 0 {
-                ctx.cur_key = saved;
+            let comp_has_slot = count_slots(&comp.body) > 0;
+            if !u.children.is_empty() && !comp_has_slot {
+                ctx.depth -= 1;
                 return crate::err(format!(
                     "组件 `{}` 没有 <children/> 槽位却传了 {} 个子节点",
                     u.comp,
@@ -463,40 +603,125 @@ fn build_node(
                 ));
             }
 
-            let patch = RootPatch {
-                key: inst_key,
-                classes: &u.class_extra,
-                caller: scope,
-            };
-            let frame = SlotFrame {
-                scope,
-                children: &u.children,
-                cur_key: saved,
-            };
-            let mut built = Vec::new();
-            let r = build_list(
-                &comp.body,
-                &inner,
-                ctx,
-                Some(&frame),
-                &mut Some(patch),
-                &mut built,
-            );
-            ctx.depth -= 1;
-            ctx.cur_key = saved;
-            r?;
+            // P1 cache: 仅缓存无 slot 回填的 Use 边界（slot 语义并入调用方）。
+            let mut cache_hit: Option<Vec<Arc<Element>>> = None;
+            let mut cache_key: Option<(crate::runtime::CacheId, crate::runtime::DepSnapshot)> =
+                None;
+            let has_dynamic_class_extra =
+                u.class_extra.iter().any(|t| !matches!(t, ClassTok::Lit(_)));
+            let host_has_state_rev = ctx.host.state_revision().is_some();
+            let comp_mask_ok = ctx
+                .cache
+                .as_ref()
+                .and_then(|c| c.masks.comp_masks.get(ci))
+                .is_some_and(|m| {
+                    m.can_cache()
+                        && !m.dynamic_interaction
+                        && (!m.uses_tr || host_has_state_rev)
+                        && !m.uses_render_source_attr
+                });
+            let can_try_cache = ctx.cache.is_some()
+                && u.children.is_empty()
+                && !comp_has_slot
+                && !has_dynamic_class_extra
+                && comp_mask_ok;
+            if can_try_cache {
+                let host = ctx.host;
+                let (parent_id, variant, snapshot) = {
+                    let c = ctx.cache.as_ref().unwrap();
+                    let variant = match inst_key {
+                        Some(k) => crate::runtime::CacheVariant::Key(k),
+                        None => crate::runtime::CacheVariant::Single,
+                    };
+                    let parent_id = c.parent_id;
+                    let mask = c.masks.comp_masks.get(ci);
+                    let snap = if let Some(m) = mask {
+                        crate::runtime::take_snapshot(m, host, comp_cur_key, arg_vars.clone())
+                    } else {
+                        crate::runtime::DepSnapshot {
+                            host_scope: host.cache_scope(),
+                            state_rev: None,
+                            bindings: Vec::new(),
+                            hover: false,
+                            press: false,
+                            focused: false,
+                            cur_key: comp_cur_key,
+                            args: arg_vars.clone(),
+                        }
+                    };
+                    (parent_id, variant, snap)
+                };
+                let id = crate::runtime::CacheId {
+                    parent: parent_id,
+                    site: crate::runtime::SiteId(site_scope),
+                    variant,
+                };
+                if let Some(hit) = ctx.cache.as_mut().unwrap().store.get(&id, &snapshot) {
+                    cache_hit = Some(hit.to_vec());
+                } else {
+                    cache_key = Some((id, snapshot));
+                }
+            }
 
-            out.append(&mut built);
+            if let Some(hit) = cache_hit {
+                ctx.depth -= 1;
+                for e in hit {
+                    out.push((*e).clone());
+                }
+            } else {
+                let saved_parent = ctx.cache.as_ref().map(|c| c.parent_id);
+                if let (Some((id, _)), Some(c)) = (&cache_key, ctx.cache.as_mut()) {
+                    c.parent_id = cache_id_hash(id);
+                }
+                if let Some(k) = inst_key {
+                    ctx.cur_key = k;
+                }
+                let patch = RootPatch {
+                    key: inst_key,
+                    classes: &u.class_extra,
+                    caller: scope,
+                };
+                let frame = SlotFrame {
+                    scope,
+                    children: &u.children,
+                    cur_key: saved,
+                };
+                let mut built = Vec::new();
+                let r = build_list(
+                    &comp.body,
+                    &inner,
+                    ctx,
+                    Some(&frame),
+                    &mut Some(patch),
+                    site_scope,
+                    &mut built,
+                );
+                ctx.depth -= 1;
+                ctx.cur_key = saved;
+                if let Some(p) = saved_parent {
+                    if let Some(c) = ctx.cache.as_mut() {
+                        c.parent_id = p;
+                    }
+                }
+                r?;
+
+                if let Some((id, snapshot)) = cache_key {
+                    let arcs: Vec<Arc<Element>> = built.iter().cloned().map(Arc::new).collect();
+                    if let Some(c) = ctx.cache.as_mut() {
+                        c.store.insert(id, snapshot, arcs);
+                    }
+                }
+                out.append(&mut built);
+            }
         }
 
         Node::Slot => match slot {
             Some(f) => {
-                // 回填调用方子树：调用方作用域 + 调用方当时的实例 key；
-                // 槽位帧传 None —— 子树里再出现裸 Slot 就是页级槽位，报错。
                 let saved = ctx.cur_key;
                 ctx.cur_key = f.cur_key;
                 let mut dummy = None;
-                let r = build_list(f.children, f.scope, ctx, None, &mut dummy, out);
+                // slot 内容的 site 语义归属调用方；P1 下含 slot 的 Use 不独立缓存。
+                let r = build_list(f.children, f.scope, ctx, None, &mut dummy, site_scope, out);
                 ctx.cur_key = saved;
                 r?;
             }
@@ -519,6 +744,27 @@ fn count_slots(nodes: &[Node]) -> usize {
             Node::Use(_) => 0,
         })
         .sum()
+}
+
+/// 组件模板是否包含 `<children/>` 槽位（P1 缓存边界判定用）。
+pub(crate) fn component_has_slot(comp: &crate::ir::Component) -> bool {
+    count_slots(&comp.body) > 0
+}
+
+fn cache_id_hash(id: &crate::runtime::CacheId) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
+}
+
+fn node_kind_tag(n: &Node) -> u64 {
+    match n {
+        Node::El(_) => 1,
+        Node::If(_) => 2,
+        Node::For(_) => 3,
+        Node::Use(_) => 4,
+        Node::Slot => 5,
+    }
 }
 
 /// `uv` 属性的取值：`"x,y,w,h"` 字面串或四元素列表。

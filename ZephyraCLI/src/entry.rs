@@ -100,14 +100,27 @@ fn dispatch(bin: &str, argv: Vec<String>, io: &mut dyn Write) -> ExitCode {
             }
         }
         for (k, _) in &parsed.options {
-            let known = matches!(
-                k.as_str(),
-                "format" | "path" | "manifest-path" | "styles" | "port" | "host"
-            );
-            if !known {
+            // ⚠ 判据取自 `args::VALUE_FLAGS` —— **不要**在这里另抄一份名单。
+            //
+            // 另抄的后果是「解析器认得、门禁不认」：用户敲 `zephyra perf watch
+            // --duration-ms 2000`，解析器把 `2000` 吃成取值，门禁却报
+            // 「unknown option」—— 而**值已经被吃掉了**，于是用户改成
+            // `--duration-ms=2000` 也不行（同一个门禁）。
+            //
+            // 门禁与解析器必须**同一份名单**，否则「文档里有的选项」有一半
+            // 用不了，而报错信息还指向不了真正的原因。
+            if !crate::args::VALUE_FLAGS.contains(&k.as_str()) {
                 io.err_line(&format!(
                     "error: unknown option `--{k}` for `{bin} {}`",
                     cmd.name
+                ));
+                io.err_line(&format!(
+                    "       accepted: {}",
+                    crate::args::VALUE_FLAGS
+                        .iter()
+                        .map(|s| format!("--{s}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 ));
                 return ExitCode::Usage;
             }

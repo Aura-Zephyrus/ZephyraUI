@@ -33,6 +33,7 @@ pub mod apply;
 pub mod ir;
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;
 
 pub use apply::SheetStyler;

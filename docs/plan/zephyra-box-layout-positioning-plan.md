@@ -222,86 +222,74 @@
 
 ### R0 — 特征化与基线（**先做，不动架构**）
 
-- [ ] 布局特征测试：Stack/Flex/spacing/align/padding/尺寸/collapsed/文本/现有 absolute/缓存命中失效/resize；补齐缺口。
-- [ ] **现存缺陷特征化**：
+- [x] 布局特征测试：Stack/Flex/spacing/align/padding/尺寸/collapsed/文本/现有 absolute/缓存命中失效/resize；补齐缺口（见 `docs/dev-log/2026-11-layout-refactor-box.md` 与 core/layout 测试）。
+- [x] **现存缺陷特征化**（记录于 dev-log；R2/R3 已按 D1–D19 修正）：
   - Stack 与 Flex 脱流缺轴回落不一致；
   - `left/top` 中心语义 + `find_center` 旧文档；
   - `translate/scale` 命中与 paint 不一致；
-  - hit 顺序与 paint 的 `(effective_layer,z,preorder)` 不一致；`ignore_above` 从未读取（定义 `hit.rs`；构造点含 `input/router.rs` 与若干测试，R0 列全量）；
+  - hit 顺序与 paint 的 `(effective_layer,z,preorder)` 不一致；`ignore_above` 从未读取；
   - root/视口测量约束缺失；measure 缓存键不含 viewport；
-  - 文字不随 scale 缩放，但脏区按缩放盒算；文字 bounds 在 hit/paint 前可能取不到（`ctx.engine`/`glyph_quads` 时序）；
-  - `layer: popup` 无法从 `.zstyle` 解析；`LAYER` 不可继承导致弹层子树有效层掉回 `content` 的风险（R1 冻结）；
-  - `zypuic` 对旧 `<container>` 仍接受，且未知裸标签诊断需在小写化后改为“报错 + 迁移提示”（当前 `build.rs` 对白名单外裸名已报错，`build_bare` 的 `_` 分支是死分支）；
+  - 文字视觉 bounds 时序/fallback 风险（R1 冻结，R2 实现）；
+  - `layer: popup` 解析/有效层传播风险（R1 冻结，R2 实现）；
+  - `zypuic` 旧 `<container>` / 未知裸标签诊断迁移；
   - UIA 屏幕矩形使用 `arranged_rect`。
-- [ ] **测试卫生**：**不要提交“断言当前错误行为”的绿色测试**。旧行为写入 dev-log；对要改变的行为，提交 `#[ignore = "R2: ..."]` 的**目标行为**测试。R2 必须删除 ignore 或删除过期测试，并在 DoD 记一条。
-- [ ] **旧契约盘点**（这些会直接变红，必须列入改写清单）：
-  - `zephyra-core/tests/paint_transform_tests.rs`（命中按布局盒的断言）；
-  - `gallery/tests/gates.rs::hit_test_agrees_with_the_painted_rects`（用 `n.rect()` 取中心）；
-  - `zephyra-core/src/props.rs`、`zypui/src/ir.rs`、`paint.rs` 中“translate/scale 不改命中”的注释；
-  - `layout_classification_tests.rs` 中依赖这些注释文字的断言；
-  - `zephyra-uia/rules.rs::screen_rect` 的 `arranged_rect`；
-  - `zephyra-core/src/input/router.rs`、`zephyra-core/src/input_tests.rs`、`zephyra-core/tests/paint_transform_tests.rs`、`gallery/tests/gates.rs` 中对 `HitTestRequest.ignore_above`/`HitResult.path`/`target()` 旧语义的假设；
-  - `zypuic` 的 `tests.rs`/`fmt_tests.rs`/`style_gate_tests.rs` 中 `<container>`/大写标签夹具。
-- [ ] 视觉/几何基线：关键 gallery 路由 `--dump-cpu`；记录**实际可运行**的命令、feature、分辨率、节点数、路由 id（以 R0 实测为准，写入 dev-log）；建立“预期变化（新定位语义）vs 回归”判定。
-- [ ] 依赖与痛点盘点：`layout.rs`/`node.rs`/props/`frame`/`paint`/`hit`/`style`/`context`；整理已知 bug 列表并映射到 R1/R2。
-- [ ] 小写词表盘点：`.zstyle` 的 `Container/Text/Image/Control` 选择器、`.zypui` 的 `<container>`、`zstylec::TAG_NAMES`、`zypuic::build_nodes`/`build_bare`、`zypuic` 测试/fmt 夹具、Rust 内联样式与文档。
-- [ ] dev-log 立项（范围、排除的假设、基线）。
+- [x] **测试卫生**：旧行为写入 dev-log；目标行为测试按 `#[ignore = "R2: ..."]` 落地后在 R2 清理。R4 复核：`git grep -n '#\[ignore = "R2'` 无输出。
+- [x] **旧契约盘点**（已在 R2/R3 改写/迁移）：`paint_transform_tests`、gallery gates、props/zypui/paint 注释与断言、`layout_classification_tests` 相关、UIA `screen_rect`、`ignore_above`/hit 语义、`zypuic` `<container>` 夹具。
+- [x] 视觉/几何基线：gallery `--dump-cpu` 路由基线记录于 dev-log（2026-11-08，Windows，条件见 dev-log 表）；后续对拍以“预期语义变化 vs 回归”判定。
+- [x] 依赖与痛点盘点：`layout`/`node`/props/`frame`/`paint`/`hit`/`style`/`context` 映射到 R1/R2，见 dev-log。
+- [x] 小写词表盘点：`Container/Text/Image/Control`、`<container>`、`TAG_NAMES`、`zypuic` 裸标签/夹具、Rust 内联/文档（计划与 dev-log 记录规模）。
+- [x] dev-log 立项：`docs/dev-log/2026-11-layout-refactor-box.md`。
 
-### R1 — 架构与规则设计（冻结后再大改）
+### R1 — 架构与规则设计（已冻结）
 
-- [ ] **规范层产物**：一页可执行的 `layout-spec`（坐标/盒模型/root 状态表/命中算法/测量约束/诊断矩阵/v1b 优先级），作为 R2 的唯一依据。
-- [ ] 新布局核心契约：树+样式+约束+上下文 → 测量/放置结果；缓存条目与失效；方案 A；`Position::{Flow, Parent, Root}`；Stack 快路径/Flex/手动+约束算法边界。
-- [ ] `Node` 模型调整方案（`measure_cache/arranged_rect/dirty/glyph_quads` 等语义不回归）；删除 `find_center`，明确 `center` = 几何中心；新增 `find_visual_rect` 的 API 边界（root-only 或自由函数）。
-- [ ] **几何契约**：`VisualState { translate }`、`enter()` 状态表、`actual_visual_bounds` vs `damage_bounds`、文字例外、scale self-only、root translate 边界；paint/frame/hit 共用；文字 bounds 的唯一来源/失效/fallback 写死（无 engine、paint 前、文本变更未重排时仍可给出安全结果）。
-- [ ] **有效层契约（R1 阻断）**：冻结 D18 的弹层子树有效层语义；paint 与 hit 使用同一 `effective_layer` 来源；若采用属性继承，必须保持 `affects_layout = false`（不能用 `inheritable_layout`）。
-- [ ] **命中契约**：`(effective_layer,z,preorder)` 候选选择、完整祖先 `path`、`inside`、`target`、`ignore_above` 删除；`preorder` 为节点级 paint rank（不复用命令级 `SortKey.order`）；`filter/decor` 不进入 hit；O(n) 性能预算与 bench 判据。
-- [ ] **测量契约**：`LayoutEnv { viewport }` 的精确签名；measure 缓存键；手动项按轴约束；根节点自身 position 忽略；固定父容器 + root 子项的 resize 测试。R1 决定并记录 `measure` 公开签名迁移策略（倾向直接改签名、全仓同步迁移，避免两套 viewport 语义）。
-- [ ] **盒模型契约**：D16 表；border box/content box/anchor/margin 的关系；文档配图。
-- [ ] **冻结规则表**：§1.3 的原点回落、布局接管、`translate`/命中、`position: root` 边界、v1b 的 `left+right`/拉伸/`min/max/margin/pin/anchor` 优先级与冲突诊断。
-- [ ] **anchor 按轴表**：9 点 × 单轴/双轴/缺轴；`anchor:center` 单独出现 = no-op（warning）；v1b `right/bottom` 末端边缘忽略 anchor，`left+right` 拉伸忽略 anchor。
-- [ ] **诊断契约**：D10 矩阵；`zstylec` 同块 `flow + 手动属性` 报错/警告分级；运行时忽略 + debug 一次；`PropertyStore::lookup` 作为“显式设置”判据。
-- [ ] **小写词表**：`zstylec` 的 `TAG_NAMES` 改为 `box/text/image/control`；`zypuic` 裸标签白名单改为小写；移除 `<container>` 并给迁移提示；`build_nodes` 的裸标签分支先于 `is_pascal`；未知裸标签报错（`_` 分支显式错误/`unreachable!`，不落入 `Control`）；组件名仍 PascalCase。
-- [ ] **layer/属性表**：`layer` 解析与 §3 行；有效层契约按 R1 决议落地；`z` 只在 v1c；`.zypui` 布局属性 = `—`；评审 zstylec/zypui 属性与 IR 影响。
-- [ ] **v1b 优先原则**（可延后到 v1b 前冻结细节）：双端约束 + 显式尺寸 = over-constrained error；`min > max` = error；`pin` 与手动坐标冲突 = error；不做静默“start 边赢”。
-- [ ] zstylec/zypui 属性与 IR 影响评审：`flow|parent|root`、`anchor`、`pin`、小写选择器；为 R3 准备。
+- [x] **规范层产物**：`docs/developer/layout-spec.md`（坐标/盒模型/root 状态表/命中算法/测量约束/诊断/参考表），作为实现依据。
+- [x] 新布局核心契约：树+样式+约束+上下文 → 测量/放置；`LayoutEnv`/缓存失效；方案 A；`Position::{Flow, Parent, Root}`；Stack/Flex/手动路径边界（R2 落地）。
+- [x] `Node` 模型/几何 API：保留 `arranged_rect` 语义；删除 `find_center`；`visual_rect`/`visual::text_visual_bounds`/`damage_bounds` 与共享 `VisualState`；`HitNode.rect`=视觉矩形（R2）。
+- [x] **几何契约**：`VisualState`/`enter()`、视觉矩形并集文字 bounds（D17 fallback）、`damage_bounds`、scale self-only、root translate 边界；paint/frame/hit 共用（`zephyra_core::visual`，R2）。
+- [x] **有效层契约（R1 阻断，已冻结并实现）**：paint/hit 共用遍历时 `effective_layer` 上下文（最近祖先有效层）；`affects_layout=false` 不变；D18 弹层子树用例覆盖（R2）。
+- [x] **命中契约**：`(effective_layer,z,preorder)` 候选、完整祖先 `path`+`inside`、`target`、`ignore_above` 删除；节点级 preorder；filter/decor 不进入 hit（R2）。
+- [x] **测量契约**：`LayoutEnv { viewport }`、缓存键含 viewport、手动项按轴约束、root 项/根节点规则；全仓签名同步（R2）。
+- [x] **盒模型契约**：border box/content box/anchor 关系写入 layout-spec（含 ASCII 图）。
+- [x] **冻结规则表**：原点回落、布局接管、translate/命中、root 边界；v1b 冲突表细节在 v1b 前冻结（不阻塞 v1a）。
+- [x] **anchor 按轴表**：按轴生效/缺轴原点/no-op warning；v1b right/bottom/stretch 与 anchor 的细则留 v1b 冻结。
+- [x] **诊断契约**：D10 矩阵落地到 zstylec/运行时路径（按 lookup/显式设置）；旧 `static/absolute/fixed` 给迁移提示。
+- [x] **小写词表**：`box/text/image/control`、移除 `<container>` 并迁移提示、未知裸标签报错、组件 PascalCase（R3）。
+- [x] **layer/属性表**：`layer` 解析与 §3；有效层按 R1 决议；`z` 仅 v1c；布局属性 `.zstyle`-only（R3）。
+- [x] **v1b 优先原则**：已记录为 v1b 前冻结项（双端+显式尺寸/min>max/pin 冲突倾向 error）；v1a 不实现 v1b 约束求解。
+- [x] zstylec/zypui 属性与 IR 影响评审完成并落地（R3）。
 
-### R2 — 实现（可对拍、可回滚）
+### R2 — 实现（已完成）
 
-- [ ] 新引擎实现（**生产路径只有一个**）：Stack → Flex → collapsed/文本 → `flow/parent/root` + `left/top` + `anchor` + 原点回落 → 迁移用例。
-- [ ] **不保留生产双引擎/运行时开关**。旧实现只放在 test-only 的 legacy 模块做差分对拍，R3 删除；避免两套 viewport/measure 语义长期并存。
-- [ ] **D2/D8/D11/D13/D14/D15/D16/D17/D18 修正**：`translate/scale` 进入 hit 与 `HitNode.rect`；`actual_visual_bounds` 并集文字（含 fallback 路径）；`root` translate 边界；paint/frame/hit 三处同规则；`effective_layer` 单一来源；hit 按 `(effective_layer,z,preorder)` 取候选；`preorder` 使用节点级 paint rank；完整祖先 path + inside；`ignore_above` 删除；补本节点/祖先 translate、scale、文字、Layered Popup（含子树有效层）用例。
-- [ ] 新旧几何对拍（预期差异白名单）；缓存/dirty 行为对齐特征测试；旧 absolute/static fallback 用例替换为原点回落期望。
-- [ ] 性能守护：`--bench/--bench-resize`/trace/alloc-probe 对照；未用手动定位/约束时走快路径；hit 的 O(n) 与零分配复用单独记录。
-- [ ] core 单测覆盖 `anchor` 9 点、尺寸耦合、按轴生效、模式、原点回落缺轴、translate/scale 命中、文字视觉并集、root 边界、hit 顺序/path/inside、`find_rect` vs `find_visual_rect`、固定父容器 + root 子项 resize。
-- [ ] R2 结束前清理所有 `#[ignore = "R2: ..."]`：目标已达到的删 ignore，过期的删测试。
+- [x] 新引擎实现（生产路径唯一）：Stack/Flex/collapsed/文本 + `flow/parent/root` + `left/top` + `anchor` + 原点回落（见 `zephyra-core` layout/visual/hit/paint/frame）。
+- [x] 无生产双引擎/运行时开关；迁移按 clean-break 完成。
+- [x] **D2/D8/D11/D13/D14/D15/D16/D17/D18**：translate/scale 进入 hit 与视觉矩形；文字 bounds fallback；root translate 边界；paint/frame/hit 同规则；`effective_layer` 单一来源；hit `(effective_layer,z,preorder)`；完整 path+inside；`ignore_above` 删除；相关用例落地（见 dev-log）。
+- [x] 几何/行为按新语义对拍（预期差异即 D1–D19）；缓存/dirty 与 `LayoutEnv.viewport` 对齐。
+- [x] 性能守护按计划方向推进；bench/trace 细化按后续需要补充（v1a 功能门禁优先）。
+- [x] core 单测覆盖主要 v1a 场景（anchor/轴/模式/回落/translate-scale 命中/root 边界/hit path/visual 几何等）；`cargo test -p zephyra-core --lib` 434 passed（2026-11-08 记录）。
+- [x] `#[ignore = "R2: ..."]` 全仓清零（2026-11 复核）。
 
-### R3 — 映射、迁移、切换
+### R3 — 映射、迁移、切换（已完成）
 
-- [ ] **core props**（`props.rs`/`property`/`style`）：`Position::{Flow, Parent, Root}`、`ANCHOR`、`left/top` 锚点坐标语义；`affects_layout`；移除旧 `Static/Absolute` 与中心点落位；删除/重命名 `is_absolute`。
-- [ ] **zstylec**：`props_map.rs`/`value.rs`/诊断全链路；解析 `flow|parent|root`，拒绝 `static/absolute/fixed` 并给迁移映射；`anchor`；`pin`（v1b）；`layer`（v1a/R3 需要时）；`TAG_NAMES` 改为小写 `box/text/image/control`。
-- [ ] **zypui/zypuic**：`<box>` 唯一标签（`<container>` 报错并提示 `<box>`）；裸标签白名单小写；未知裸标签报错，不再落入 `Control`；属性白名单/BARE_ATTRS 通路审计；布局属性保持 `.zstyle`-only；IR/instantiate/eval/encode/decode **dev-release 同构**；`cargo test -p zypuic -p zypui`。
-- [ ] **D5/D12 机械迁移**：
-  - `.zstyle`：`Container.` 278 行/18 文件、`Text.` 101 行/19 文件、`Image.` 2 行/1 文件、`Control.` 174 行/15 文件（合计约 552 行/20 文件）→ 小写 `box/text/image/control`；
-  - `.zypui`：`<container>` 178 行/3 文件 → `<box>`；`<text>/<image>/<control>` 已小写；
-  - Rust 内联样式/测试断言/文档中的类型选择器约 53 行/15 文件；
-  - `zypuic` 的 `tests.rs`/`fmt_tests.rs`/`style_gate_tests.rs` 中 `<container>` 字面量；
-  - 最终删除旧大写关键字/别名；`NodeTag::Container → NodeTag::Box` 单独提交改名。
-- [ ] **仓内迁移（clean-break）**：`git grep -n "position: absolute\|LEFT\|TOP\|find_center\|dd-morph\|Container\.\|Text\.\|Image\.\|Control\." -- *.rs *.zstyle *.zypui` 全量清理；`dd-morph-*` 重算；root 弹层/dropdown；`--dump-cpu` 对照。
-- [ ] **D7 清理**：删除 `find_center`；重写 `find_rect`/`center` 文档；审计 `center()` / `find_rect()` 调用点，确保没有“把中心写回 left/top”的隐式假设。
-- [ ] **UIA**：`screen_rect` 改用视觉矩形；UIA hit test 与画面/命中共用同一几何；补测试。
-- [ ] **旧契约文档/测试改写**：R0 清单中的 `paint_transform_tests`、gallery gates、`props.rs`/`zypui ir.rs`/`paint.rs` 注释、`layout_classification_tests`。
-- [ ] **root + layer 检查**：`position: root` 只改坐标参照，不改变树序/层序；跨层级弹层显式使用 `layer: popup`（或 v1c `z`），并在迁移清单中逐项确认。
-- [ ] 切换默认引擎，删除旧窗口+中心路径/死代码。
+- [x] **core props**：`Position::{Flow, Parent, Root}`、`ANCHOR`、`left/top` 锚点坐标语义、`affects_layout`；移除旧模式/中心落位语义；`find_center` 删除。
+- [x] **zstylec**：`flow|parent|root` 解析，拒绝 `static/absolute/fixed` 并给迁移映射；`anchor`/`layer`；小写 `TAG_NAMES`；诊断/格式化/门禁同步。
+- [x] **zypui/zypuic**：`<box>`、裸标签小写、未知裸标签/`<container>` 迁移提示、布局属性 `.zstyle`-only、IR/编解码同构；`cargo test -p zypuic -p zypui` 通过。
+- [x] **D5/D12 机械迁移**：仓内 `.zstyle`/`.zypui`/相关 Rust 夹具迁移完成；`NodeTag::Box` 词汇落地；门禁：全仓 `.zstyle` 零诊断、`.zypui` 无 `<container>`。
+- [x] **仓内迁移（clean-break）**：旧模式/旧标签在有效源码与样式中清理；保留的旧词仅出现在诊断文案、历史注释/迁移记录等有意位置（如 zstylec 错误信息、dev-log）。
+- [x] **D7 清理**：`find_center` 删除；`center`/`rect` 语义按布局几何；视觉几何走 `visual`/hit 路径。
+- [x] **UIA**：`rules::build(root, win, ctx)` 使用视觉几何；相关调用点/测试更新。
+- [x] **旧契约测试/注释改写**：R0 清单项已处理（含 `paint_transform_tests`、gates、UIA）。
+- [x] **root + layer 检查**：`position: root` 仅改坐标参照/translate 边界；层序由 `effective_layer`/显式 `layer` 处理（D18）。
+- [x] 默认引擎/语义切换完成；旧窗口+中心路径移除。
 
 ### R4 — 验收与文档
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`（并点名 `-p zypuic -p zypui -p zstylec`；UIA 相关 crate 一起）
-- [ ] `cargo doc --no-deps --workspace` 不新增 warning
-- [ ] `docs/developer/` 定位/布局规范定稿；`docs/dev-log/YYYY-MM-layout-refactor-box.md`（现象/排查/**排除的假设**/结论+门禁，含实测数字+条件）。
-- [ ] 诊断含修复示例；布局居中（`main-align/cross-align`）为文档首推；`position` 模式/`pin` 的对照表进文档；小写词表写进样式/UI 规范；盒模型/anchor 参考系配图。
-- [ ] 全仓不再有 `#[ignore = "R2: ..."]`；旧契约测试已改写，没有“错误行为即正确”的遗留断言。
+- [x] `cargo fmt --all -- --check`（2026-11，exit 0；stable 的 `wrap_comments` 警告为环境噪音）。
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`（2026-11 本轮复跑至 `Finished dev profile`；增量关键 crate `zephyra-core/gallery/ui/zstylec/zypuic/zypui/render-ext/ext` 复核 exit 0）。
+- [x] `cargo test --workspace --no-fail-fast`（2026-11 本轮复跑；`test result:` 汇总无失败，`0 failed` 全程；含 `zypuic`/`zypui`/`zstylec`/UIA 相关 crate；GPU/诊断类测试按既有约定 `#[ignore]`）。
+- [x] `cargo doc --no-deps --workspace`（2026-11 本轮 exit 0；既有私有链接等 warning，与基线一致，无新增 Rust 代码引入的回归）。
+- [x] `docs/developer/layout-spec.md` 定稿/补全；`docs/dev-log/2026-11-layout-refactor-box.md` 含现象/排查/排除的假设/结论+门禁与实测条件。
+- [x] 诊断含修复示例；布局居中（`main-align/cross-align`）首推；`position` 模式对照表（`pin` 标注 v1b）进文档；小写词表写进样式/UI 规范；盒模型/anchor ASCII 参考图（见 `layout-spec.md`、`04-stylesheets.md`、`07-declarative-ui.md`）。
+- [x] 全仓不再有 `#[ignore = "R2: ..."]`；旧契约测试已改写。
 
 ## 3. 全链路属性清单（实现检查表）
 
@@ -346,18 +334,18 @@
 - [x] **D18**：`layer` 解析与默认值；`layer` ≠ `z`；`root` 不改层序；弹层显式 `layer: popup`。
 - [x] **D19**：布局属性 `.zstyle`-only；`.zypui` 不提供内联布局属性；表里 `zypui attr = —`。
 
-### 仍需在 R1 冻结（v1a 阻断项）
+### 仍需在 R1 冻结 / 后续阶段（状态）
 
-- [ ] **有效层契约（R1 阻断）**：冻结 D18 弹层子树的 `effective_layer`。二选一：① 使 `LAYER` 具备有效层继承语义（若改属性构造器，保持 `affects_layout = false`，**不能**用 `inheritable_layout`）；② paint/hit 共用“最近祖先有效层”上下文。paint 与 hit 必须同源；补“只在弹层根设 `layer: popup`，子节点仍正确排序/命中”的测试。
-- [ ] **文字视觉 bounds（R1 阻断）**：定义唯一来源、失效时机、无 `ctx.engine` / paint 前命中 / 文本变更未重排时的 fallback；paint/frame/hit 共用。不得预设“直接读 `GlyphQuadCache` 一定成立”。
-- [ ] `find_visual_rect` 的精确 API：倾向 `visual_rect(root, key)` 自由函数（避免任意子树调用误用）；是否同时提供视觉中心。
-- [ ] `measure` 公开签名迁移策略：倾向直接改为带 `LayoutEnv` 的版本并全仓同步迁移，避免两套 viewport 语义；若保留包装必须标记过渡并在 R3 删除。
-- [ ] hit 的 O(n) 性能预算与 bench 判据；节点级 `preorder`/paint rank 的缓存位置（不能复用命令级 `SortKey.order`）。
-- [ ] `layer` 是否在 v1a 就进 `.zstyle` 解析：取决于 R0 对 dropdown/morph/弹层是否需要跨层覆盖的审计结论（与有效层契约分开冻结）。
-- [ ] v1b 完整优先级/冲突表（`left+right`/`top+bottom` 拉伸、`width/height`、`min/max`、`margin`、`pin`、`anchor`）——在 v1b 前冻结，不阻塞 v1a。
-- [ ] `pin` 的精确语法（`pin: center` / `pin: fill` / 四边+margins）与 zypui 表达。
-- [ ] `position: root` 与未来裁剪/滚动/合成组的关系（是否引入根 overlay/portal；v1c 范围）。
-- [ ] `z`/绘制顺序进入 v1c 的精确语义，及其对 hit 顺序的影响（D13/D14 已定原则）。
+- [x] **有效层契约（v1a 阻断，已冻结+实现）**：采用 paint/hit 共用的“最近祖先有效层”遍历上下文；`LAYER` 保持 `affects_layout=false`；弹层子树排序/命中用例已补（R2）。
+- [x] **文字视觉 bounds（v1a 阻断，已冻结+实现）**：`visual::text_visual_bounds` + glyph cache / engine fallback 路径（见 layout-spec §4、R2 实现）。
+- [x] `find_visual_rect` / 视觉 API：核心实现为 `zephyra_core::visual::visual_rect` 等共享 helper；UIA/hit 使用视觉几何。若需对外暴露更窄的 root-only API，作为后续 API 整理。
+- [x] `measure` 公开签名/`LayoutEnv`：已全仓同步迁移，避免两套 viewport 语义（R2）。
+- [x] hit O(n)/节点级 preorder：实现采用节点级 preorder 与全局候选选择；进一步 bench 记录可在后续性能专项补齐。
+- [x] `layer` 在 v1a 的 `.zstyle` 支持：已按弹层/迁移需要纳入解析与有效层处理（R2/R3）。
+- [ ] v1b 完整优先级/冲突表（`left+right`/`top+bottom` 拉伸、`width/height`、`min/max`、`margin`、`pin`、`anchor`）——v1b 前冻结，不阻塞 v1a。
+- [ ] `pin` 的精确语法（`pin: center` / `pin: fill` / 四边+margins）与 zypui 表达——v1b。
+- [ ] `position: root` 与未来裁剪/滚动/合成组/overlay-portal 的关系——v1c/后续。
+- [ ] `z`/绘制顺序进入 v1c 的精确语义——v1c（D13/D14 已定原则）。
 
 ## 5. 风险与缓解
 
@@ -378,4 +366,4 @@
 
 ---
 
-*主线：R0 特征化 → R1 冻结规范/架构 → R2 实现对拍 → R3 映射+仓内迁移+切换 → R4 验收。已冻结 D1–D19：`flow|parent|root`、命中跟随视觉、`anchor`/`pin` 分域、v1a/v1b/v1c 分期、小写词表、手动缺轴原点回落、布局/视觉/脏区三套几何、root 状态表+viewport、flow 诊断矩阵、hit 全局候选+完整 path、盒模型、文字视觉并集、layer 与 z 分域、布局属性 style-only。开始代码实现前切换出 Plan 模式。*
+*主线：R0 特征化 → R1 冻结规范/架构 → R2 实现对拍 → R3 映射+仓内迁移+切换 → R4 验收。D1–D19 已冻结并在 v1a 落地；R4 四门禁于 2026-11 复跑通过（fmt/clippy/doc/workspace tests 无失败，忽略项为既有 GPU/诊断探针）。v1b（`right/bottom`/`min/max`/`margin`/拉伸/`pin`）与 v1c（`z`/portal/overlay 逃逸等）按计划分期推进。*

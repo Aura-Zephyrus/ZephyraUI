@@ -285,5 +285,5 @@ fn find_node_mut<'a>(node: &'a mut Node, key: &ElementKey) -> Option<&'a mut Nod
 }
 
 #[cfg(test)]
-#[path = "tests/focus_tests.rs"]
+#[path = "../../tests/unit/focus.rs"]
 mod tests;

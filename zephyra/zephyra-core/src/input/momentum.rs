@@ -86,5 +86,5 @@ impl Momentum {
 }
 
 #[cfg(test)]
-#[path = "tests/momentum_tests.rs"]
+#[path = "../../tests/unit/momentum.rs"]
 mod tests;

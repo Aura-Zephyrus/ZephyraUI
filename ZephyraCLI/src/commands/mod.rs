@@ -111,21 +111,21 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "dev",
         about: "run in dev mode: tracing on, restarts when a stylesheet changes",
-        args: "[--release] [--styles <dir>] [--no-watch] [--no-trace] [--manifest-path <p>]",
+        args: "[--release] [--styles <dir>] [--no-watch] [--no-trace] [--manifest-path <p>] [--log <file>]",
         flags: &["release", "no-watch", "no-trace"],
         run: dev::run,
     },
     Command {
         name: "run",
         about: "run a ZephyraUI app (debug)",
-        args: "[--release] [--manifest-path <p>]",
+        args: "[--release] [--manifest-path <p>] [--log <file>]",
         flags: &["release"],
         run: run::run,
     },
     Command {
         name: "build",
         about: "build a ZephyraUI app",
-        args: "[--release] [--manifest-path <p>]",
+        args: "[--release] [--manifest-path <p>] [--log <file>]",
         flags: &["release"],
         run: build::build,
     },
@@ -149,6 +149,27 @@ pub const COMMANDS: &[Command] = &[
         args: "[--port <n>] [--host <addr>]",
         flags: &[],
         run: mcp::run,
+    },
+    Command {
+        name: "bridge",
+        about: "talk to a running app's debug bridge directly (one process, many commands)",
+        args: "[--port <n>] [--host <addr>] [--stdin] [--list] <command>... | log <file> [--tail <n>]",
+        flags: &["stdin", "list"],
+        run: bridge::run,
+    },
+    Command {
+        name: "perf",
+        about: "performance monitor for a running app (profile / watch)",
+        args: "profile|watch [--port <n>] [--host <addr>] [--seconds <n>] [--interval-ms <n>] [--duration-ms <n>]",
+        flags: &[],
+        run: perf::run,
+    },
+    Command {
+        name: "debug",
+        about: "debugger for a running app (watch / tree / snapshot / diff)",
+        args: "watch|tree|snapshot|diff [--port <n>] [--host <addr>] [--interval-ms <n>] [--duration-ms <n>] [--depth <n>] [--all] <args>...",
+        flags: &["all"],
+        run: debug::run,
     },
 ];
 
@@ -181,13 +202,16 @@ pub fn render_help(bin: &str, version: &str) -> String {
     s
 }
 
+mod bridge;
 mod build;
 mod check;
+mod debug;
 mod dev;
 mod fmt;
 mod info;
 mod mcp;
 mod new;
+mod perf;
 mod props;
 mod run;
 
@@ -251,22 +275,155 @@ fn which_cargo() -> Option<std::path::PathBuf> {
 }
 
 /// 起一个子进程并把它的输出**继承**出去（直接透传，不缓冲）。
-pub fn spawn_inherit(
+///
+/// `log` 非空时额外把子进程的 stdout / stderr **落一份**到那个文件。
+///
+/// # 为什么落盘这一档要走管道
+///
+/// `status()` 让子进程直接继承本进程的 stdout/stderr —— 那是零拷贝、零延迟的，
+/// 但**没法**再抄一份到文件。所以落盘这一档必须改成 `piped()` + 转发。
+///
+/// ⚠ 转发按**字节块**做（不是按行）：cargo 的进度输出用 `\r` 结尾而不带 `\n`，
+/// 按行读会把「编译中 12%」这类进度憋到整行结束才吐出来 —— 那正是本函数
+/// 的注释里说的「看起来半天才出来」。
+///
+/// ⚠ stdout 与 stderr 写进**同一个**文件，两股流可能在块边界处交错。
+/// 这是刻意的：应用与 cargo 的诊断都在 stderr 里，分成两个文件反而要人自己对。
+pub fn spawn_inherit<S: AsRef<std::ffi::OsStr>>(
     program: &std::path::Path,
-    args: &[&str],
+    args: &[S],
     config_path: Option<&std::path::Path>,
+    log: Option<&std::path::Path>,
 ) -> Result<ExitCode, CliError> {
+    let Some(log_path) = log else {
+        let mut command = std::process::Command::new(program);
+        command.args(args);
+        if let Some(path) = config_path {
+            command.env("ZEPHYRA_APP_CONFIG_PATH", path);
+        }
+        let status = command
+            .status()
+            .map_err(|e| CliError::missing(format!("cannot run {}: {e}", program.display())))?;
+        return Ok(if status.success() {
+            ExitCode::Success
+        } else {
+            ExitCode::Failure
+        });
+    };
+
+    let mut child = spawn_pumped(program, args, config_path, Some(log_path))?;
+    let status = child
+        .wait()
+        .map_err(|e| CliError::failure(format!("cannot wait for {}: {e}", program.display())))?;
+    Ok(if status.success() {
+        ExitCode::Success
+    } else {
+        ExitCode::Failure
+    })
+}
+
+/// 一个**输出被转发**的子进程。
+///
+/// 「转发」= 子进程的 stdout / stderr 走管道，另开线程写到终端（以及可选的
+/// 日志文件）。为什么要有这一档：`status()` 那种「直接继承」没法抄一份到
+/// 文件，而 `--log` 的全部价值就在于那份副本。
+pub struct PumpedChild {
+    child: std::process::Child,
+    pumps: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl PumpedChild {
+    /// 子进程是否已经结束（不阻塞）。
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// 结束子进程并**等转发线程收尾**。
+    ///
+    /// ⚠ 必须等转发线程：不等的话，子进程写完的最后一段（常常正是崩溃那一行）
+    /// 会在父进程退出时被丢掉 —— 而那正是要留证据的地方。
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let status = self.child.wait();
+        for pump in self.pumps.drain(..) {
+            let _ = pump.join();
+        }
+        status
+    }
+
+    /// 杀掉子进程（不join 转发线程 —— 调用方接着会 `wait`）。
+    pub fn kill(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
+/// 起一个子进程，stdout/stderr 走管道并被转发。
+///
+/// `log` 非空时转发目标多一个文件（追加写）。
+pub fn spawn_pumped<S: AsRef<std::ffi::OsStr>>(
+    program: &std::path::Path,
+    args: &[S],
+    config_path: Option<&std::path::Path>,
+    log: Option<&std::path::Path>,
+) -> Result<PumpedChild, CliError> {
+    let file = match log {
+        Some(path) => {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| {
+                    CliError::failure(format!("cannot open log {}: {e}", path.display()))
+                })?;
+            Some(std::sync::Arc::new(std::sync::Mutex::new(f)))
+        }
+        None => None,
+    };
+
     let mut command = std::process::Command::new(program);
     command.args(args);
     if let Some(path) = config_path {
         command.env("ZEPHYRA_APP_CONFIG_PATH", path);
     }
-    let status = command
-        .status()
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
         .map_err(|e| CliError::missing(format!("cannot run {}: {e}", program.display())))?;
-    Ok(if status.success() {
-        ExitCode::Success
-    } else {
-        ExitCode::Failure
+
+    let mut pumps = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        pumps.push(pump(out, std::io::stdout(), file.clone()));
+    }
+    if let Some(err) = child.stderr.take() {
+        pumps.push(pump(err, std::io::stderr(), file));
+    }
+    Ok(PumpedChild { child, pumps })
+}
+
+/// 把一条流**同时**写到终端与日志文件。
+fn pump<R: std::io::Read + Send + 'static>(
+    reader: R,
+    mut terminal: impl std::io::Write + Send + 'static,
+    log: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
+) -> std::thread::JoinHandle<()> {
+    use std::io::Read;
+    std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::with_capacity(8 * 1024, reader);
+        let mut buf = [0u8; 8 * 1024];
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            let _ = terminal.write_all(&buf[..n]);
+            let _ = terminal.flush();
+            if let Some(log) = &log {
+                if let Ok(mut file) = log.lock() {
+                    use std::io::Write;
+                    let _ = file.write_all(&buf[..n]);
+                    let _ = file.flush();
+                }
+            }
+        }
     })
 }

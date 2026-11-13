@@ -350,6 +350,26 @@ pub fn injected_events(name: &str) -> Vec<TextEvent> {
     events
 }
 
+/// 由**一段文字**造一串字符事件（每字符一个 [`TextEvent::Char`]）。
+///
+/// # 为什么与 [`injected_events`] 分开
+///
+/// `injected_events` 造的是「一次按键」：边沿 + （可打印时）字符 + 边沿。
+/// 那套形状对**按键**是对的（快捷键要看到边沿）。
+///
+/// 而「输入 hello」是**一个**语义动作：文本框要的是 5 个字符插入，不是
+/// 5 次按键。用 `injected_events` 逐字符去凑会多出 10 个键边沿 ——
+/// 有些控件会把边沿当成「提交」或「移动光标」，于是输入 `hello` 变成
+/// 输入 `h` 然后提交、`e` 然后提交……
+///
+/// 所以这里只发字符事件：一个字符 = 一次插入。
+pub fn injected_text_events(text: &str) -> Vec<TextEvent> {
+    text.chars().map(TextEvent::Char).collect()
+}
+
+pub mod pointer;
+pub use pointer::PointerTranslator;
+
 #[cfg(test)]
-#[path = "tests/translator_tests.rs"]
+#[path = "../tests/unit/tests/translator_tests.rs"]
 mod tests;

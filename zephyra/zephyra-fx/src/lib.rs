@@ -107,7 +107,20 @@ pub struct InputState {
     /// 当前悬停的可交互节点。
     pub hovered: Option<ElementKey>,
     /// 按下时被捕获的节点（指针移出该节点后仍归它所有，直到抬起）。
+    ///
+    /// ⚠ 这是**主**按下态（最近一次按下的那个）。多指同时按多个控件时，
+    /// 要画**全部**按下态请用 [`Self::pressed_keys`]。
     pub pressed: Option<ElementKey>,
+    /// 当前**所有**被按下的节点（每个按下中的指针一个）。
+    ///
+    /// # 为什么需要它
+    ///
+    /// 多指同时按两个控件时，[`Self::pressed`] 只代表**一个** —— 而应用要画
+    /// **两个**按下态。所以这里给出**全部**。
+    ///
+    /// 绝大多数应用只有一个指针，这个列表长度为 1 —— 于是「按 key 找自己」
+    /// 那条路（而不是「只有一个按下态」）对多指也对。
+    pub pressed_keys: Vec<ElementKey>,
     /// 当前**可见焦点**（焦点环该画在谁身上）。
     ///
     /// 由宿主在 `window_event` 里经 `FocusState` 维护（点击 / Tab / 失焦），
@@ -133,8 +146,49 @@ pub struct InputState {
     /// 本次同步收到的滚轮增量与当前鼠标位置。正 `delta_y` 表示向上滚动；
     /// 单位沿用 winit（物理像素或行数），应用按具体设备语义解释。
     pub scroll: Option<ScrollInput>,
-    /// 本次同步按接收顺序发生的鼠标移动与按键边沿；按住移动时各帧持续收到 Move。
+    /// 本次同步按接收顺序发生的**指针**移动与按键边沿；按住移动时各帧持续收到 Move。
+    ///
+    /// ⚠ 名字里的「鼠标」已经不准了 —— 现在它承载**触控**与**鼠标**两条路。
+    /// 字段名保持不变是为了不破坏应用侧的读法，而语义以
+    /// [`PointerInput::source`] 为准。
     pub pointer_events: Vec<PointerInput>,
+    /// 本次同步产出的**静态手势**（轻点 / 双击 / 长按）。
+    ///
+    /// 官方触控指南把静态手势单列一档：它们在**交互完成后**才触发，
+    /// 与指针事件的「进行中」语义不同。
+    ///
+    /// ⚠ 与 [`Self::pressed`] 的关系：轻点**不是**「按下了」——
+    /// 它多了「位移没超出容差」与「没超时」两条判据。
+    pub gestures: Vec<GestureEvent>,
+    /// 本次同步产出的**操作增量**（多指平移 / 缩放 / 旋转 + 速度）。
+    ///
+    /// 官方指南的操作事件**只给数据、不给形式** —— 「这是捏合还是旋转」
+    /// 由应用自己判断（[`zephyra_core::input::ManipulationDelta`]）。
+    pub manipulations: Vec<zephyra_core::input::ManipulationDelta>,
+    /// 本次同步有一次指针交互被**取消**（系统抢走了手势 / 失焦）。
+    ///
+    /// # 为什么应用需要这个标志
+    ///
+    /// 「点击」在应用侧通常是这么还原的：「上一帧按着、这一帧松了」。
+    /// 而**取消**也把 `pressed` 清成 `None` —— 于是应用会把一次
+    /// **被系统抢走**的交互当成「用户松手了」⇒ **误触发一次点击**。
+    ///
+    /// 官方触控指南把「指针取消」单列为一个事件，正是因为它**不是**抬起：
+    /// 用户的手指还在屏幕上，只是系统接管了手势（Windows 11 的三指/四指
+    /// 手势就是这种情况）。
+    ///
+    /// 所以：**这一帧有取消 ⇒ 不要把「按下 → 松开」当成点击。**
+    ///
+    /// ⚠ 它是**本帧**的事实（不是「上一次」）。取消与 `pressed` 清零发生在
+    /// 同一帧，所以判据「上帧按着 + 这帧没按着 + 这帧没取消」是自洽的。
+    pub cancelled: bool,
+    /// 操作结束时的平移速度（px/秒）—— **惯性的初值**。
+    ///
+    /// 官方指南的 `ManipulationInertiaStarting` 携带的正是速度：手指离开
+    /// 屏幕后，内容应当按这个速度**继续滑**一小段。
+    ///
+    /// `None` = 本次同步没有操作结束。
+    pub inertia: Option<(f32, f32)>,
     /// 客户区视口，**物理像素**，与宿主的 `inner_size()` 同源。
     /// scale 是当时的缩放比（`window.scale_factor()`）。
     ///
@@ -189,20 +243,67 @@ pub struct ScrollInput {
     pub delta_y: f32,
 }
 
-/// 一次鼠标路径事件，坐标为客户区物理像素。
+/// 指针来源（触控 / 笔 / 鼠标）。
+///
+/// 转出给应用用 —— 应用要靠它判断「要不要给悬停反馈」（触控是**双状态**的，
+/// 见官方触控指南）。
+pub use zephyra_core::input::PointerSource;
+
+/// 一次指针路径事件，坐标为客户区物理像素。
+///
+/// # 多点触控
+///
+/// `id` 是**指针身份**：触控时每根手指一个（多点触控的基础），
+/// 鼠标恒为 0。`source` 说明它来自触控 / 笔 / 鼠标 —— 应用据此决定
+/// 「要不要给悬停反馈」（触控是**双状态**的，见官方触控指南）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointerInput {
+    /// 指针身份（触控时每根手指一个）。
+    pub id: u64,
     pub x: f32,
     pub y: f32,
     pub phase: PointerInputPhase,
+    /// 这个指针的来源。
+    pub source: zephyra_core::input::PointerSource,
 }
 
-/// 鼠标路径的生命周期相位。
+/// 指针路径的生命周期相位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerInputPhase {
     Down,
     Move,
     Up,
+    /// 交互被**异常取消**（系统接管手势 / 失焦）。
+    ///
+    /// ⚠ **取消不是抬起**：取消时**不**提交点击 —— 用户是被系统抢走的，
+    /// 不是「松手了」。
+    Cancel,
+}
+
+/// 这一批指针事件里有没有**取消**。
+///
+/// # 为什么需要它
+///
+/// 「点击」在应用侧通常是这么还原的：「上一帧按着、这一帧松了」。
+/// 而**取消**也把 `pressed` 清成 `None` —— 于是应用会把一次
+/// **被系统抢走**的交互当成「用户松手了」⇒ **误触发一次点击**。
+///
+/// 官方触控指南把「指针取消」单列为一个事件，正是因为它**不是**抬起：
+/// 用户的手指还在屏幕上，只是系统接管了手势（Windows 11 的三指/四指手势）。
+///
+/// 所以宿主在把事件交给应用之前，先问一句「这一批里有取消吗」——
+/// 有就把 [`InputState::cancelled`] 置真，应用据此**不**提交点击。
+pub fn has_cancelled(events: &[PointerInput]) -> bool {
+    events.iter().any(|e| e.phase == PointerInputPhase::Cancel)
+}
+
+/// 一个静态手势（官方触控指南的「静态手势事件」一档）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GestureEvent {
+    /// 手势种类。
+    pub kind: zephyra_core::input::StaticGesture,
+    /// 落在哪个节点上。
+    pub target: ElementKey,
 }
 
 /// 一帧里应用要做的事：宿主把「当前状态」变成一棵 `Element`。

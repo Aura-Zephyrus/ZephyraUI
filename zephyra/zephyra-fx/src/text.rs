@@ -157,7 +157,7 @@ const FONT_CANDIDATES: &[&str] = &[
 /// - 把系统首选改成一份含 CJK 的字体 —— 代价是拉丁字母的观感随机器而变；
 /// - 指定一份随程序分发的字体 —— 观感在任何机器上都一样。
 ///
-/// demo 走后者（`examples/fonts/MiSans-Regular.ttf`，含 CJK 与拉丁）。
+/// gallery 走后者（`gallery/fonts/MiSans-Regular.ttf`，含 CJK 与拉丁）。
 pub const FONT_OVERRIDE_ENV: &str = "ZEPHYRA_FONT";
 
 /// 从指定路径造一个文本栈。
@@ -363,5 +363,5 @@ impl GlyphSource for AbGlyphSource {
 }
 
 #[cfg(test)]
-#[path = "tests/text_tests.rs"]
+#[path = "../tests/unit/tests/text_tests.rs"]
 mod tests;

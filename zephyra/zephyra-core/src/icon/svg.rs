@@ -241,5 +241,5 @@ fn parse_fill_rule(s: &str) -> Option<FillRule> {
 }
 
 #[cfg(test)]
-#[path = "tests/svg_tests.rs"]
+#[path = "../../tests/unit/icon/svg_tests.rs"]
 mod tests;

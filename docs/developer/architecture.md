@@ -160,10 +160,13 @@ DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate �
 
 ## 当前状态
 
-骨架阶段。模块边界与契约已定并有测试覆盖（`cargo test -p zephyra-core` 共 304 条
-断言、`-p zephyra-fx` 另有 64 条，都不需要 GPU）；控件库与模板系统**未实现**。
+骨架已过：模块边界与契约已定并有测试覆盖（`cargo test -p zephyra-core` 与
+`-p zephyra-fx` 两条命令即可跑完，都不需要 GPU）；控件库（`ZephyraUI`）与
+声明式结构系统（`zypui` / `zypuic`）都已实现并各有自己的门禁。
 
-`examples/foundation` 是验收标准而非演示 —— 它断言的是契约：
+契约由 core 的单元测试逐条钉住，不再有单独的一份「可执行验收标准」二进制 ——
+早期那份 `examples/foundation`（2026-11 删除，见
+`docs/dev-log/2026-11-drop-examples-crate.md`）断言的是：
 
 1. 核心零依赖；
 2. 声明树能落地成节点树；
@@ -171,6 +174,11 @@ DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate �
 4. 稳态 diff 是 no-op；
 5. 属性相等可判定（这是第 4 条成立的前提）；
 6. 主题的语义角色在 Light/Dark 下均可查。
+
+⇒ 这六条现在分别由 `zephyra-core` 的单元测试（`display_list_sorts_by_layer_then_z_then_order`、
+`steady_state_diff_is_a_noop`、属性相等判定、`theme_toggle_round_trips` 等）覆盖。
+**保留两份等价的断言会让「契约在哪里」有两个答案**，而其中一份（那个独立 bin）
+编的是整个应用，比单元测试慢一个量级。
 
 ## 已决定不做的事
 

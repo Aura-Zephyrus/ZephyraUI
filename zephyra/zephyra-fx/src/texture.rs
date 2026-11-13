@@ -71,5 +71,5 @@ impl TextureNames {
 }
 
 #[cfg(test)]
-#[path = "tests/texture_tests.rs"]
+#[path = "../tests/unit/tests/texture_tests.rs"]
 mod tests;
