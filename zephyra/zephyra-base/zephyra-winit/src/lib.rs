@@ -143,6 +143,17 @@ fn lock_gpu(shared: &Arc<Mutex<SharedGpu>>) -> std::sync::MutexGuard<'_, SharedG
     shared.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 获取显示器刷新周期（默认 60Hz）。
+fn refresh_interval(window: &Window) -> std::time::Duration {
+    let hz = window
+        .current_monitor()
+        .and_then(|m| m.refresh_rate_millihertz())
+        .map(|mhz| mhz / 1000)
+        .filter(|hz| (30..=500).contains(hz))
+        .unwrap_or(60);
+    std::time::Duration::from_nanos(1_000_000_000 / hz as u64)
+}
+
 pub struct HostWindow<V: View> {
     /// 上一次 `sync_input` 的时刻 —— 动画时钟的唯一来源（`InputState::dt_ms`）。
     ///
@@ -214,6 +225,16 @@ pub struct HostWindow<V: View> {
     /// 本字段只表示「值不值得跑一帧」—— 因为判断后者必须先跑 `view()`，而那是
     /// 应用代码。
     dirty: bool,
+    /// 窗口是否可见（未最小化、未被完全遮挡）。
+    ///
+    /// `WindowEvent::Occluded` / `WindowEvent::Focused` 维护。不可见时 `tick()`
+    /// 直接返回空帧、不 layout、不 paint、不 present。恢复可见时
+    /// `cache.invalidate()` 强制下一帧完整重绘。
+    window_visible: bool,
+    /// 上一次呈现的时刻（用于 VSync 帧 pacing）。
+    last_present_at: Option<std::time::Instant>,
+    /// 显示器刷新周期（纳秒精度的 `Duration`）。
+    present_interval: std::time::Duration,
     /// 文本引擎。
     ///
     /// 泛型参数固定为 [`text::AbGlyphSource`]（本 crate 的唯一字体后端）。用
@@ -382,6 +403,7 @@ impl<V: View> HostWindow<V> {
         drop(gpu_guard);
 
         let theme: &'static Theme = Box::leak(Box::new(Theme::dark()));
+        let present_interval = refresh_interval(&window);
 
         Self {
             last_frame_at: None,
@@ -411,6 +433,7 @@ impl<V: View> HostWindow<V> {
             pending_manipulations: Vec::new(),
             pending_inertia: None,
             dirty: true,
+            window_visible: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             textures: TextureTable::new(),
@@ -422,6 +445,8 @@ impl<V: View> HostWindow<V> {
             uia: None,
             hwnd: Some(raw_hwnd),
             transparent,
+            last_present_at: None,
+            present_interval,
         }
     }
 
@@ -1440,6 +1465,18 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
     }
 
     fn handle_event(&mut self, event: WindowEvent) -> HostEventOutcome {
+        // 窗口遮挡/最小化感知：必须在 match 之前处理，避免 Ime 等非 Copy 类型导致部分移动。
+        if let WindowEvent::Occluded(occluded) = event {
+            if occluded && self.window_visible {
+                self.window_visible = false;
+            } else if !occluded && !self.window_visible {
+                self.window_visible = true;
+                self.cache.invalidate();
+                self.dirty = true;
+            }
+            return HostEventOutcome::Continue;
+        }
+
         match event {
             WindowEvent::CloseRequested => return HostEventOutcome::Close,
             WindowEvent::Resized(size) => {
@@ -1597,10 +1634,52 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
             b.poll(self);
             self.bridge = Some(b);
         }
+
+        // ⚠ 窗口不可见（最小化 / 完全遮挡）时直接返回空帧：不 layout、不 paint、不 present。
+        // 这让 CPU/GPU 在后台/遮挡时归零，符合 P3 验收标准。
+        if !self.window_visible {
+            let tick = HostTick {
+                wants_poll: true,
+                busy: false,
+                ..Default::default()
+            };
+            return tick;
+        }
+
         let mut tick = HostTick::default();
+
+        // —— VSync 帧 pacing：距上次呈现不足一个刷新周期时，这一拍**不画**，睡到点再说。
+        // 与 D3D12 侧同一契约：flip model 下不封顶会把 GPU 占用推高，且优化看起来没生效。
+        if !self.dirty && self.last_present_at.is_some() {
+            if let Some(next) = self
+                .last_present_at
+                .map(|last| last + self.present_interval)
+                .filter(|next| std::time::Instant::now() < *next)
+            {
+                tick.wake_at = Some(next);
+                return tick;
+            }
+        }
+
+        // 「动画播放中」由视图回答：保留式 UI 不常驻重画，动画只在事件到来时
+        // 推进一帧，然后循环睡死 —— 中间整段弹簧曲线看不到。
+        let animating = self.view.wants_frames();
+        if animating {
+            self.dirty = true;
+        }
+
+        // ⚠ 是否**真的**要画由 core 判定（`Frame::redrawn`）：事件可能什么都没改
+        // （鼠标在空白处移动 ⇒ `hovered` 前后都是 `None`），此时 core 返回
+        // `Unchanged`，本帧不画。
+        //
+        // ⚠ 那时**连 present 都不能做**：本后端是 flip model，`Present` 之后后缓冲内容未定义。
+        // 不画就 present 会把未定义内容推上屏（通常是黑，或上一次的帧）。
         if self.dirty || self.profiler.is_running() {
             let f = self.frame();
             tick.painted = f.redrawn;
+            if f.redrawn {
+                self.last_present_at = Some(std::time::Instant::now());
+            }
             if std::env::var("ZEPHYRA_TRACE").as_deref() == Ok("1") {
                 eprintln!(
                     "[zephyra] quads={} skipped={} img_batches={} missing_tex={} \
@@ -1615,16 +1694,46 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 );
             }
         }
-        self.window.request_redraw();
-        // D3D11 后端一直是常驻重绘（`ControlFlow::Poll`）。多窗口时把这条
-        // 上提给 `WindowSet`，由它统一设置一次控制流。
-        tick.wants_poll = true;
-        tick.busy = self.dirty;
+
+        // 桥的轮询：有未处理数据 ⇒ Poll；有客户端无数据 ⇒ WaitUntil(10ms)；无客户端 ⇒ Wait。
+        if let Some(bridge) = self.bridge.as_ref() {
+            if bridge.has_pending_work() {
+                tick.wants_poll = true;
+            } else if bridge.has_client() {
+                tick.wake_at =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(10));
+            } else {
+                tick.wake_at =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(50));
+            }
+        }
+
+        // busy：有脏/动画/无障碍动作时为真。
+        tick.busy = self.dirty || animating;
+
+        // ⚠ VSync 封顶：距上次呈现不足一个刷新周期时，这一拍**不画**，睡到点再说。
+        if let Some(next) = self
+            .last_present_at
+            .map(|last| last + self.present_interval)
+            .filter(|next| std::time::Instant::now() < *next)
+        {
+            if tick.wake_at.is_none_or(|w| w < next) {
+                tick.wake_at = Some(next);
+            }
+            tick.wants_poll = false;
+            return tick;
+        }
+
         tick
     }
 
     fn start(&mut self) -> Result<(), String> {
         self.dirty = true;
+        self.sync_input();
+        let frame = self.frame();
+        if frame.redrawn {
+            self.last_present_at = Some(std::time::Instant::now());
+        }
         Ok(())
     }
 

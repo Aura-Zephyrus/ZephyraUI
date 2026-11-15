@@ -46,6 +46,7 @@ pub const STYLESHEETS: &[(&str, &str)] = &[
     ("menu", include_str!("../controls-menu.zstyle")),
     ("nav", include_str!("../controls-nav.zstyle")),
     ("navigation", include_str!("../controls-navigation.zstyle")),
+    ("scroll", include_str!("../controls-scroll.zstyle")),
     ("segmented", include_str!("../controls-segmented.zstyle")),
     ("status", include_str!("../controls-status.zstyle")),
     ("text", include_str!("../controls-text.zstyle")),

@@ -61,7 +61,6 @@ pub mod stack;
 ///
 /// 这个契约被违反过一次，且症状极端（图集全空 → 文字完全不出现），详见文件头。
 #[cfg(test)]
-#[cfg(test)]
 #[path = "../../tests/unit/text/atlas_contract_tests.rs"]
 mod atlas_tests;
 
@@ -116,6 +115,18 @@ pub trait TextEngine {
     fn line_height(&mut self, style: &TextStyle) -> f32;
 }
 
+/// 文本水平对齐方式。
+///
+/// 对应 CSS `text-align`。`Left` 是默认，`Center`/`Right` 需在 `shape_impl` 中
+/// 按 `max_width` 计算每行 x 偏移；`Justify`（两端对齐）属长期项，先不实现。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
 /// 文本样式。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
@@ -127,6 +138,16 @@ pub struct TextStyle {
     pub family: Option<String>,
     /// 行高倍数；`None` 用字体自带值。
     pub line_height: Option<f32>,
+    /// 字间距（DIP，每个字形步进后追加的额外间距，可为负）。
+    ///
+    /// 对应 CSS `letter-spacing`。`0.0` 表示不加间距。
+    pub letter_spacing: f32,
+    /// 水平对齐方式。
+    pub text_align: TextAlign,
+    /// 段间距（DIP，行与行之间的额外间隙，可为负）。
+    ///
+    /// 对应 CSS `margin-bottom` 类似的段间距概念。`0.0` 表示无额外间距。
+    pub paragraph_spacing: f32,
     /// 字号缩放系数（Windows 的「文本大小」设置会改它）。
     pub scale: f32,
 }
@@ -138,6 +159,9 @@ impl Default for TextStyle {
             weight: 400,
             family: None,
             line_height: None,
+            letter_spacing: 0.0,
+            text_align: TextAlign::Left,
+            paragraph_spacing: 0.0,
             scale: 1.0,
         }
     }

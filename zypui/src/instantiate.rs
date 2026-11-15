@@ -33,6 +33,7 @@ use crate::val::Val;
 use crate::ZypuiError;
 use zephyra_core::element::Element;
 use zephyra_core::id::ElementKey;
+use zephyra_core::layout::Overflow;
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 
@@ -434,6 +435,31 @@ pub(crate) fn build_node(
                     },
                     "scale-y" => match v.as_f32() {
                         Some(f) => el_el.with(&props::SCALE_Y, PropertyValue::float(f)),
+                        None => el_el,
+                    },
+                    // 溢出处理：表达式语言没有枚举字面量，按**字符串**传
+                    // （`"scroll"` / `"hidden"` / `"auto"` / `"visible"`）。
+                    // 认不出来的字串按「不裁剪」降级 —— 与 `filter` 的降级同形。
+                    "overflow" => {
+                        match v.as_str() {
+                            Some("visible") => el_el
+                                .with(&props::OVERFLOW, PropertyValue::overflow(Overflow::Visible)),
+                            Some("hidden") => el_el
+                                .with(&props::OVERFLOW, PropertyValue::overflow(Overflow::Hidden)),
+                            Some("scroll") => el_el
+                                .with(&props::OVERFLOW, PropertyValue::overflow(Overflow::Scroll)),
+                            Some("auto") => el_el
+                                .with(&props::OVERFLOW, PropertyValue::overflow(Overflow::Auto)),
+                            _ => el_el,
+                        }
+                    }
+                    // 滚动偏移（内容相对视口的偏移，DIP）。只重绘。
+                    "scroll-offset-x" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::SCROLL_OFFSET_X, PropertyValue::float(f)),
+                        None => el_el,
+                    },
+                    "scroll-offset-y" => match v.as_f32() {
+                        Some(f) => el_el.with(&props::SCROLL_OFFSET_Y, PropertyValue::float(f)),
                         None => el_el,
                     },
                     "render-source" => match v.as_str() {

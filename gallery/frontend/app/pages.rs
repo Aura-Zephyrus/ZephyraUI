@@ -32,4 +32,8 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     ("materials", "Materials", "image"),
     // 滑块（LiquidSlider 1:1：实色/玻璃对比）。
     ("slider", "Slider", "sliders"),
+    // 文本输入（TextField / TextArea）：单行与多行编辑、光标、选区、IME。
+    ("textinput", "Text Input", "edit"),
+    // 滚动容器（ScrollView / ScrollBar）：视口裁剪、内容平移、滚动条。
+    ("scroll", "Scrolling", "move"),
 ];

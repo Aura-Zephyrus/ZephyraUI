@@ -520,6 +520,17 @@ impl Node {
         self.measure_cache.as_ref().map(|(_, _, r)| r.size)
     }
 
+    /// **子内容**的尺寸（DIP）。
+    ///
+    /// 布局跑完后才有值（没量过时是零）。滚动容器用它算「内容比视口大多少」
+    /// —— 那是滚动范围与滚动条拇指长度的唯一来源。
+    pub fn content_size(&self) -> crate::core::Size {
+        self.measure_cache
+            .as_ref()
+            .map(|(_, _, r)| r.content)
+            .unwrap_or_default()
+    }
+
     /// 命中缓存则返回尺寸（键：约束 + 视口，D15/R2）。
     pub(crate) fn cached_measure(
         &self,

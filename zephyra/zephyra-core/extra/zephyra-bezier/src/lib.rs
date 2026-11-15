@@ -195,3 +195,124 @@ const fn in_unit(v: f32) -> bool {
     // NaN 也要返回 false：`v >= 0.0` 对 NaN 是 false，所以这里天然覆盖。
     v >= 0.0 && v <= 1.0
 }
+
+// ========================================================================
+// 预计算缓动查表
+// ========================================================================
+
+/// 预计算的缓动曲线查表。
+///
+/// 在构造时对 `[0, dur_ms]` 等间距采样 `samples` 个点（调用曲线的 `at`），
+/// 运行时 `progress(elapsed_ms)` 只做**索引 + 线性插值**，零牛顿迭代、零 `powf`。
+///
+/// 适合「每帧都要推进位移」的控件（开关把手、切换按钮组药丸），把每帧的
+/// `powf`/牛顿迭代降成两次数组索引与一次内积。
+///
+/// # 例子
+///
+/// ```ignore
+/// let table = EaseTable::new(250.0, Bezier::new(0.0, 0.0, 0.0, 1.0), 251);
+/// let p = table.progress(125.0); // ≈ 曲线在 t=0.5 处的值
+/// ```
+#[derive(Debug, Clone)]
+pub struct EaseTable {
+    /// 采样点数（≥2）。
+    samples: usize,
+    /// 查表对应的总时长（ms）。
+    dur_ms: f32,
+    /// 采样值（0..=1 的缓动进度），`table[0] == 0.0`，`table[samples-1] == 1.0`。
+    table: Box<[f32]>,
+}
+
+impl EaseTable {
+    /// 用 `curve` 在 `[0, dur_ms]` 上等间距采样 `samples` 点建表。
+    ///
+    /// 采样点 `i` 对应时间 `i/(samples-1) * dur_ms`，曲线值由 `curve.at(t)` 取得
+    ///（`t` 已夹到 0..1，结果不夹——弹性曲线的过冲会被保留）。
+    pub fn new(dur_ms: f32, curve: Bezier, samples: usize) -> Self {
+        assert!(dur_ms > 0.0 && samples >= 2, "dur_ms>0 且 samples>=2");
+        let mut table = Vec::with_capacity(samples);
+        for i in 0..samples {
+            let t = i as f32 / (samples - 1) as f32; // 0..=1
+            let eased = curve.at(t);
+            table.push(eased);
+        }
+        Self {
+            samples,
+            dur_ms,
+            table: table.into_boxed_slice(),
+        }
+    }
+
+    /// 查表：`elapsed_ms` 被夹到 `[0, dur_ms]`，返回对应的缓动进度。
+    ///
+    /// 相邻采样点之间做线性插值，比直接取整更平滑；`elapsed_ms` 超出范围时
+    /// 夹到端点（0 或 1）。
+    pub fn progress(&self, elapsed_ms: f32) -> f32 {
+        if elapsed_ms <= 0.0 {
+            return 0.0;
+        }
+        if elapsed_ms >= self.dur_ms {
+            return 1.0;
+        }
+        let t = (elapsed_ms / self.dur_ms).clamp(0.0, 1.0);
+        let idx_f = t * (self.samples - 1) as f32;
+        let idx0 = idx_f.floor() as usize;
+        let idx1 = (idx0 + 1).min(self.samples - 1);
+        let frac = idx_f - idx0 as f32;
+        self.table[idx0] * (1.0 - frac) + self.table[idx1] * frac
+    }
+
+    /// 查表对应的总时长（ms）。
+    pub const fn dur_ms(&self) -> f32 {
+        self.dur_ms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `cubic-bezier(0,0,0,1)`：官方「直接入口 / 快入」，先快后慢。
+    const DIRECT: Bezier = Bezier::new(0.0, 0.0, 0.0, 1.0);
+
+    #[test]
+    fn ease_table_start_and_end_are_exact() {
+        let t = EaseTable::new(250.0, DIRECT, 9);
+        assert!((t.progress(0.0) - 0.0).abs() < 1e-6);
+        assert!((t.progress(250.0) - 1.0).abs() < 1e-6);
+        assert!((t.progress(500.0) - 1.0).abs() < 1e-6);
+        assert!((t.progress(-100.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ease_table_is_monotonic_for_direct() {
+        let t = EaseTable::new(250.0, DIRECT, 251);
+        let mut prev = -1.0f32;
+        for i in 0..t.samples {
+            let ms = i as f32 / (t.samples - 1) as f32 * 250.0;
+            let v = t.progress(ms);
+            assert!(v >= prev - 1e-6, "非单调 at {ms}ms: {prev} -> {v}");
+            prev = v;
+        }
+    }
+
+    #[test]
+    fn ease_table_linear_interpolation_midpoint() {
+        // linear 曲线：at(t)=t，进度 = elapsed/dur，中点应恰好 0.5。
+        let t = EaseTable::new(100.0, Bezier::linear(), 11);
+        assert!((t.progress(50.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "dur_ms>0 且 samples>=2")]
+    fn ease_table_rejects_zero_duration() {
+        let _ = EaseTable::new(0.0, Bezier::linear(), 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "dur_ms>0 且 samples>=2")]
+    fn ease_table_rejects_one_sample() {
+        let _ = EaseTable::new(100.0, Bezier::linear(), 1);
+    }
+}

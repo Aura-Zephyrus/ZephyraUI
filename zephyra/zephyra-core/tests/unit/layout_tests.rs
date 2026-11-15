@@ -1310,3 +1310,80 @@ fn manual_without_offsets_falls_back_to_reference_origin_d6() {
     assert!((r.x - 0.0).abs() < 1e-3, "D6: x ref origin, got {}", r.x);
     assert!((r.y - 0.0).abs() < 1e-3, "D6: y ref origin, got {}", r.y);
 }
+
+// ============================== 滚动容器 ==============================
+
+/// 造一棵滚动容器：视口 100×100，内容 100×150（两项 + 50 间距）。
+fn scroll_el() -> Element {
+    let item = |id: &'static str| {
+        Element::new(NodeTag::Box)
+            .with_key(id)
+            .with(&props::WIDTH, PropertyValue::float(100.0))
+            .with(&props::HEIGHT, PropertyValue::float(50.0))
+    };
+    let content = Element::new(NodeTag::Box)
+        .with_key("content")
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with(&props::SPACING, PropertyValue::float(50.0))
+        .with_children([item("item1"), item("item2")]);
+    Element::new(NodeTag::Box)
+        .with_key("root")
+        .with_children([Element::new(NodeTag::Box)
+            .with_key("scroll")
+            .with(
+                &props::DIRECTION,
+                PropertyValue::direction(Direction::Vertical),
+            )
+            .with(&props::WIDTH, PropertyValue::float(100.0))
+            .with(&props::HEIGHT, PropertyValue::float(100.0))
+            .with(
+                &props::OVERFLOW,
+                PropertyValue::overflow(crate::layout::Overflow::Scroll),
+            )
+            .with_children([content])])
+}
+
+/// 滚动容器的**盒子**是视口，**内容**比视口大。
+///
+/// # 为什么这两条要分开断言
+///
+/// 视口与内容尺寸是两个不同的量，混在一起就会出两种错：
+/// 容器被内容撑大（于是没什么可滚，滚动条永远是满的），或者内容被视口
+/// 压扁（于是滚到底也看不到最后一项）。症状都像"滚动条不太对"。
+#[test]
+fn a_scroll_viewport_keeps_its_size_while_its_content_overflows() {
+    let node = laid_out(&scroll_el(), Rect::new(0.0, 0.0, 400.0, 300.0));
+    let scroll = &node.children()[0];
+    let r = scroll.rect();
+    assert!(
+        (r.width - 100.0).abs() < 1e-3 && (r.height - 100.0).abs() < 1e-3,
+        "滚动容器的盒子应当是视口 100×100，实得 {r:?}"
+    );
+    let content = scroll.content_size();
+    assert!(
+        (content.height - 150.0).abs() < 1e-3,
+        "内容高度应当是 150（两项 50 + 间距 50），实得 {content:?}"
+    );
+    assert!(
+        content.height > r.height,
+        "内容应当比视口高（否则没什么可滚）"
+    );
+}
+
+/// 内容**不被**视口压扁：子项按无界约束测量。
+///
+/// 症状（若这条红了）：内容被视口高度截断，滚到底也看不到最后一项，
+/// 而滚动条却显示"还有更多"。
+#[test]
+fn scroll_content_is_measured_unbounded_on_the_scroll_axis() {
+    let node = laid_out(&scroll_el(), Rect::new(0.0, 0.0, 400.0, 300.0));
+    let content = &node.children()[0].children()[0];
+    let r = content.rect();
+    assert!(
+        (r.height - 150.0).abs() < 1e-3,
+        "内容盒应当是 150 高（不被视口压扁），实得 {r:?}"
+    );
+}

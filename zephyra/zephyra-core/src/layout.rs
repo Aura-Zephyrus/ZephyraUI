@@ -114,6 +114,14 @@ impl Constraints {
 pub struct MeasureResult {
     /// 内容想要的尺寸。
     pub size: Size,
+    /// **子内容**的尺寸（DIP）。
+    ///
+    /// 对普通容器它约等于 `size` 减去内边距；对**滚动容器**它是内容真正需要
+    /// 的空间（可以比视口大），而 `size` 是**视口**。
+    ///
+    /// 宿主靠它算滚动范围与滚动条拇指长度 —— 内容尺寸是**布局的产物**，
+    /// 宿主在搭树时并不知道，只能等布局跑完再读。
+    pub content: Size,
 }
 
 /// 可测量、可排列的节点。
@@ -323,6 +331,55 @@ impl Position {
     /// 是否为手动定位（脱流）。
     pub const fn is_manual(self) -> bool {
         !self.is_flow()
+    }
+}
+
+/// 溢出处理方式（CSS `overflow`）。
+///
+/// # 四档的差别只有两处
+///
+/// | 档 | 裁剪 | 内容可滚动 |
+/// |---|---|---|
+/// | [`Overflow::Visible`] | 否 | 否 |
+/// | [`Overflow::Hidden`] | 是 | 否（但仍可被程序滚动） |
+/// | [`Overflow::Scroll`] | 是 | 是（滚动条常驻） |
+/// | [`Overflow::Auto`] | 是 | 是（滚动条按需出现） |
+///
+/// `visible` 与其余三档的差别是**裁剪**：内容溢出时是否被切掉。
+/// `hidden` 与 `scroll` / `auto` 的差别是**能不能滚**。
+/// `scroll` 与 `auto` 的差别只在滚动条是否常驻 —— 那是控件层的事，
+/// 核心层两者行为完全一致（可滚动 + 裁剪）。
+///
+/// ⚠ 本仓**没有** `overflow-x` / `overflow-y` 分轴版本：两个轴共用一档。
+/// 分轴会让「内容按哪一轴测量」出现四种组合，而本仓的滚动容器
+/// 两轴同源（见 [`crate::props::OVERFLOW`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Overflow {
+    /// 内容溢出时照常画到容器外（默认）。
+    #[default]
+    Visible,
+    /// 内容溢出时裁到容器边界，但不可滚动。
+    Hidden,
+    /// 内容溢出时裁到容器边界，且可滚动（滚动条常驻）。
+    Scroll,
+    /// 内容溢出时裁到容器边界，且可滚动（滚动条按需出现）。
+    Auto,
+}
+
+impl Overflow {
+    /// 是否裁剪到容器边界。
+    pub const fn clips(self) -> bool {
+        !matches!(self, Self::Visible)
+    }
+
+    /// 是否可滚动。
+    pub const fn scrollable(self) -> bool {
+        matches!(self, Self::Scroll | Self::Auto)
+    }
+
+    /// 是否**恒有**滚动条（`scroll` 常驻，`auto` 按需）。
+    pub const fn always_shows_scrollbar(self) -> bool {
+        matches!(self, Self::Scroll)
     }
 }
 
@@ -996,9 +1053,29 @@ pub fn measure(
         }
     }
     let padding = node.padding(ctx);
+    let (own_w, own_h) = explicit_size(node, ctx);
+    // 滚动容器（`overflow: scroll / auto`）：视口尺寸由**显式** `width` / `height`
+    // 决定（没有显式尺寸时容器就等于内容大小，也就没什么可滚的）。
+    //
+    // ⚠ 这与 CSS 一致：`overflow` 不改变元素自己的尺寸，只改变**内容**的处理方式。
+    let scrollable = node.overflow(ctx).scrollable();
+    let deflated = constraints.deflate(padding);
     let mut content = match node.flex(ctx) {
-        Some(flex) => measure_flex(node, constraints, flex, env, ctx),
-        None => measure_stack(node, constraints.deflate(padding), env, ctx),
+        Some(flex) => measure_flex(node, constraints, flex, scrollable, env, ctx),
+        None => {
+            let stack = node.stack(ctx);
+            // ⚠ `measure_stack` 收到的是**已扣内边距**的约束（它自己不扣）。
+            let child_c = if scrollable {
+                let viewport = Size::new(
+                    own_w.unwrap_or(deflated.max.width),
+                    own_h.unwrap_or(deflated.max.height),
+                );
+                scroll_child_constraints(stack.direction, deflated, viewport)
+            } else {
+                deflated
+            };
+            measure_stack(node, child_c, env, ctx)
+        }
     };
 
     let shaped = node.shape(ctx);
@@ -1011,6 +1088,7 @@ pub fn measure(
             pick_axis(own_w, content.width, Axis::Horizontal, constraints, padding),
             pick_axis(own_h, content.height, Axis::Vertical, constraints, padding),
         ),
+        content,
     };
     let size = result.size;
     node.cache_measure(constraints, env.viewport, result);
@@ -1048,6 +1126,17 @@ pub fn arrange(node: &mut Node, bounds: Rect, env: &LayoutEnv, ctx: Context<'_>)
     let padding = node.padding(ctx);
     let inner = bounds.inset(padding);
     if let Some(flex) = node.flex(ctx) {
+        // 滚动容器：主轴无界 —— 与测量趟同源（那边 `available_main = INFINITY`）。
+        // 两趟不同源的后果是「测量时一行、排列时两行」⇒ 行高算错。
+        let inner = if node.overflow(ctx).scrollable() {
+            if flex.main_is_horizontal() {
+                Rect::new(inner.x, inner.y, f32::INFINITY, inner.height)
+            } else {
+                Rect::new(inner.x, inner.y, inner.width, f32::INFINITY)
+            }
+        } else {
+            inner
+        };
         arrange_flex(node, inner, flex, env, ctx);
         return;
     }
@@ -1263,6 +1352,42 @@ fn measure_stack(
     }
 }
 
+/// 滚动容器的**子项**约束。
+///
+/// - **主轴**（滚动方向）：无界 —— 内容可以比视口大，超出部分被裁剪并可滚动。
+/// - **交叉轴**：按容器**自己的视口尺寸**收紧（没有显式尺寸就沿用父给的）。
+///
+/// # 交叉轴为什么也要收紧
+///
+/// 视口宽 300 而父宽 800 时，内容必须按 **300** 排版。若沿用父的 800，
+/// 内容会比视口宽出两倍多 —— 横向滚动时用户得滚很久才看完一项，
+/// 而且**竖直方向**的滚动条也永远不会出现（内容高度被宽度挤出来了）。
+///
+/// # 与 [`Stack::child_constraints`] 的关系
+///
+/// 本函数的结果**再过一遍** `Stack::child_constraints` 也不会变：那条路把主轴
+/// 设成无界、交叉轴原样保留，而这里给的正是「主轴无界 + 交叉轴已收紧」。
+#[must_use]
+pub fn scroll_child_constraints(
+    direction: Direction,
+    deflated: Constraints,
+    viewport: Size,
+) -> Constraints {
+    let cap = |parent_max: f32, viewport: f32| viewport.min(parent_max);
+    match direction {
+        // 横向滚动：交叉轴是**高**，按视口高度收紧。
+        Direction::Horizontal => Constraints {
+            min: Size::new(0.0, deflated.min.height),
+            max: Size::new(f32::INFINITY, cap(deflated.max.height, viewport.height)),
+        },
+        // 纵向滚动：交叉轴是**宽**，按视口宽度收紧。
+        Direction::Vertical => Constraints {
+            min: Size::new(deflated.min.width, 0.0),
+            max: Size::new(cap(deflated.max.width, viewport.width), f32::INFINITY),
+        },
+    }
+}
+
 /// flex 容器的测量趟：逐项测量 → 按 `order` 排 → 切行 → 聚合成内容尺寸。
 ///
 /// 与 [`measure_stack`] 的差别只在**聚合方式**：
@@ -1292,12 +1417,28 @@ fn measure_flex(
     node: &mut Node,
     constraints: Constraints,
     flex: Flex,
+    scrollable: bool,
     env: &LayoutEnv,
     ctx: Context<'_>,
 ) -> Size {
     let padding = node.padding(ctx);
     let deflated = constraints.deflate(padding);
-    let child_constraints = flex.child_constraints(deflated);
+    let (own_w, own_h) = explicit_size(node, ctx);
+    let child_constraints = if scrollable {
+        // 滚动容器：交叉轴按视口收紧，主轴无界（见 [`scroll_child_constraints`]）。
+        let viewport = Size::new(
+            own_w.unwrap_or(deflated.max.width),
+            own_h.unwrap_or(deflated.max.height),
+        );
+        let direction = if flex.main_is_horizontal() {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        };
+        scroll_child_constraints(direction, deflated, viewport)
+    } else {
+        flex.child_constraints(deflated)
+    };
     let mut items: Vec<FlexItem> = Vec::new();
     for i in 0..node.children().len() {
         if node.children()[i].is_collapsed(ctx) {
@@ -1322,24 +1463,30 @@ fn measure_flex(
     } else {
         Axis::Vertical
     };
-    let (own_w, own_h) = explicit_size(node, ctx);
     let own_main = if flex.main_is_horizontal() {
         own_w
     } else {
         own_h
     };
-    let available_main = match own_main {
-        Some(v) => {
-            let (min, max) = axis.bounds(constraints);
-            let clamped = v.max(min);
-            let clamped = if max.is_finite() {
-                clamped.min(max)
-            } else {
-                clamped
-            };
-            (clamped - axis.padding(padding)).max(0.0)
+    let available_main = if scrollable {
+        // 滚动容器：主轴**无界** —— 显式的主轴尺寸是**视口**，不是内容高度。
+        // 若拿它当折行宽度，纵向 flex 会把内容折成好几列（而不是溢出），
+        // 于是永远滚不动。
+        f32::INFINITY
+    } else {
+        match own_main {
+            Some(v) => {
+                let (min, max) = axis.bounds(constraints);
+                let clamped = v.max(min);
+                let clamped = if max.is_finite() {
+                    clamped.min(max)
+                } else {
+                    clamped
+                };
+                (clamped - axis.padding(padding)).max(0.0)
+            }
+            None => flex.available_main(deflated),
         }
-        None => flex.available_main(deflated),
     };
     let lines = flex.lines(&items, available_main);
     let spacing = flex.spacing;

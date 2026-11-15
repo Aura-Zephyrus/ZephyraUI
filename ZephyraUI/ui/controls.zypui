@@ -718,9 +718,11 @@
 
 <!-- 单行输入框。children 槽位给 AutoSuggestBox 追加建议列表用
      （Rust 版 field.with_children([list]) 同一形态）。 -->
-<component name="TextField" params="value placeholder">
+<component name="TextField" params="value placeholder cursor selection_begin selection_end">
   <control interactive="true" focusable="true" class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
+    <box key="fill:selection" translate-x="{selection_begin}" width="{selection_end - selection_begin}" class="selection {selection_begin != selection_end ? 'has-selection' : ''}"/>
     <text key="text" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
+    <box key="cursor" translate-x="{cursor}" class="cursor {focused ? 'focused' : ''}"/>
     <if cond="value != ''">
       <control key="field:clear" interactive="true" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}">
         <box key="icon" icon="close" class="{focused ? 'focused'} {hover ? 'hovered' : ''} field-clear-icon"/>
@@ -730,22 +732,15 @@
   </control>
 </component>
 
-<component name="TextArea" params="lines">
-  <box class="text-area">
-    <for var="l" index="i" list="lines">
-      <text key="{'area:' + str(i)}" text="{l}" class="area-line"/>
-    </for>
+<component name="TextArea" params="text cursor_x cursor_y selection_x selection_y selection_w selection_h scroll_x scroll_y">
+  <box translate-x="{scroll_x}" translate-y="{scroll_y}" class="text-area">
+    <box key="fill:selection" translate-x="{selection_x}" translate-y="{selection_y}" width="{selection_w}" height="{selection_h}" class="selection {selection_w != 0 && selection_h != 0 ? 'has-selection' : ''}"/>
+    <text key="area-text" text="{text}" class="area-text"/>
+    <box key="cursor" translate-x="{cursor_x}" translate-y="{cursor_y}" class="cursor"/>
   </box>
 </component>
 
-<component name="ScrollableTextArea" params="lines ratio">
-  <box class="scroll-area">
-    <TextArea key="area" lines="{lines}"/>
-    <box key="scrollbar" class="scrollbar">
-      <box key="fill:scroll" height="{max(ratio * 120.0, 16.0)}" class="scroll-thumb"/>
-    </box>
-  </box>
-</component>
+
 
 <!-- ⚠ 忠实复刻 Rust 版的存量行为：`field.with_children([list])` 里
      with_children 是**替换**语义 —— 输入框自己的 text/clear 子节点被建议
@@ -786,5 +781,28 @@
         <text key="label" text="{item}" class="menu-label"/>
       </box>
     </for>
+  </box>
+</component>
+
+
+<!-- 滚动容器：视口盒子 + 内容盒子。
+     scroll_x / scroll_y = 当前滚动偏移（正数 = 内容向上 / 向左移）。
+     视口尺寸与 `overflow` 在 `.zstyle`（`.scroll-view`）；内容盒子不设尺寸 ——
+     它的高度由内容量出来，那才是"内容比视口高多少"的真值。 -->
+<component name="ScrollView" params="scroll_x scroll_y">
+  <box interactive="true" scroll-offset-x="{scroll_x}" scroll-offset-y="{scroll_y}" class="scroll-view">
+    <box key="content" class="scroll-view-content">
+      <children/>
+    </box>
+  </box>
+</component>
+
+<!-- 滚动条：轨道 + 拇指。
+     thumb_len = 拇指长度（DIP）；thumb_pos = 拇指在轨道上的起点（DIP）。
+     拇指的长度与位置是**动态**的（内容多寡、滚到哪了），所以走宿主绑定；
+     轨道的尺寸是静态的，住在 `.zstyle`。 -->
+<component name="ScrollBar" params="thumb_len thumb_pos">
+  <box interactive="true" class="scroll-bar">
+    <box key="fill:scroll-thumb" interactive="true" height="{thumb_len}" translate-y="{thumb_pos}" class="scroll-thumb"/>
   </box>
 </component>

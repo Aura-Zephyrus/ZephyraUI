@@ -49,6 +49,18 @@ pub static MAIN_ALIGN: PropertyKey =
 /// 而折叠完全不占——工具栏在图片模式下少一个按钮时，间距必须跟着消失。
 pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyValue::bool(false));
 
+/// 溢出处理方式（`visible` / `hidden` / `scroll` / `auto`）。
+///
+/// **影响布局**：滚动容器（`scroll` / `auto`）的子内容按**无界约束**测量，
+/// 于是内容可以比视口大；`visible` / `hidden` 则按父给的约束测量。
+/// 改这一档会改变内容尺寸，所以必须重排。
+///
+/// 默认 `visible`：内容溢出时照常画到容器外（本仓的历史行为）。
+pub static OVERFLOW: PropertyKey = PropertyKey::layout(
+    "Overflow",
+    PropertyValue::overflow(crate::layout::Overflow::Visible),
+);
+
 // ============================== 定位 ==============================
 
 /// 定位方式（D1）：`flow` / `parent` / `root`，默认 `flow`。
@@ -212,6 +224,42 @@ pub fn is_transform_key(key: &PropertyKey) -> bool {
 /// 合成层（决定后端如何切 render pass）。
 pub static LAYER: PropertyKey =
     PropertyKey::new("Layer", PropertyValue::layer(crate::paint::Layer::Content));
+
+/// 裁剪矩形（相对节点自身，DIP）。`Some` 时绘制趟在该节点的命令前后发出
+/// `PushClip`/`PopClip`。`affects_layout = false` —— 只影响绘制，不触发重排。
+///
+/// 默认 `Rect::new(0, 0, 0, 0)`（全零，等效于不裁剪）；样式表写 `clip-rect: x y w h`
+/// 即可生效。
+pub static CLIP_RECT: PropertyKey = PropertyKey::new(
+    "ClipRect",
+    PropertyValue::rect(crate::core::Rect::new(0.0, 0.0, 0.0, 0.0)),
+);
+
+/// 滚动偏移 X（DIP）。由 `TextArea` 等滚动控件写入，供 `.zypui` 模板
+/// 的 `translate-x` 绑定读取，实现内容滚动。
+pub static SCROLL_OFFSET_X: PropertyKey =
+    PropertyKey::new("Scroll.OffsetX", PropertyValue::float(0.0));
+
+/// 滚动偏移 Y（DIP）。
+pub static SCROLL_OFFSET_Y: PropertyKey =
+    PropertyKey::new("Scroll.OffsetY", PropertyValue::float(0.0));
+
+/// 滚动内容宽度（DIP）。由滚动容器的子内容按实际尺寸设置，用于计算
+/// 滚动范围的上限。
+pub static SCROLL_CONTENT_WIDTH: PropertyKey =
+    PropertyKey::new("Scroll.ContentWidth", PropertyValue::float(0.0));
+
+/// 滚动内容高度（DIP）。
+pub static SCROLL_CONTENT_HEIGHT: PropertyKey =
+    PropertyKey::new("Scroll.ContentHeight", PropertyValue::float(0.0));
+
+/// 选区起始字节下标（DIP）。与 [`CURSOR`] 配合，用于渲染选区高亮块的宽度与位置。
+pub static SELECTION_BEGIN: PropertyKey =
+    PropertyKey::new("Text.SelectionBegin", PropertyValue::float(0.0));
+
+/// 选区结束字节下标（DIP）。
+pub static SELECTION_END: PropertyKey =
+    PropertyKey::new("Text.SelectionEnd", PropertyValue::float(0.0));
 
 // ============================== 效果 ==============================
 
@@ -388,6 +436,10 @@ pub static TEXT_MAX_WIDTH: PropertyKey =
 /// 文本行高倍数（继承）。`NaN` 表示用字体自带值。
 pub static TEXT_LINE_HEIGHT: PropertyKey =
     PropertyKey::inheritable_layout("Text.LineHeight", PropertyValue::float(f32::NAN));
+
+/// 光标位置（字节下标，DIP）。由 `TextField` / `TextArea` 控件写入，供 `.zypui`
+/// 模板的 `translate-x` 绑定读取，把光标定位到对应字符位置。
+pub static CURSOR: PropertyKey = PropertyKey::new("Text.Cursor", PropertyValue::float(0.0));
 
 // ============================== 交互 ==============================
 

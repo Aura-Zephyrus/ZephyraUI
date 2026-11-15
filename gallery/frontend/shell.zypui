@@ -346,6 +346,47 @@
     </Section>
   </PageRoot>
 </component>
+<component name="PageTextInput" params="">
+  <PageRoot key="textinput" cls="page-textinput">
+    <TextLabel key="textinput-blurb" text="{tr('ui.textinput.blurb')}" level="text-body"/>
+    <Section key="sec-textfield" title="{tr('ui.textfield')}">
+      <DemoRow label="{tr('ui.single-line')}">
+        <TextField key="text:field" value="{@text_field_value}" placeholder="{tr('ui.textinput.placeholder')}" cursor="{@text_field_cursor}" selection_begin="{@text_field_sel_begin}" selection_end="{@text_field_sel_end}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.actions')}">
+        <RoundButton key="text:select-all" label_key="ui.select-all"/>
+        <RoundButton key="text:copy" label_key="ui.copy"/>
+        <RoundButton key="text:paste" label_key="ui.paste"/>
+      </DemoRow>
+    </Section>
+    <Section key="sec-ime" title="{tr('ui.ime')}">
+      <TextLabel key="ime-hint" text="{tr('ui.ime.hint')}" level="text-caption"/>
+      <TextLabel key="ime-state" text="{@ime_state_text}" level="text-body"/>
+    </Section>
+  </PageRoot>
+</component>
+<component name="PageScroll" params="">
+  <PageRoot key="scroll" cls="page-scroll">
+    <TextLabel key="scroll-blurb" text="{tr('ui.scroll.blurb')}" level="text-body"/>
+    <Section key="sec-scroll" title="{tr('ui.scroll')}">
+      <DemoRow label="{tr('ui.scroll.drag')}">
+        <!-- 滚动容器 + 滚动条并排。容器本体可拖；滚动条的拇指也可拖。 -->
+        <box key="scroll-wrap" class="scroll-wrap">
+          <ScrollView key="scroll:demo" scroll_x="{@scroll_x}" scroll_y="{@scroll_y}">
+            <for var="i" index="ix" list="@scroll_items">
+              <box key="{'item:' + str(ix)}" class="scroll-item">
+                <TextLabel key="item-title" text="{'#' + str(ix + 1)}" level="text-body"/>
+                <TextLabel key="item-hint" text="{tr('ui.scroll.item-hint')}" level="text-caption"/>
+              </box>
+            </for>
+          </ScrollView>
+          <ScrollBar key="scroll:bar" thumb_len="{@scroll_thumb_len}" thumb_pos="{@scroll_thumb_pos}"/>
+        </box>
+      </DemoRow>
+    </Section>
+  </PageRoot>
+</component>
+
 <page name="Window">
   <box key="window" class="window">
     <box key="titlebar" class="titlebar">
@@ -407,6 +448,12 @@
           </if>
           <if cond="(@route == 'slider')">
             <PageSlider/>
+          </if>
+          <if cond="(@route == 'textinput')">
+            <PageTextInput/>
+          </if>
+          <if cond="(@route == 'scroll')">
+            <PageScroll/>
           </if>
         </box>
       </box>

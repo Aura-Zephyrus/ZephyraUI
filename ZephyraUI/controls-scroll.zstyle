@@ -1,0 +1,83 @@
+/* ScrollView（滚动容器）与 ScrollBar（滚动条）
+ *
+ * 几何约定：
+ * - `.scroll-view` 的盒子就是**视口**（内容被裁到这里面）。
+ * - `.scroll-view` 的 `direction` 决定**滚动轴**：竖直栈 → 纵向滚动。
+ * - `.scroll-view-content` 是内容盒子，不设尺寸 —— 它的高度由内容量出来
+ *   （滚动容器按无界约束测量子内容），于是"内容比视口高多少"是布局的产物。
+ */
+
+/* ---- ScrollView ---- */
+
+box.scroll-view {
+    /* 滚动轴 = 主轴（竖直栈 ⇒ 纵向滚动）。 */
+    direction: vertical;
+    /* 视口尺寸。改这里等于改「一屏能看多少」。 */
+    width: 320px;
+    height: 240px;
+    /* 裁到视口 —— 这是 `overflow` 的核心作用。 */
+    overflow: scroll;
+    spacing: 0px;
+    padding: 0px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+    corner-radius: 12px;
+    corner-shape: superellipse(1.5);
+}
+
+/* Page-level wrapper for the scroll demo. */
+box.page-scroll {
+    direction: vertical;
+    spacing: 16px;
+}
+
+/* Container that puts ScrollView and ScrollBar side-by-side. */
+box.scroll-wrap {
+    direction: horizontal;
+    cross-align: start;
+    spacing: 8px;
+}
+
+box.scroll-view-content {
+    /* 内容盒不加任何装饰：它是"被滚动的部分"，装饰会跟着一起滚走。
+       高度是**显式**的（见 gallery 的 SCROLL_CONTENT_H）—— 内容尺寸必须
+       由某一侧确定，而布局在 core，宿主只能照抄这个数。 */
+    direction: vertical;
+    spacing: 8px;
+    padding: 0px;
+    height: 568px;
+}
+
+box.scroll-item {
+    width: 320px;
+    height: 64px;
+    padding: 8px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+    corner-radius: 10px;
+}
+
+/* ---- ScrollBar ---- */
+
+box.scroll-bar {
+    /* 轨道：贴住滚动容器的右缘，高度 = 视口高度。 */
+    width: 8px;
+    height: 240px;
+    background: @control_fill;
+    corner-radius: 4px;
+    corner-shape: superellipse(1.5);
+}
+
+box.scroll-thumb {
+    /* 宽度固定；**长度**与位置由宿主逐帧绑定（`fill:scroll-thumb`）。 */
+    width: 8px;
+    corner-radius: 4px;
+    corner-shape: superellipse(1.5);
+    background: @control_border;
+}
+
+box.scroll-thumb.hovered {
+    background: @control_fill_hover;
+}

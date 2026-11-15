@@ -727,6 +727,10 @@ impl PaintState {
     ///
     /// D11: `position: root` 清除祖先累计 translate，自身 translate 仍生效；
     /// `opacity` 仍沿祖先链相乘。D18: 显式 `layer` 属性优先，否则继承祖先有效层。
+    ///
+    /// ⚠ **本节点自己的盒子不含滚动偏移**：滚动容器自身的背景 / 边框留在视口
+    /// 原位，被滚动的是**子内容**。所以滚动偏移在 [`Self::descend_children`]
+    /// 里施加，不在这里。
     fn descend(&self, node: &Node, ctx: Context<'_>) -> Self {
         let own = node.opacity(ctx);
         let own = if own.is_finite() { own } else { 1.0 };
@@ -754,6 +758,27 @@ impl PaintState {
                 base_translate
             },
             layer,
+        }
+    }
+
+    /// 推进到本节点的**子节点**：滚动容器的子内容按 `-scroll_offset` 平移。
+    ///
+    /// # 为什么滚动偏移只作用在子节点上
+    ///
+    /// 滚动容器的盒子就是**视口** —— 它的背景、边框、滚动条轨道都必须留在
+    /// 视口原位。若把偏移也加到容器自身上，滚动一下整个容器（含背景）就跟着
+    /// 移走，用户看到的是「容器在动」而不是「内容在动」。
+    ///
+    /// 命中测试按同一条规则反向平移（见 [`crate::hit`]），所以两边看到的
+    /// 「指针落在内容哪一项上」永远一致。
+    fn descend_children(&self, node: &Node, ctx: Context<'_>) -> Self {
+        let scroll = node.scroll_offset(ctx);
+        if scroll.x == 0.0 && scroll.y == 0.0 {
+            return *self;
+        }
+        PaintState {
+            translate: Point::new(self.translate.x - scroll.x, self.translate.y - scroll.y),
+            ..*self
         }
     }
 }
@@ -1015,13 +1040,55 @@ fn render_rec(
         );
     }
 
+    // 裁剪：在子节点之前发出 PushClip、之后发出 PopClip。
+    //
+    // 裁剪区有两个来源（见 [`crate::style::Node::clip_rect`]）：显式的
+    // `clip-rect` 属性，以及 `overflow: hidden / scroll / auto`（裁到视口）。
+    // 两者都用**本节点自身**的位移（`draw.rect`）换算到屏幕坐标 —— 滚动偏移
+    // **不能**进来：视口是不动的，动的是内容。
+    //
+    // PushClip/PopClip 参与 (layer, z, order) 排序，order 递增保证 PushClip 永远
+    // 在子节点命令之前、PopClip 永远在子节点命令之后，嵌套 clip 也不会被拆散。
+    let clip = node.clip_rect(ctx);
+    if let Some(clip) = clip {
+        let abs_clip = draw.rect(crate::core::Rect::new(
+            node.rect().x + clip.x,
+            node.rect().y + clip.y,
+            clip.width,
+            clip.height,
+        ));
+        out.push(
+            SortKey {
+                layer,
+                z: 0,
+                order: next_order(order),
+            },
+            Command::PushClip(abs_clip),
+        );
+    }
+
     // 子节点。
     //
     // ⚠ 传**已经推进过本节点**的 `state` —— 这是"容器不透明度影响整棵子树"
     // 与"祖先位移带着后代一起动"的唯一实现点。
-    let child_state = state;
+    //
+    // ⚠ 再叠一层 `descend_children`：滚动容器的子内容按 `-scroll_offset` 平移。
+    // 容器自身的盒子（背景 / 边框 / 滚动条）不受影响。
+    let child_state = state.descend_children(node, ctx);
     for child in node.children() {
         render_rec(child, ctx, order, out, child_state);
+    }
+
+    // 结束裁剪。
+    if clip.is_some() {
+        out.push(
+            SortKey {
+                layer,
+                z: 0,
+                order: next_order(order),
+            },
+            Command::PopClip,
+        );
     }
 }
 

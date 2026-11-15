@@ -39,6 +39,34 @@ text.field-text.placeholder {
     text-color: @content_disabled;
 }
 
+/* 选区高亮块：脱流定位，宽度由宿主按选区字节数换算成 DIP 绑定 */
+box.selection {
+    position: parent;
+    anchor: top-left;
+    height: 36px;
+    background: @accent_fill;
+    opacity: 0.3;
+    corner-radius: 4px;
+    corner-shape: superellipse(1.5);
+}
+
+box.selection.has-selection {
+    opacity: 0.5;
+}
+
+/* 光标：2px 竖条，脱流定位，x 由宿主按光标字节下标换算成 DIP 绑定。 */
+box.cursor {
+    position: parent;
+    anchor: top-left;
+    width: 2px;
+    height: 36px;
+    background: @content;
+}
+
+box.cursor.focused {
+    opacity: 1;
+}
+
 control.field-clear {
     width: 28px;
     height: 24px;

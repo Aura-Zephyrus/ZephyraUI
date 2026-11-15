@@ -178,6 +178,11 @@ pub struct UseNode {
 ///   只作用于本节点外观，不改布局盒与命中测试 |
 /// | `background` | [`zephyra_core::props::BACKGROUND`] | 结构值（`Color`）——
 ///   逐帧颜色绑定，见 `decoration` 的理由；静态颜色仍然住在 `.zstyle` |
+/// | `overflow` | [`zephyra_core::props::OVERFLOW`] | 字符串（`visible` /
+///   `hidden` / `scroll` / `auto`）—— 表达式语言没有枚举字面量，按**字符串**传 |
+/// | `scroll-offset-x` / `scroll-offset-y` | [`zephyra_core::props::SCROLL_OFFSET_X`] /
+///   [`zephyra_core::props::SCROLL_OFFSET_Y`] | 数值 —— 滚动容器的**内容**相对视口的
+///   偏移（正数 = 内容向上/向左移）。只重绘，不改布局盒 |
 pub const BARE_ATTRS: &[&str] = &[
     "text",
     "icon",
@@ -200,4 +205,7 @@ pub const BARE_ATTRS: &[&str] = &[
     "scale-x",
     "scale-y",
     "background",
+    "overflow",
+    "scroll-offset-x",
+    "scroll-offset-y",
 ];

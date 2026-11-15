@@ -196,3 +196,116 @@ fn a_deep_tree_truncates_but_still_answers_correctly() {
     assert!(result.truncated, "超深应标记为截断");
     assert!(result.hit_any());
 }
+
+// ============================== 滚动容器 ==============================
+
+/// 造一棵滚动容器：视口 100×100，内容 100×150（两项 + 50 间距）。
+///
+/// 布局（纵��）：`item1` 占 0..50，`item2` 占 100..150。
+/// 滚动偏移 `offset_y` 把**内容**整体上移 —— 于是 `item2` 的命中矩形
+/// 变成 100-offset .. 150-offset。
+fn scroll_tree(offset_y: f32) -> Node {
+    let item = |id: &'static str| {
+        Element::new(NodeTag::Control)
+            .with_key(id)
+            .with(&props::INTERACTIVE, PropertyValue::bool(true))
+            .with(&props::WIDTH, PropertyValue::float(100.0))
+            .with(&props::HEIGHT, PropertyValue::float(50.0))
+    };
+    let content = Element::new(NodeTag::Box)
+        .with_key("content")
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with(&props::SPACING, PropertyValue::float(50.0))
+        .with_children([item("item1"), item("item2")]);
+    let scroll = Element::new(NodeTag::Box)
+        .with_key("scroll")
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with(&props::WIDTH, PropertyValue::float(100.0))
+        .with(&props::HEIGHT, PropertyValue::float(100.0))
+        .with(
+            &props::OVERFLOW,
+            PropertyValue::overflow(crate::layout::Overflow::Scroll),
+        )
+        .with(&props::SCROLL_OFFSET_Y, PropertyValue::float(offset_y))
+        .with_children([content]);
+    let root = Element::new(NodeTag::Box).with_children([scroll]);
+    let mut node = Node::from_element(&root);
+    layout(&mut node, Rect::new(0.0, 0.0, 200.0, 200.0), ctx());
+    node
+}
+
+/// 滚过的内容按**滚后的位置**命中。
+///
+/// # 这条在钉什么
+///
+/// 命中测试必须与绘制用**同一条**平移规则（内容按 `-scroll_offset` 平移）。
+/// 若命中测试忘了反向平移，症状是「滚下去之后点不到那一项」——
+/// 而画面上明明有一项在那儿。
+#[test]
+fn scrolled_content_is_hittable_at_its_shifted_position() {
+    let node = scroll_tree(50.0);
+    // 滚了 50：`item2` 从 100..150 变成 50..100，落在视口内。
+    let result = hit_at(&node, 10.0, 75.0);
+    assert_eq!(
+        result.target().map(|n| &n.id),
+        Some(&Some(crate::id::ElementKey::Name("item2"))),
+        "滚过之后应命中滚后位置上的那一项"
+    );
+    // 没滚过的位置（100..150）此刻是空的 —— 命中测试不能还按老位置答。
+    let old = hit_at(&node, 10.0, 125.0);
+    assert!(
+        old.target().is_none(),
+        "滚后的旧位置不该再命中：{:?}",
+        old.target().map(|n| n.id.clone())
+    );
+}
+
+/// 视口外的内容**不可命中**（它已经被裁掉了）。
+///
+/// # 为什么这条重要
+///
+/// 绘制趟把视口外的内容裁掉，命中测试若不裁，就会出现「看不见却点得到」：
+/// 用户点一个看不见的按钮，应用却执行了它的动作。
+#[test]
+fn content_clipped_by_the_scroll_viewport_is_not_hittable() {
+    let node = scroll_tree(0.0);
+    // `item2` 在 100..150，视口只有 0..100 —— 它被裁掉了。
+    let result = hit_at(&node, 10.0, 125.0);
+    assert!(
+        result.target().is_none(),
+        "视口外被裁掉的内容不该可命中：{:?}",
+        result.target().map(|n| n.id.clone())
+    );
+    // 视口内的 `item1` 仍然可命中。
+    let inside = hit_at(&node, 10.0, 25.0);
+    assert_eq!(
+        inside.target().map(|n| &n.id),
+        Some(&Some(crate::id::ElementKey::Name("item1"))),
+        "视口内的内容必须照常可命中"
+    );
+}
+
+/// 滚动容器**自身**的盒子不跟着内容滚。
+///
+/// 症状（若错了）：滚一下，容器的背景 / 边框跟着往上跑 —— 用户看到的是
+/// 「整个面板在动」而不是「内容在动」。
+#[test]
+fn the_scroll_viewport_itself_does_not_move_with_the_content() {
+    let node = scroll_tree(50.0);
+    let scroll = node
+        .children()
+        .iter()
+        .find(|n| n.key().and_then(|k| k.as_name()) == Some("scroll"))
+        .expect("树里应当有 scroll 容器");
+    assert_eq!(
+        scroll.rect(),
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        "滚动容器的盒子（视口）必须留在原位"
+    );
+}

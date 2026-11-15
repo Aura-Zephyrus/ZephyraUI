@@ -126,7 +126,15 @@ pub struct HostWindow<V: View> {
     /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 图集变化）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
+    /// 本字段只表示「值不值得跑一帧」—— 因为判断后者必须先跑 `view()`，而那些
+    /// 应用代码。
     dirty: bool,
+    /// 窗口是否可见（未最小化、未被完全遮挡）。
+    ///
+    /// `WindowEvent::Occluded` / `WindowEvent::Focused` 维护。不可见时 `tick()`
+    /// 直接返回空帧、不 layout、不 paint、不 present。恢复可见时
+    /// `cache.invalidate()` 强制下一帧完整重绘。
+    window_visible: bool,
     /// 最近一次**输入事件**到达的时刻。
     ///
     /// # 为什么需要它
@@ -625,6 +633,7 @@ impl<V: View> HostWindow<V> {
             pending_manipulations: Vec::new(),
             pending_inertia: None,
             dirty: true,
+            window_visible: true,
             input_at: None,
             input_latency_us: None,
             render_submit_us: 0,
@@ -2409,6 +2418,18 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
     }
 
     fn handle_event(&mut self, event: WEvent) -> HostEventOutcome {
+        // 窗口遮挡/最小化感知：必须在 match 之前处理，避免 Ime 等非 Copy 类型导致部分移动。
+        if let WEvent::Occluded(occluded) = event {
+            if occluded && self.window_visible {
+                self.window_visible = false;
+            } else if !occluded && !self.window_visible {
+                self.window_visible = true;
+                self.cache.invalidate();
+                self.dirty = true;
+            }
+            return HostEventOutcome::Continue;
+        }
+
         match event {
             WEvent::CloseRequested => {
                 // 单窗口路径由 `ApplicationHandler` 退出事件循环；多窗口路径由
@@ -2537,6 +2558,18 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         if let Some(mut b) = self.bridge.take() {
             b.poll(self);
             self.bridge = Some(b);
+        }
+
+        // ⚠ 窗口不可见（最小化 / 完全遮挡）时直接返回空帧：不 layout、不 paint、不 present。
+        // 这让 CPU/GPU 在后台/遮挡时归零，符合 P3 验收标准。
+        if !self.window_visible {
+            let mut tick = HostTick {
+                device_dead: self.chain.device_dead(),
+                ..HostTick::default()
+            };
+            tick.wants_poll = true;
+            tick.busy = false;
+            return tick;
         }
         // 只在「有待处理的事件」时跑一帧。静止时一帧都不跑 —— 这既符合保留式 UI 的
         // 卖点，也让 demo 在静止时几乎没有 GPU 开销。

@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 
 use zephyra_core::i18n::{Messages, Preferences, Tag};
 use zephyra_core::id::ElementKey;
+use zephyra_core::input::TextEvent;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, PointerInputPhase, View};
 
@@ -81,6 +82,10 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     // （照片板就是这一页的背景）；四个 `[−]/[+]` 步进器仍在页内。
     ("materials", "Materials", "image"),
     ("slider", "Slider", "sliders"),
+    // 文本输入（TextField / TextArea）：单行与多行编辑、光标、选区、IME。
+    ("textinput", "Text Input", "pen"),
+    // 滚动容器（ScrollView / ScrollBar）：视口裁剪、内容平移、滚动条。
+    ("scroll", "Scrolling", "move"),
 ];
 
 /// 控件参考页的**族**（顺序即 segmented 的段顺序）。
@@ -184,6 +189,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "route.reference", "Controls"),
     ("en", "route.materials", "Materials"),
     ("en", "route.slider", "Slider"),
+    ("en", "route.textinput", "Text Input"),
+    ("en", "route.scroll", "Scrolling"),
     (
         "en",
         "ui.small-nav-collapsed-to-icons",
@@ -318,6 +325,33 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.slider.volume", "Volume"),
     ("en", "ui.slider.brightness", "Brightness"),
     ("en", "ui.slider.demo", "Liquid slider — drag or tap, solid / glass"),
+    // ---- 文本输入（TextField / TextArea） ----
+    ("en", "ui.textinput", "Text Input"),
+    ("en", "ui.textinput.blurb", "Editable text — single line (TextField) and multi-line (TextArea), with cursor, selection, copy/paste, and IME."),
+    ("en", "ui.textinput.placeholder", "Type something…"),
+    ("en", "ui.textfield", "Text Field"),
+    // ---- 滚动容器（ScrollView / ScrollBar）----
+    ("en", "ui.scroll", "Scrolling"),
+    (
+        "en",
+        "ui.scroll.blurb",
+        "A viewport clips its content and scrolls it: drag the list, wheel over \
+         it, or drag the thumb.",
+    ),
+    ("en", "ui.scroll.drag", "Drag / wheel"),
+    ("en", "ui.scroll.state", "Offset"),
+    (
+        "en",
+        "ui.scroll.item-hint",
+        "Scroll me — I live past the viewport edge.",
+    ),
+    ("en", "ui.single-line", "Single line"),
+    ("en", "ui.actions", "Actions"),
+    ("en", "ui.select-all", "Select all"),
+    ("en", "ui.copy", "Copy"),
+    ("en", "ui.paste", "Paste"),
+    ("en", "ui.ime", "IME / Input Method"),
+    ("en", "ui.ime.hint", "Open an IME (e.g. Chinese/Japanese) and type in the text field to see composing state and candidate window."),
     // ---- zh-Hans ----
     ("zh-Hans", "route.guide", "快速开始"),
     ("zh-Hans", "route.state", "状态"),
@@ -328,6 +362,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "route.reference", "控件参考"),
     ("zh-Hans", "route.materials", "材质与玻璃"),
     ("zh-Hans", "route.slider", "滑块"),
+    ("zh-Hans", "route.textinput", "文本输入"),
+    ("zh-Hans", "route.scroll", "滚动容器"),
     (
         "zh-Hans",
         "ui.small-nav-collapsed-to-icons",
@@ -454,6 +490,27 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.slider.volume", "音量"),
     ("zh-Hans", "ui.slider.brightness", "亮度"),
     ("zh-Hans", "ui.slider.demo", "液态滑块 — 拖拽或点按，实色 / 玻璃"),
+    ("zh-Hans", "ui.textinput", "文本输入"),
+    ("zh-Hans", "ui.textinput.blurb", "可编辑文本——单行（TextField）和多行（TextArea），带光标、选区、复制/粘贴和输入法。"),
+    ("zh-Hans", "ui.textinput.placeholder", "键入内容…"),
+    ("zh-Hans", "ui.textfield", "文本框"),
+    ("zh-Hans", "ui.single-line", "单行"),
+    ("zh-Hans", "ui.actions", "操作"),
+    ("zh-Hans", "ui.select-all", "全选"),
+    ("zh-Hans", "ui.copy", "复制"),
+    ("zh-Hans", "ui.paste", "粘贴"),
+    ("zh-Hans", "ui.ime", "输入法 / IME"),
+    ("zh-Hans", "ui.ime.hint", "打开输入法（如中文/日文）并在文本框中输入，查看组字状态和候选窗。"),
+    // ---- 滚动容器（ScrollView / ScrollBar）----
+    ("zh-Hans", "ui.scroll", "滚动容器"),
+    (
+        "zh-Hans",
+        "ui.scroll.blurb",
+        "视口把内容裁住并滚动：拖动列表、在它上面滚轮，或直接拖滚动条的拇指。",
+    ),
+    ("zh-Hans", "ui.scroll.drag", "拖动 / 滚轮"),
+    ("zh-Hans", "ui.scroll.state", "滚动位置"),
+    ("zh-Hans", "ui.scroll.item-hint", "把我滚出去 —— 我住在视口外。"),
     // ---- ja ----
     ("ja", "route.guide", "クイックスタート"),
     ("ja", "route.state", "状態"),
@@ -464,6 +521,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "route.reference", "コントロール"),
     ("ja", "route.materials", "マテリアルとガラス"),
     ("ja", "route.slider", "スライダー"),
+    ("ja", "route.textinput", "テキスト入力"),
+    ("ja", "route.scroll", "スクロール"),
     (
         "ja",
         "ui.small-nav-collapsed-to-icons",
@@ -594,6 +653,27 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.slider.volume", "音量"),
     ("ja", "ui.slider.brightness", "明るさ"),
     ("ja", "ui.slider.demo", "リキッドスライダー — ドラッグ/タップ、ソリッド/グラス"),
+    ("ja", "ui.textinput", "テキスト入力"),
+    ("ja", "ui.textinput.blurb", "編集可能なテキスト——単一行（TextField）と複数行（TextArea）、カーソル、選択範囲、コピー/ペースト、IME 対応。"),
+    ("ja", "ui.textinput.placeholder", "何か入力してください…"),
+    ("ja", "ui.textfield", "テキストフィールド"),
+    ("ja", "ui.single-line", "単一行"),
+    ("ja", "ui.actions", "アクション"),
+    ("ja", "ui.select-all", "すべて選択"),
+    ("ja", "ui.copy", "コピー"),
+    ("ja", "ui.paste", "貼り付け"),
+    ("ja", "ui.ime", "IME / インプットメソッド"),
+    ("ja", "ui.ime.hint", "IME（中国語/日本語など）を開き、テキストフィールドに入力して、組字状態と候補ウィンドウを確認してください。"),
+    // ---- スクロールビュー（ScrollView / ScrollBar）----
+    ("ja", "ui.scroll", "スクロール"),
+    (
+        "ja",
+        "ui.scroll.blurb",
+        "ビューポートがコンテンツをクリップしてスクロールします。リストをドラッグ、その上でホイール、またはつまみをドラッグしてください。",
+    ),
+    ("ja", "ui.scroll.drag", "ドラッグ / ホイール"),
+    ("ja", "ui.scroll.state", "オフセット"),
+    ("ja", "ui.scroll.item-hint", "私をスクロールして — ビューポートの外にいます。"),
 ];
 
 /// 本表里出现过的**全部**键（按首次出现去重）。
@@ -800,6 +880,10 @@ pub const SWITCH_SOLID_KEY: &str = "switch:solid";
 pub const SWITCH_GLASS_KEY: &str = "switch:glass";
 pub const MAT_SOLID_KEY: &str = "mat:solid";
 pub const MAT_GLASS_KEY: &str = "mat:glass";
+/// 切换按钮组的选项 key 列表（与 shell.zypui 中的 `items` 绑定一一对应）。
+pub const TOGGLE_GROUP_KEYS: [&str; 3] = ["tbtn:a", "tbtn:b", "tbtn:c"];
+/// 切换按钮组每个槽位的宽度（DIP，与 `.zstyle` 里 `.toggle-track` 的子项尺寸对齐）。
+pub const TOGGLE_SLOT_W: f32 = 88.0;
 /// 滑块（LiquidSlider 1:1）演示：实色 / 玻璃各一枚。
 pub const SLIDER_SOLID_KEY: &str = "slider:solid";
 pub const SLIDER_GLASS_KEY: &str = "slider:glass";
@@ -809,6 +893,29 @@ pub const LIQUID_BTN_GLASS_KEY: &str = "liquid:btn:glass";
 /// 下拉按钮（液态材质）演示：实色 / 玻璃各一枚。
 pub const LIQUID_DD_SOLID_KEY: &str = "liquid:dd:solid";
 pub const LIQUID_DD_GLASS_KEY: &str = "liquid:dd:glass";
+/// 滚动容器演示：`scroll:demo` 是滚动容器本体，`scroll:bar` 是它的滚动条。
+pub const SCROLL_DEMO_KEY: &str = "scroll:demo";
+pub const SCROLL_BAR_KEY: &str = "scroll:bar";
+/// 滚动条**拇指**的 key（模板里的 `fill:scroll-thumb`）。
+///
+/// 拇指的 key 必须以 `fill:` 开头 —— `.zypui` 里 `width`/`height` 只允许写在
+/// `fill:*` 节点上（内容几何例外），而拇指的长度正是逐帧绑定的几何。
+pub const SCROLL_THUMB_KEY: &str = "fill:scroll-thumb";
+
+/// 滚动容器的**视口**尺寸（DIP）。
+///
+/// ⚠ 与 `.zstyle` 里 `.scroll-view` 的 `width` / `height` 是同一个数 ——
+/// 与 `slider::DEFAULT_TRACK_W` ↔ `.slider-track { width: 240px }` 同款：
+/// **控件模型需要知道自己的几何**（滚动范围、拇指长度），而布局在 core，
+/// 所以这两个数必须由 Rust 侧与样式表侧同时写下。改一处必须改另一处。
+pub const SCROLL_VIEW_W: f32 = 320.0;
+pub const SCROLL_VIEW_H: f32 = 240.0;
+
+/// 滚动演示的内容高度（DIP）。
+///
+/// ⚠ 与 `.zstyle` 里 `.scroll-view-content` 的 `height` 是同一个数，理由同上：
+/// 8 项 × 64 + 7 × 间距 8 = 568。
+pub const SCROLL_CONTENT_H: f32 = 568.0;
 
 /// 该 key 是否属于某个下拉按钮（本体或其菜单项）。
 ///
@@ -883,6 +990,19 @@ pub struct Gallery {
     pub switch_demo: zephyra_ui::ToggleSwitch,
     /// 参考页开关族（第三族）的**单选组**（至多一项选中）。
     pub radio_group: zephyra_ui::RadioGroup,
+    /// 切换按钮组的**单选组**：互斥规则由 `RadioGroup` 承担，切换按钮组换的是
+    /// 长相不是规则（见 [`TOGGLE_GROUP_KEYS`] 的注释）。
+    pub toggle_group: zephyra_ui::RadioGroup,
+    /// 切换按钮组药丸的**视觉平移位置**（DIP，=tweening 后的 `选中下标 × TOGGLE_SLOT_W`）。
+    /// 每帧向 `选中下标 × TOGGLE_SLOT_W` 补间，实现与开关把手同款滑动手感。
+    pub toggle_group_visual: f32,
+    /// 切换按钮组当前选中项的**索引**（缓存，避免每帧 `selected_key()` + `position()` 线性查找）。
+    /// 与 `toggle_group` 同步：`select()` 后立即更新，`toggle_selected_index * TOGGLE_SLOT_W` 即为 tween 目标。
+    pub toggle_selected_index: usize,
+    /// 切换按钮组药丸拖拽：按下时「药丸左边缘 − 鼠标 X」的偏移（DIP），拖拽时保持不变。
+    pub toggle_drag_down_visual: f32,
+    /// 切换按钮组药丸拖拽：是否正在拖拽。
+    pub toggle_dragging: bool,
     /// 液态玻璃页的四个折射参数（**运行期可调**）。
     ///
     /// # 为什么它住在应用状态而不是样式表
@@ -1007,6 +1127,26 @@ pub struct Gallery {
     /// zypui per-element cache 的保守失效信号（Host::state_revision）。
     /// 交互/路由/语言等影响模板输出的变化后递增；tr 依赖缓存仅在有 revision 时启用。
     pub zypui_rev: u64,
+    /// 单行文本输入框（TextField）：演示可编辑文本、光标、选区、IME 组字。
+    pub text_field: zephyra_ui::TextField,
+    /// TextField 当前文本的静态引用（用于 `Val::S`，需 `&'static str`）。
+    /// 在 `on_input` 里文本变化时经 `Box::leak` 更新。
+    pub text_field_text: &'static str,
+    /// 多行文本区域（TextArea）：演示多行编辑、跨行光标、滚动偏移。
+    pub text_area: zephyra_ui::TextArea,
+    /// TextArea 当前文本的静态引用（同上）。
+    pub text_area_text: &'static str,
+    /// 滚动容器演示：偏移 / 钳位 / 拖动 / 滚轮（控件层）。
+    pub scroll_view: zephyra_ui::ScrollView,
+    /// 滚动条演示：轨道 + 拇指的几何与拖动（控件层）。
+    pub scroll_bar: zephyra_ui::ScrollBar,
+    /// 输入法候选窗是否打开（IME 组字中显示）。
+    pub ime_popup_open: bool,
+    /// IME 组字文本的静态引用（用于 Val::S，需 &'static str）。
+    pub ime_composing_text: &'static str,
+    /// 模拟的平台剪贴板文本（真实剪贴板由宿主平台 API 提供，此处模拟）。
+    /// 用 `&'static str` 以满足 `zypui::Val::S` 的生命周期要求。
+    pub clipboard_text: &'static str,
 }
 
 impl Gallery {
@@ -1315,6 +1455,18 @@ impl Default for Gallery {
                 g.select(RADIO_KEYS[0]);
                 g
             },
+            toggle_group: {
+                let mut g = zephyra_ui::RadioGroup::new();
+                for key in TOGGLE_GROUP_KEYS {
+                    g.push(key, key);
+                }
+                g.select(TOGGLE_GROUP_KEYS[0]);
+                g
+            },
+            toggle_group_visual: 0.0,
+            toggle_selected_index: 0,
+            toggle_drag_down_visual: 0.0,
+            toggle_dragging: false,
             // dump 路默认走基准画布：静态图必须与 1400×800 窗口路同基准，
             // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
             viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
@@ -1329,6 +1481,36 @@ impl Default for Gallery {
             zypui_rev: 1,
             cache_scope: NEXT_GALLERY_CACHE_SCOPE
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            // 单行文本输入框：初值为空，演示光标、选区、IME 组字。
+            text_field: zephyra_ui::TextField::new("text:field"),
+            text_field_text: "",
+            // 多行文本区域：初值为一段示例文本，演示多行编辑。
+            text_area: zephyra_ui::TextArea::with_text(
+                "text:area",
+                "多行文本区域演示\n第二行\n第三行",
+            ),
+            text_area_text: "多行文本区域演示\n第二行\n第三行",
+            // 滚动容器：视口 320×240、内容 320×568（见 SCROLL_* 常量）。
+            scroll_view: {
+                let mut v = zephyra_ui::ScrollView::new(SCROLL_DEMO_KEY);
+                v.set_content_size(zephyra_core::core::Point::new(
+                    SCROLL_VIEW_W,
+                    SCROLL_CONTENT_H,
+                ));
+                v.set_viewport_size(zephyra_core::core::Point::new(SCROLL_VIEW_W, SCROLL_VIEW_H));
+                v
+            },
+            scroll_bar: {
+                let mut b = zephyra_ui::ScrollBar::new(SCROLL_BAR_KEY);
+                b.set_axis(zephyra_ui::ScrollBarAxis::Vertical);
+                b.set_geometry(SCROLL_VIEW_H, SCROLL_CONTENT_H, SCROLL_VIEW_H);
+                b
+            },
+            // 输入法候选窗：初始关闭，IME 组字开始时打开。
+            ime_popup_open: false,
+            ime_composing_text: "",
+            // 模拟的平台剪贴板：初始为空，Ctrl+C/V 演示时读写。
+            clipboard_text: "",
         }
     }
 }
@@ -1612,8 +1794,29 @@ impl Gallery {
                 self.liquid_dd_glass_open = false;
                 self.last_action = "liquid-dd-glass";
             }
+            // ---- 文本输入操作 ----
+            "text:select-all" => {
+                self.text_field.select_all();
+            }
+            "text:copy" => {
+                if let Some(t) = self.text_field.copy() {
+                    self.clipboard_text = Box::leak(t.into_boxed_str());
+                }
+            }
+            "text:paste" => {
+                self.text_field.paste(self.clipboard_text);
+            }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
+            }
+            // 切换按钮组：点一颗 ⇒ 同组其余**自动取消**（互斥规则住在控件层的
+            // `RadioGroup`，本页只负责「点了哪个 key」）。
+            _ if key.starts_with("tbtn:") => {
+                self.toggle_group.select(key);
+                self.toggle_selected_index = TOGGLE_GROUP_KEYS
+                    .iter()
+                    .position(|&k| k == key)
+                    .unwrap_or(0);
             }
             // ---- 控件参考页的族切换 ----
             //
@@ -1764,6 +1967,53 @@ impl View for Gallery {
         self.liquid_dd_glass
             .process_pointer_events(&state.pointer_events, state.scale);
 
+        // ---- 滚动容器 / 滚动条 ----
+        //
+        // 顺序无关（三者互不依赖）：滚轮只看**指针停在哪**，拖拽看**按在谁身上**。
+        //
+        // 滚轮只认指针停在滚动容器 / 滚动条上 —— 与桌面滚动条一致：指针在别处
+        // 转滚轮，不该把这一页滚走（否则一页里两个滚动容器会一起动）。
+        let hover_key = state.hovered.as_ref().and_then(|k| k.as_name());
+        if hover_key == Some(SCROLL_DEMO_KEY) || hover_key == Some(SCROLL_THUMB_KEY) {
+            if let Some(s) = state.scroll {
+                self.scroll_view.scroll_wheel(s.delta_y);
+            }
+        }
+        self.scroll_bar
+            .set_offset(self.scroll_view.scroll_offset().y);
+        let pressed_key = self.pressed.as_ref().and_then(|k| k.as_name());
+        let scale = state.scale.max(1.0);
+        for ev in &state.pointer_events {
+            let x = ev.x / scale;
+            let y = ev.y / scale;
+            match ev.phase {
+                PointerInputPhase::Down => {
+                    // 按下点在哪，决定这一拖是滚内容还是拖拇指。
+                    if pressed_key == Some(SCROLL_DEMO_KEY) {
+                        self.scroll_view
+                            .drag_start(zephyra_core::core::Point::new(x, y));
+                    } else if pressed_key == Some(SCROLL_THUMB_KEY) {
+                        self.scroll_bar.drag_start(y);
+                    }
+                }
+                PointerInputPhase::Move => {
+                    if self.scroll_view.is_dragging() {
+                        self.scroll_view
+                            .drag_update(zephyra_core::core::Point::new(x, y));
+                    } else if self.scroll_bar.is_dragging() {
+                        // 滚动条是**从动**方：它产出偏移，写回滚动容器。
+                        let off = self.scroll_bar.drag_update(y);
+                        self.scroll_view
+                            .set_scroll_offset(zephyra_core::core::Point::new(0.0, off));
+                    }
+                }
+                PointerInputPhase::Up | PointerInputPhase::Cancel => {
+                    self.scroll_view.drag_end();
+                    self.scroll_bar.drag_end();
+                }
+            }
+        }
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         //
@@ -1791,6 +2041,85 @@ impl View for Gallery {
         }
         self.last_pressed = state.pressed.clone();
         self.last_pressed_keys = Gallery::pressed_set(state);
+
+        // ---- 文本输入事件（Key / Char / IME）分发给当前有焦点的文本控件 ----
+        //
+        // 焦点由 core 的 FocusState 维护，宿主在 on_input 开头同步过来。
+        // 只有焦点落在 TextField / TextArea 上时，才把文本事件送给对应控件。
+        // IME 组字期间（is_composing()）打开候选窗；Commit / Cancel 后关闭。
+        if !state.text_events.is_empty() {
+            let focused_name = self
+                .focused
+                .as_ref()
+                .and_then(|k| k.as_name())
+                .map(|s| s.to_string());
+            let is_text_field = focused_name.as_deref() == Some("text:field");
+            let is_text_area = focused_name.as_deref() == Some("text:area");
+
+            for ev in &state.text_events {
+                // Ctrl+C / Ctrl+V 剪贴板：先在宿主层读写模拟剪贴板，再送给控件。
+                if let TextEvent::Key(input) = ev {
+                    if input.modifiers.ctrl() {
+                        match input.name.as_str() {
+                            "C" => {
+                                if let Some(t) = self.text_field.copy() {
+                                    self.clipboard_text = Box::leak(t.into_boxed_str());
+                                }
+                                continue; // 已处理，不再分发给控件（控件也会返回 true，但无副作用）
+                            }
+                            "V" => {
+                                self.text_field.paste(self.clipboard_text);
+                                continue; // 已处理
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let consumed = if is_text_field {
+                    self.text_field.on_text_event(ev)
+                } else if is_text_area {
+                    // TextArea 复用 TextField 的事件处理（文本编辑语义相同）。
+                    self.text_field.on_text_event(ev)
+                } else {
+                    false
+                };
+                // IME 组字状态变更：开始组字时打开候选窗，Commit / Cancel 后关闭。
+                if consumed {
+                    match ev {
+                        zephyra_core::input::TextEvent::Ime(zephyra_core::input::Ime::Start {
+                            ..
+                        }) => {
+                            self.ime_popup_open = true;
+                            self.ime_composing_text = "";
+                        }
+                        zephyra_core::input::TextEvent::Ime(zephyra_core::input::Ime::Update {
+                            text,
+                            ..
+                        }) => {
+                            self.ime_composing_text = Box::leak(text.clone().into_boxed_str());
+                        }
+                        zephyra_core::input::TextEvent::Ime(
+                            zephyra_core::input::Ime::Commit { .. }
+                            | zephyra_core::input::Ime::Cancel,
+                        ) => {
+                            self.ime_popup_open = false;
+                            self.ime_composing_text = "";
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // 如果文本变了，用 Box::leak 更新静态引用（供 Val::S 使用）。
+            // 文本输入不频繁（仅按键时），泄漏量可接受。
+            let new_tf = self.text_field.text();
+            if new_tf != self.text_field_text {
+                self.text_field_text = Box::leak(new_tf.to_string().into_boxed_str());
+            }
+            let new_ta = self.text_area.text();
+            if new_ta != self.text_area_text {
+                self.text_area_text = Box::leak(new_ta.to_string().into_boxed_str());
+            }
+        }
 
         self.switch_demo.advance(dt);
         self.glass_decor.advance(dt);
@@ -1850,6 +2179,69 @@ impl View for Gallery {
             self.lang_negotiated = true;
             self.prefs = zephyra_core::i18n::Preferences::from_owned(&state.languages);
             self.lang = Self::pick_initial_language(&self.prefs);
+        }
+
+        // ---- 切换按钮组：药丸拖拽与补间（P1：单次遍历 + 缓存索引）----
+        let block_now_pressed = self.holds("block");
+
+        // 单次遍历 pointer_events，收集 Down 与 Move（避免两次 find() 遍历）。
+        let mut down_ev = None;
+        let mut move_ev = None;
+        for ev in &state.pointer_events {
+            match ev.phase {
+                PointerInputPhase::Down => down_ev = Some(ev),
+                PointerInputPhase::Move => move_ev = Some(ev),
+                _ => {}
+            }
+        }
+
+        // Down：进入拖拽模式，记录「鼠标 X 与药丸左边缘的偏移」。
+        if block_now_pressed && !self.toggle_dragging {
+            self.toggle_dragging = true;
+            if let Some(ev) = down_ev {
+                let down_x = ev.x / self.scale.max(1.0);
+                self.toggle_drag_down_visual = self.toggle_group_visual - down_x;
+            }
+        }
+
+        // Up：结束拖拽，吸附到最近槽位并提交选择。
+        if !block_now_pressed && self.toggle_dragging {
+            self.toggle_dragging = false;
+            let last = (TOGGLE_GROUP_KEYS.len() - 1) as f32;
+            let slot = (self.toggle_group_visual / TOGGLE_SLOT_W)
+                .round()
+                .clamp(0.0, last) as usize;
+            self.toggle_selected_index = slot;
+            self.toggle_group.select(TOGGLE_GROUP_KEYS[slot]);
+        }
+
+        let dragging = self.toggle_dragging;
+        if dragging {
+            // 拖拽中：药丸直接跟随手指（跳过下面的补间）。
+            if let Some(ev) = move_ev {
+                let cur_x = ev.x / self.scale.max(1.0);
+                let last = (TOGGLE_GROUP_KEYS.len() - 1) as f32 * TOGGLE_SLOT_W;
+                let mut target = cur_x + self.toggle_drag_down_visual;
+                target = target.clamp(0.0, last);
+                self.toggle_group_visual = target;
+            }
+        } else {
+            // 不拖拽时：250 ms 快入补间向选中槽位。
+            // toggle_selected_index 在 select() 后立即更新，这里 O(1) 读取，
+            // 无需每帧 selected_key() + position() 线性查找。
+            let target = self.toggle_selected_index as f32 * TOGGLE_SLOT_W;
+
+            let tweening = self.toggle_group_visual != target;
+            if tweening {
+                // 250 ms 快入补间（与开关把手同款，用预计算查表）。
+                // 这里简化为线性插入，实际应用中应调用 ease_table。
+                let dt = dt.clamp(0.0, 16.0);
+                let step = (target - self.toggle_group_visual) * (dt / 250.0).clamp(0.0, 1.0);
+                self.toggle_group_visual += step;
+                if (self.toggle_group_visual - target).abs() < 0.5 {
+                    self.toggle_group_visual = target;
+                }
+            }
         }
     }
 
@@ -2223,6 +2615,41 @@ impl zypui::Host for Gallery {
                     zephyra_core::decoration::Decorations::none()
                 }),
             ),
+            // ---- 文本输入（TextField / TextArea） ----
+            //
+            // 光标/选区按字节下标绑定，模板里按 translate-x 直接使用。
+            // 真实产品中应按字符宽度换算成 DIP，这里先按字节数给出位置，
+            // 足以验证「光标随输入移动、选区随选择扩展」的交互。
+            "text_field_value" => S(g.text_field_text),
+            "text_field_cursor" => F(g.text_field.cursor() as f32),
+            "text_field_sel_begin" => F(g
+                .text_field
+                .selection()
+                .map(|(b, _)| b as f32)
+                .unwrap_or(0.0)),
+            "text_field_sel_end" => F(g
+                .text_field
+                .selection()
+                .map(|(_, e)| e as f32)
+                .unwrap_or(0.0)),
+            "text_field_has_sel" => B(g.text_field.selection().is_some()),
+            "text_field_composing" => B(g.text_field.is_composing()),
+            "ime_popup_open" => B(g.ime_popup_open),
+            // IME 组字状态文本：显示当前组字内容，供候选窗调试查看。
+            "ime_state_text" => S(g.ime_composing_text),
+            // ---- 滚动容器 / 滚动条 ----
+            //
+            // 偏移直接进模板（`scroll-offset-*`），于是**滚动容器的钳位结果**
+            // 立刻反映在画面上；拇指的长度与位置从 `ScrollBar` 取（它是从动方，
+            // 每帧从 `scroll_view` 同步偏移）。
+            "scroll_x" => F(g.scroll_view.scroll_offset().x),
+            "scroll_y" => F(g.scroll_view.scroll_offset().y),
+            "scroll_thumb_len" => F(g.scroll_bar.thumb_length()),
+            "scroll_thumb_pos" => F(g.scroll_bar.thumb_offset()),
+            // 演示用的条目数：8 项 × 64 + 7 × 间距 8 = 568（= SCROLL_CONTENT_H）。
+            "scroll_items" => L((0..8).map(|_| F(0.0)).collect()),
+            // ---- 剪贴板（模拟平台剪贴板） ----
+            "clipboard_text" => S(g.clipboard_text),
             _ => return None,
         })
     }

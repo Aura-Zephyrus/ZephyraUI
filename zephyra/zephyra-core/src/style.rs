@@ -82,6 +82,9 @@ impl Node {
                 let h = self.number_or(&crate::props::TEXT_LINE_HEIGHT, 1.2, ctx);
                 (h.is_finite() && h > 0.0).then_some(h)
             },
+            letter_spacing: 0.0,
+            text_align: crate::text::TextAlign::Left,
+            paragraph_spacing: 0.0,
             scale: 1.0,
         }
     }
@@ -399,6 +402,56 @@ impl Node {
     /// 图像边长（`-1` = 撑满节点矩形）。
     pub fn image_size(&self, ctx: Context<'_>) -> f32 {
         self.number(&crate::props::IMAGE_SIZE, ctx)
+    }
+
+    /// 溢出处理方式（默认 [`crate::layout::Overflow::Visible`]）。
+    ///
+    /// 读 [`crate::props::OVERFLOW`]：样式表写 `overflow: hidden` 之类，
+    /// 控件也可以直接写这个属性。
+    pub fn overflow(&self, ctx: Context<'_>) -> crate::layout::Overflow {
+        match self.value(&crate::props::OVERFLOW, ctx).as_deref() {
+            Some(PropertyValue::Overflow(o)) => *o,
+            _ => crate::layout::Overflow::Visible,
+        }
+    }
+
+    /// 滚动偏移（DIP）：内容相对视口的偏移。
+    ///
+    /// # 方向约定
+    ///
+    /// `offset.y > 0` 表示内容**向上**平移（用户向下滚了），于是看到的是
+    /// 内容的下半段。绘制趟按 `-offset` 平移子节点；命中测试按 `+offset`
+    /// 反向平移指针位置（见 [`crate::hit`]）。
+    ///
+    /// 取自 [`crate::props::SCROLL_OFFSET_X`] / [`crate::props::SCROLL_OFFSET_Y`]
+    /// —— 与 `translate-x` 同为**只重绘**属性：改滚动位置不该触发重排。
+    pub fn scroll_offset(&self, ctx: Context<'_>) -> crate::core::Point {
+        crate::core::Point::new(
+            self.number_or(&crate::props::SCROLL_OFFSET_X, 0.0, ctx),
+            self.number_or(&crate::props::SCROLL_OFFSET_Y, 0.0, ctx),
+        )
+    }
+
+    /// 裁剪区（相对节点自身，DIP）。`None` = 不裁剪。
+    ///
+    /// 两个来源，**显式的优先**：
+    ///
+    /// 1. [`crate::props::CLIP_RECT`]（样式表 `clip-rect: x y w h`）；
+    /// 2. `overflow: hidden / scroll / auto` ⇒ 裁到本节点的 border box。
+    ///
+    /// 宽或高为 0 视为「不裁剪」：[`crate::props::CLIP_RECT`] 的默认值就是
+    /// 全零矩形，若把它当成真裁剪区，所有节点都会被裁成一条线。
+    pub fn clip_rect(&self, ctx: Context<'_>) -> Option<crate::core::Rect> {
+        if let Some(PropertyValue::Rect(r)) = self.value(&crate::props::CLIP_RECT, ctx).as_deref() {
+            if r.width > 0.0 && r.height > 0.0 {
+                return Some(*r);
+            }
+        }
+        if self.overflow(ctx).clips() {
+            let r = self.rect();
+            return Some(crate::core::Rect::new(0.0, 0.0, r.width, r.height));
+        }
+        None
     }
 
     /// 图像着色。

@@ -763,8 +763,8 @@ fn only_fill_nodes_carry_local_width() {
     // 若将来重新引入带填充的控件，把这条改回「WIDTH 只能出现在 key 以
     // `fill:` 开头的节点上」并恢复计数下界。
     assert_eq!(
-        fills, 2,
-        "gallery 的 fill:* 节点数变了（当前应为 2：slider solid/glass 各一枚）。         若新增/移除带填充的控件，按实际数量更新本判据与上方注释"
+        fills, 3,
+        "gallery 的 fill:* 节点数变了（当前应为 3：slider solid/glass 各一枚，text field 选区块一枚）。         若新增/移除带填充的控件，按实际数量更新本判据与上方注释"
     );
     assert!(
         bad.is_empty(),
@@ -3255,6 +3255,20 @@ const DISPLAY_ONLY: &[&str] = &[
     "infobar",
     "infobar-err",
     "theme-toggle",
+    // 文本输入页的粘贴按钮：粘贴空剪贴板时状态不变，不是空壳——
+    // 真剪贴板有内容时会插入文本。
+    "text:paste",
+    // 文本输入框本体：点击聚焦但焦点态由 InputState 决定，点击本身不改
+    // 变树形状；全选空文本和复制空剪贴板也无可见变化。
+    "text:field",
+    "text:select-all",
+    "text:copy",
+    // ScrollView：点击（不拖拽）不改变状态，正确行为是无反应；滚轮/拖拽才会动。
+    "scroll:demo",
+    // ScrollBar 轨道：点击轨道当前未接线（应跳转到该位置），暂列白名单。
+    "scroll:bar",
+    // 滚动条拇指：点击不拖拽不改变状态，正确行为是无反应；拖拽才会动。
+    "fill:scroll-thumb",
 ];
 
 /// **每个可交互 key 必须真的改变状态，或在本文件的展示型白名单里。**

@@ -53,6 +53,11 @@ pub fn parse(
     if std::ptr::eq(key, &zephyra_core::props::DECORATIONS) {
         return parse_decorations(input, p, line);
     }
+    // `clip-rect` 是**四个数值列表**（`x y w h`），与 `material-params` 一样在
+    // `input.next()` 之前分流：通用分支只取一个 token。
+    if std::ptr::eq(key, &zephyra_core::props::CLIP_RECT) {
+        return parse_clip_rect(input, p, line);
+    }
     // `corner-shape`：CSS 关键字（`round`/`squircle`/…）或函数 `superellipse(K)`。
     if std::ptr::eq(key, &zephyra_core::props::CORNER_SHAPE) {
         return parse_corner_shape(input, p, line);
@@ -310,6 +315,43 @@ fn parse_material_params(
     ))
 }
 
+/// 解析 `clip-rect:` 的值：**四个数值**（`x y w h`，空格或逗号分隔）。
+///
+/// # 支持的写法
+///
+/// ```text
+/// clip-rect: 0 0 200 200;
+/// clip-rect: 10px, 10px, 100px, 100px;
+/// ```
+fn parse_clip_rect(
+    input: &mut Parser,
+    p: &mut ZstyleParser<'_>,
+    line: u32,
+) -> Result<PropertyValue, ()> {
+    let mut nums: Vec<f32> = Vec::new();
+    loop {
+        match input.next() {
+            Ok(Token::Number { value, .. }) => nums.push(*value as f64 as f32),
+            Ok(Token::Dimension { value, .. }) => nums.push(*value as f64 as f32),
+            Ok(Token::Comma) => continue,
+            // 空白不是 token（cssparser 默认跳过）；其余（含闭括号）= 结束。
+            Ok(_) | Err(_) => break,
+        }
+    }
+    if nums.len() != 4 {
+        p.errors.push(unexpected(
+            p,
+            line,
+            "expected exactly four numbers (x y w h).",
+            &["0 0 200 200", "10 10 100 100"],
+        ));
+        return Err(());
+    }
+    Ok(PropertyValue::rect(zephyra_core::core::Rect::new(
+        nums[0], nums[1], nums[2], nums[3],
+    )))
+}
+
 /// 解析 `decoration:` 的值：一个**关键字**，选一整套玻璃装饰。
 ///
 /// # 支持的写法
@@ -518,6 +560,22 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
             return Some(PropertyValue::anchor(
                 zephyra_core::layout::Anchor::BottomRight,
             ));
+        }
+        return None;
+    }
+    if key.name() == "Overflow" {
+        use zephyra_core::layout::Overflow;
+        if eq("visible") {
+            return Some(PropertyValue::overflow(Overflow::Visible));
+        }
+        if eq("hidden") {
+            return Some(PropertyValue::overflow(Overflow::Hidden));
+        }
+        if eq("scroll") {
+            return Some(PropertyValue::overflow(Overflow::Scroll));
+        }
+        if eq("auto") {
+            return Some(PropertyValue::overflow(Overflow::Auto));
         }
         return None;
     }

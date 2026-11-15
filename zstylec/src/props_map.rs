@@ -57,6 +57,11 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "collapsed",
         key: &props::COLLAPSED,
     },
+    // 溢出处理：`visible` / `hidden` / `scroll` / `auto`。
+    Prop {
+        css: "overflow",
+        key: &props::OVERFLOW,
+    },
     // ---- 定位（影响布局）----
     Prop {
         css: "position",
@@ -216,6 +221,21 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop {
         css: "material-params",
         key: &props::MATERIAL_PARAMS,
+    },
+    // 裁剪矩形：`clip-rect: x y w h`（DIP）。只重绘，不触发重排。
+    Prop {
+        css: "clip-rect",
+        key: &props::CLIP_RECT,
+    },
+    // 滚动偏移（内容相对视口的偏移，DIP）。只重绘，不触发重排 ——
+    // 滚动位置变了但盒子没变，正是「只重绘」的定义。
+    Prop {
+        css: "scroll-offset-x",
+        key: &props::SCROLL_OFFSET_X,
+    },
+    Prop {
+        css: "scroll-offset-y",
+        key: &props::SCROLL_OFFSET_Y,
     },
     // 玻璃装饰：高光 / 外投影 / 内阴影（写在哪一侧由契约定，不由样式表定）。
     Prop {

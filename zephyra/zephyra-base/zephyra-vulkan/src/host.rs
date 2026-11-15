@@ -106,6 +106,16 @@ pub struct HostWindow<V: View> {
     activation: zephyra_core::input::ActivationState,
     pending_scroll: Option<zephyra_fx::ScrollInput>,
     dirty: bool,
+    /// 窗口是否可见（未最小化、未被完全遮挡）。
+    ///
+    /// `WindowEvent::Occluded` / `WindowEvent::Focused` 维护。不可见时 `tick()`
+    /// 直接返回空帧、不 layout、不 paint、不 present。恢复可见时
+    /// `cache.invalidate()` 强制下一帧完整重绘。
+    window_visible: bool,
+    /// 上一次呈现的时刻（用于 VSync 帧 pacing）。
+    last_present_at: Option<std::time::Instant>,
+    /// 显示器刷新周期（纳秒精度的 `Duration`）。
+    present_interval: std::time::Duration,
     engine: std::cell::RefCell<TextEngine>,
     atlas_revision_uploaded: u64,
     system_languages: Vec<String>,
@@ -124,6 +134,17 @@ pub struct HostWindow<V: View> {
     dumped: bool,
     /// 窗口。**最后析构**。
     window: Arc<Window>,
+}
+
+/// 获取显示器刷新周期（默认 60Hz）。
+fn refresh_interval(window: &Window) -> std::time::Duration {
+    let hz = window
+        .current_monitor()
+        .and_then(|m| m.refresh_rate_millihertz())
+        .map(|mhz| mhz / 1000)
+        .filter(|hz| (30..=500).contains(hz))
+        .unwrap_or(60);
+    std::time::Duration::from_nanos(1_000_000_000 / hz as u64)
 }
 
 /// 未指定尺寸时的默认客户区尺寸。
@@ -275,6 +296,9 @@ impl<V: View> HostWindow<V> {
             activation: zephyra_core::input::ActivationState::new(),
             pending_scroll: None,
             dirty: true,
+            window_visible: true,
+            last_present_at: None,
+            present_interval: refresh_interval(&window),
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: u64::MAX,
             system_languages,
@@ -861,12 +885,36 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         let frame = self.frame();
         if frame.redrawn {
             self.present();
+            self.last_present_at = Some(std::time::Instant::now());
         }
         Ok(())
     }
 
     fn tick(&mut self) -> HostTick {
+        // ⚠ 窗口不可见（最小化 / 完全遮挡）时直接返回空帧：不 layout、不 paint、不 present。
+        // 这让 CPU/GPU 在后台/遮挡时归零，符合 P3 验收标准。
+        if !self.window_visible {
+            let tick = HostTick {
+                busy: false,
+                ..Default::default()
+            };
+            return tick;
+        }
+
         let mut tick = HostTick::default();
+
+        // —— VSync 帧 pacing：距上次呈现不足一个刷新周期时，这一拍**不画**，睡到点再说。
+        if !self.dirty && self.last_present_at.is_some() {
+            if let Some(next) = self
+                .last_present_at
+                .map(|last| last + self.present_interval)
+                .filter(|next| std::time::Instant::now() < *next)
+            {
+                tick.wake_at = Some(next);
+                return tick;
+            }
+        }
+
         // 「动画播放中」由视图回答：保留式 UI 不常驻重画，动画只在事件到来时
         // 推进一帧，然后循环睡死 —— 中间整段弹簧曲线看不到。
         //
@@ -878,6 +926,13 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         if animating {
             self.dirty = true;
         }
+
+        // ⚠ 是否**真的**要画由 core 判定（`Frame::redrawn`）：事件可能什么都没改
+        // （鼠标在空白处移动 ⇒ `hovered` 前后都是 `None`），此时 core 返回
+        // `Unchanged`，本帧不画。
+        //
+        // ⚠ 那时**连 present 都不能做**：本后端是 flip model，`Present` 之后后缓冲内容未定义。
+        // 不画就 present 会把未定义内容推上屏（通常是黑，或上一次的帧）。
         if self.dirty {
             self.dirty = false;
             self.sync_input();
@@ -885,15 +940,41 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
             if frame.redrawn {
                 self.present();
                 tick.painted = true;
+                self.last_present_at = Some(std::time::Instant::now());
             }
             animating = self.view.wants_frames();
         }
+
+        // VSync 封顶：距上次呈现不足一个刷新周期时，这一拍**不画**，睡到点再说。
+        if let Some(next) = self
+            .last_present_at
+            .map(|last| last + self.present_interval)
+            .filter(|next| std::time::Instant::now() < *next)
+        {
+            if tick.wake_at.is_none_or(|w| w < next) {
+                tick.wake_at = Some(next);
+            }
+            return tick;
+        }
+
         tick.busy = animating;
         tick
     }
 
     fn handle_event(&mut self, event: winit::event::WindowEvent) -> HostEventOutcome {
         use winit::event::{ElementState, MouseButton, WindowEvent};
+        // 窗口遮挡/最小化感知：必须在 match 之前处理，避免 Ime 等非 Copy 类型导致部分移动。
+        if let WindowEvent::Occluded(occluded) = event {
+            if occluded && self.window_visible {
+                self.window_visible = false;
+            } else if !occluded && !self.window_visible {
+                self.window_visible = true;
+                self.cache.invalidate();
+                self.dirty = true;
+            }
+            return HostEventOutcome::Continue;
+        }
+
         match event {
             WindowEvent::CloseRequested => return HostEventOutcome::Close,
             WindowEvent::RedrawRequested => {

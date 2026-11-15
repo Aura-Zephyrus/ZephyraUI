@@ -291,9 +291,53 @@ fn layer_parses_background_content_overlay_popup() {
     }
 }
 
+/// `overflow` 的四档关键字都能解析，别的词报错。
+///
+/// # 为什么单独一条
+///
+/// `overflow` 是**滚动容器**的入口属性：它一坏，`overflow: scroll` 整条链
+/// （裁剪 + 滚动偏移 + 滚动范围）都失效，而症状只是「内容不滚了」——
+/// 与「忘了写滚动偏移」完全同形。所以四档一次写全。
+#[test]
+fn overflow_parses_the_four_keywords_and_rejects_others() {
+    use zephyra_core::layout::Overflow;
+    for (css, want) in [
+        ("visible", Overflow::Visible),
+        ("hidden", Overflow::Hidden),
+        ("scroll", Overflow::Scroll),
+        ("auto", Overflow::Auto),
+    ] {
+        let r = ok(&format!("box {{ overflow: {css}; }}"));
+        assert_eq!(
+            r.sheet.rules()[0].declarations[0].value.get::<Overflow>(),
+            Some(want),
+            "overflow {css}"
+        );
+    }
+    let err = bad("box { overflow: clip; }");
+    assert!(
+        err.contains("unknown value"),
+        "不认识的档位应当报错，实得：{err}"
+    );
+}
+
+/// 滚动偏移是**数值**属性（不是长度单位受限的那种）。
+#[test]
+fn scroll_offset_parses_as_a_number() {
+    let r = ok("box { scroll-offset-x: 12px; scroll-offset-y: 40px; }");
+    let decls = &r.sheet.rules()[0].declarations;
+    let get = |name: &str| {
+        decls
+            .iter()
+            .find(|d| d.key.name() == name)
+            .unwrap_or_else(|| panic!("少了 {name} 这条声明"))
+    };
+    assert_eq!(get("Scroll.OffsetX").value.get::<f32>(), Some(12.0));
+    assert_eq!(get("Scroll.OffsetY").value.get::<f32>(), Some(40.0));
+}
+
 #[test]
 fn flexbox_properties_parse_and_map_to_the_core_keys() {
-    // 关键字分支按 `key.name()` 认（见 `value::enum_value`）。漏一条分支的症状是
     // 「属性名没错、值报 unknown value」，所以整套 flex 词汇一次写全。
     let r = ok("box { flex-direction: column-reverse; flex-wrap: wrap; \
          align-content: space-between; align-self: end; \

@@ -39,8 +39,14 @@
 pub mod checkbox;
 pub mod i18n;
 pub mod liquid_button;
+pub mod popup;
+pub mod scroll_bar;
+pub mod scroll_view;
 pub mod slider;
 pub mod styles;
+pub mod text_area;
+pub mod text_buffer;
+pub mod text_field;
 pub mod toggle;
 pub mod tokens;
 
@@ -50,7 +56,13 @@ pub use i18n::{
     KEY_PARAMS, NAMESPACE,
 };
 pub use liquid_button::{LiquidButton, LIQUID_BUTTON_H, LIQUID_BUTTON_W};
+pub use popup::Popup;
+pub use scroll_bar::{ScrollBar, ScrollBarAxis, MIN_THUMB_LENGTH, PAGE_FRACTION};
+pub use scroll_view::{ScrollView, SCROLL_DRAG_SLOP, SCROLL_WHEEL_DELTA};
 pub use slider::{Slider, DRAG_SLOP, THUMB_H, THUMB_PRESSED_SCALE, THUMB_W, TRACK_H};
 pub use styles::{stylesheet, STYLESHEETS};
+pub use text_area::TextArea;
+pub use text_buffer::TextBuffer;
+pub use text_field::TextField;
 pub use toggle::{RadioGroup, RadioOption, ToggleSwitch, KNOB_PRESSED_SCALE, KNOB_TRAVEL};
 pub use tokens as token_names;

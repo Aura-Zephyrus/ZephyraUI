@@ -530,6 +530,87 @@ fn background_only_accepts_a_raw_color_binding() {
     assert_eq!(got, Some(color), "绑定颜色必须原样落地");
 }
 
+/// `overflow` 与 `scroll-offset-*` 落到核心属性上。
+///
+/// # 为什么这条重要
+///
+/// `overflow` 走**字符串**（表达式语言没有枚举字面量），拼错时的降级是
+/// 「不裁剪」—— 症状是「内容溢出到面板外面」，与「忘了写 overflow」完全同形。
+/// 所以这里把四档都过一遍，并钉住「认不出的词按不裁剪降级」。
+#[test]
+fn overflow_and_scroll_offset_reach_the_core_properties() {
+    fn ui_with(attrs: Vec<(&'static str, Expr)>) -> Ui {
+        Ui::new(RawUi {
+            components: vec![],
+            pages: vec![Page {
+                name: "p",
+                root: vec![Node::El(ElementNode {
+                    tag: NodeTag::Box,
+                    key: None,
+                    classes: vec![],
+                    attrs,
+                    children: vec![],
+                })],
+            }],
+        })
+        .unwrap()
+    }
+
+    use zephyra_core::layout::Overflow;
+    for (word, want) in [
+        ("visible", Overflow::Visible),
+        ("hidden", Overflow::Hidden),
+        ("scroll", Overflow::Scroll),
+        ("auto", Overflow::Auto),
+    ] {
+        let ui = ui_with(vec![("overflow", Expr::LitS(word))]);
+        let h = host(vec![]);
+        let mut it = Interner::new();
+        let els = ui.build("p", &h, &mut it).unwrap();
+        assert_eq!(
+            els[0]
+                .props()
+                .lookup(&props::OVERFLOW)
+                .and_then(|(v, _)| v.get::<Overflow>()),
+            Some(want),
+            "overflow {word}"
+        );
+    }
+
+    // 认不出的词：按「不裁剪」降级（不报错，也不生效）。
+    let ui = ui_with(vec![("overflow", Expr::LitS("clip"))]);
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    assert!(
+        els[0].props().lookup(&props::OVERFLOW).is_none(),
+        "认不出的 overflow 词应当按「没写」降级"
+    );
+
+    // 滚动偏移：数值。
+    let ui = ui_with(vec![
+        ("scroll-offset-x", Expr::LitF(12.0)),
+        ("scroll-offset-y", Expr::LitF(40.0)),
+    ]);
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    assert_eq!(
+        els[0]
+            .props()
+            .lookup(&props::SCROLL_OFFSET_X)
+            .and_then(|(v, _)| v.get::<f32>()),
+        Some(12.0)
+    );
+    assert_eq!(
+        els[0]
+            .props()
+            .lookup(&props::SCROLL_OFFSET_Y)
+            .and_then(|(v, _)| v.get::<f32>()),
+        Some(40.0)
+    );
+}
+
 #[test]
 fn runtime_resolve_matches_build_for_static_page() {
     // 简单静态页：UiRuntime 的 P1 缓存路径必须与 Ui::build 语义等价。

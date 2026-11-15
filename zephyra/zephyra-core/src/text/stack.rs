@@ -21,8 +21,8 @@ use crate::core::{Point, Rect, Size, UvRect};
 use crate::paint::{GlyphQuad, TextureRef};
 
 use super::{
-    atlas::AtlasRaster, GlyphAtlas, GlyphSource, Line, PlacedGlyph, ShapedText, TextRender,
-    TextStyle,
+    atlas::AtlasRaster, GlyphAtlas, GlyphSource, Line, PlacedGlyph, ShapedText, TextAlign,
+    TextRender, TextStyle,
 };
 
 /// 默认行高倍数。字体自带值缺失时用它。
@@ -135,7 +135,13 @@ impl<S: GlyphSource> TextStack<S> {
     /// 排版：按 `max_width` 断行。
     ///
     /// 断行按**字符边界**切，不做连字符与字素簇感知的断词 —— 对 UI 标签够用。
-    fn layout(&mut self, text: &str, px_size: f32, max_width: Option<f32>) -> Vec<Line> {
+    fn layout(
+        &mut self,
+        text: &str,
+        px_size: f32,
+        letter_spacing: f32,
+        max_width: Option<f32>,
+    ) -> Vec<Line> {
         let mut lines = Vec::new();
         let mut current: Vec<PlacedGlyph> = Vec::new();
         let mut width = 0.0f32;
@@ -154,7 +160,7 @@ impl<S: GlyphSource> TextStack<S> {
             }
 
             let glyph_id = self.source.glyph_id(ch);
-            let advance = self.source.advance(glyph_id, px_size);
+            let advance = self.source.advance(glyph_id, px_size) + letter_spacing;
 
             // 自动断行：在**加入之前**判断，于是超宽的那个字形整体换到下一行。
             if let Some(max) = max_width {
@@ -213,19 +219,41 @@ impl<S: GlyphSource> TextStack<S> {
             };
         }
 
-        let mut lines = self.layout(text, px_size, max_width);
+        let mut lines = self.layout(text, px_size, style.letter_spacing, max_width);
 
-        // 填基线：逐行下移一个行高。y 向下为正，与核心的 DIP 坐标系一致。
+        // 填基线与水平对齐：逐行下移一个行高，并按 text_align 给每行加 x 偏移。
+        //
+        // 对齐以 `max_width` 为容器宽度：Left=0, Center=0.5, Right=1。
+        // `max_width` 为 None 时只有一行，宽度已是文本宽度，不做对齐。
+        let align_factor = match style.text_align {
+            TextAlign::Left => 0.0,
+            TextAlign::Center => 0.5,
+            TextAlign::Right => 1.0,
+        };
+        // 行距（含段间距）：相邻两行基线之间的距离。
+        let line_pitch = line_height + style.paragraph_spacing;
         for (i, line) in lines.iter_mut().enumerate() {
-            line.baseline = Point::new(0.0, (i as f32 + 1.0) * line_height);
+            line.baseline = Point::new(0.0, (i as f32 + 1.0) * line_pitch);
+            if let Some(max) = max_width {
+                let x_offset = (max - line.width) * align_factor;
+                if x_offset != 0.0 {
+                    for g in line.glyphs.iter_mut() {
+                        g.offset.x += x_offset;
+                    }
+                }
+            }
         }
 
-        // 宽度取**最长的一行**，不是"每行容量"。多行文本块的实际宽度由最宽的那行
-        // 决定 —— 若用「每行容量 × 步进」，一个 100 字符的段落被断成 10 行时会
-        // 报告 10 字符宽，容器随之算出错误的尺寸。
+        // 宽度取**最长的一行**，不是"每行容量"。
         let width = lines.iter().map(|l| l.width).fold(0.0f32, f32::max);
+        // 总高度 = (行数-1) × 行距 + 第一行行高。
+        let height = if lines.is_empty() {
+            0.0
+        } else {
+            (lines.len() as f32 - 1.0) * line_pitch + line_height
+        };
         ShapedText {
-            size: Size::new(width, lines.len() as f32 * line_height),
+            size: Size::new(width, height),
             lines,
             // 排版时字号就在手上，直接带下去。`glyph_quads` 靠它查图集 ——
             // 曾经那里是**反推**的，而那条启发式只对纯拉丁成立（含 CJK 时错一倍）。
@@ -244,7 +272,7 @@ impl<S: GlyphSource> super::TextEngine for TextStack<S> {
             return 0.0;
         }
         let id = self.source.glyph_id(ch);
-        self.source.advance(id, style.effective_size().max(1.0))
+        self.source.advance(id, style.effective_size().max(1.0)) + style.letter_spacing
     }
 
     fn line_height(&mut self, style: &TextStyle) -> f32 {

@@ -32,6 +32,17 @@ impl VisualState {
 ///
 /// D11: entering `position: root` clears ancestor accumulated translate; node's
 /// own translate still applies. Opacity still multiplies (handled by paint).
+///
+/// # 两个 translate 不一样：自己的 vs 子节点的
+///
+/// 返回的 `Point`（**自己的**位移）用于本节点的视觉矩形；
+/// [`VisualState::translate`]（**传给子节点的**基准位移）额外扣掉了本节点的
+/// 滚动偏移。
+///
+/// 这正是滚动容器要的形状：容器自身的盒子（背景 / 边框 / 滚动条轨道）留在视口
+/// 原位，被滚动的是**子内容**。绘制趟用同一条规则（见
+/// `crate::paint::PaintState` 的 `descend_children` 方法），命中测试与脏区因此与画面
+/// 一致 —— 不会出现"看得见却点不到"或"滚过去留残影"。
 pub fn enter(node: &Node, ctx: Context<'_>, parent: VisualState) -> (VisualState, Point) {
     let base_translate = if node.position(ctx) == crate::layout::Position::Root {
         Point::ZERO
@@ -42,11 +53,14 @@ pub fn enter(node: &Node, ctx: Context<'_>, parent: VisualState) -> (VisualState
         base_translate.x + sanitize(node.translate_x(ctx)),
         base_translate.y + sanitize(node.translate_y(ctx)),
     );
+    // 滚动容器：子内容按 -scroll_offset 平移（容器自身不平移）。
+    let scroll = node.scroll_offset(ctx);
+    let child_translate = Point::new(own_translate.x - scroll.x, own_translate.y - scroll.y);
     let layer = effective_layer(node, ctx).unwrap_or(parent.layer);
     let preorder = parent.preorder;
     (
         VisualState {
-            translate: own_translate,
+            translate: child_translate,
             layer,
             preorder,
         },

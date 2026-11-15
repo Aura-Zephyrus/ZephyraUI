@@ -51,6 +51,9 @@ pub const CLASS_CHECKED: &str = "checked";
 /// 两处同改时这条常量会被 `knob_travel_matches_the_stylesheet_geometry` 钉住。
 pub const KNOB_TRAVEL: f32 = 20.0;
 
+use std::sync::OnceLock;
+
+use zephyra_bezier::{Bezier, EaseTable};
 use zephyra_core::filter::Material;
 
 /// 按压时把手的目标缩放（原版 `pressedScale = 1.5`）。
@@ -82,6 +85,16 @@ pub const KNOB_DRAG_SLOP: f32 = 4.0;
 /// 「位置 / 刻度 / 旋转」，给 167 / 250 / 333 ms 三档；本仓取中档 250 ms。
 /// 见 `docs/developer/animation.md` §1。
 pub const FRACTION_TWEEN_MS: f32 = 250.0;
+
+/// 250 ms「快入」缓动表的单例（`cubic-bezier(0,0,0,1)`，251 采样点）。
+/// 每帧只做索引 + 线性插值，零 `powf`、零牛顿迭代。
+static FRACTION_EASE_TABLE: OnceLock<EaseTable> = OnceLock::new();
+
+/// 250 ms「快入」预计算缓动表。
+fn fraction_ease_table() -> &'static EaseTable {
+    FRACTION_EASE_TABLE
+        .get_or_init(|| EaseTable::new(FRACTION_TWEEN_MS, Bezier::new(0.0, 0.0, 0.0, 1.0), 251))
+}
 
 /// 位移/按压弹簧的角频率（ω = √stiffness，stiffness = 1000）。
 const OMEGA_1000: f32 = 31.6228;
@@ -513,10 +526,9 @@ impl ToggleSwitch {
             self.fraction_target = fraction_target;
         }
         self.fraction_elapsed_ms += dt_ms;
-        let u = (self.fraction_elapsed_ms / FRACTION_TWEEN_MS).clamp(0.0, 1.0);
-        let eased = direct_ease(u);
+        let eased = fraction_ease_table().progress(self.fraction_elapsed_ms);
         self.fraction = self.fraction_from + (self.fraction_target - self.fraction_from) * eased;
-        if u >= 1.0 {
+        if self.fraction_elapsed_ms >= FRACTION_TWEEN_MS {
             self.fraction = self.fraction_target;
             self.fraction_tweening = false;
         }
@@ -689,20 +701,6 @@ impl ToggleSwitch {
             }
         }
     }
-}
-
-/// 官方「直接入口 / 快入」的进度：`cubic-bezier(0,0,0,1)`。
-///
-/// 参数化 `t = elapsed ∈ [0,1]` 时 `progress = 3·t^(2/3) − 2·t`。
-/// 这条贝塞尔退化（P₀(0,0)、C₁(0,0)、C₂(0,1)、P₃(1,1)：x = t³、y = 3t² − 2t³），
-/// 精确单调、端点归位，且 `t = 0.5` 处 ≈ 0.89（先快后慢）。
-/// 不需要迭代——但也别顺手当它通用的 cubic-bezier：它成立只因为控制点撞车。
-fn direct_ease(t: f32) -> f32 {
-    if !t.is_finite() {
-        return 0.0;
-    }
-    let u = t.clamp(0.0, 1.0);
-    3.0 * u.powf(2.0 / 3.0) - 2.0 * u
 }
 
 /// 指数逼近 `target` 一步（收敛到 [`SNAP`] 后钉死）。

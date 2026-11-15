@@ -1415,6 +1415,8 @@ pub fn expand_range_translated_into(
     // `clear()` 是空操作。有测试专门钉住多批的情形。
     let mut batch_start = 0u32;
     let mut clip: Option<Rect> = None;
+    // 嵌套裁剪栈：`PopClip` 恢复上一级，而不是硬编码 `None`。
+    let mut clip_stack: Vec<Rect> = Vec::new();
 
     for (i, item) in list.iter().enumerate() {
         // 分段回放（E4.4）：只展开落在本段下标区间里的命令。见
@@ -1768,13 +1770,17 @@ pub fn expand_range_translated_into(
                 );
             }
             Command::PushClip(r) => {
-                clip = Some(match clip {
-                    Some(c) => intersect(c, shift(*r)),
-                    None => shift(*r),
-                });
+                let shifted = shift(*r);
+                let combined = clip_stack
+                    .last()
+                    .map(|c| intersect(*c, shifted))
+                    .unwrap_or(shifted);
+                clip_stack.push(combined);
+                clip = Some(combined);
             }
             Command::PopClip => {
-                clip = None;
+                clip_stack.pop();
+                clip = clip_stack.last().copied();
             }
             // 外部渲染源：本层是**几何展开**，画不出宿主自绘内容——计数。
             // 真正的执行点在后端的段回放（`Segment::Custom`）；落到这里的

@@ -24,6 +24,7 @@ publish = false
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
 zephyra-fx = { path = "../zephyra/zephyra-fx" }
+zephyra-bezier = { path = "../zephyra/zephyra-core/extra/zephyra-bezier" }
 
 # ⚠️ 控件的**文案**归应用，不归这里：同一个 Button 在不同应用里
 # 叫 "确定" / "OK" / "Submit"。控件只发 key，文案表是应用的。

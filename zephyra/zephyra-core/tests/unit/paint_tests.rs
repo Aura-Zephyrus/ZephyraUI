@@ -607,3 +607,133 @@ fn custom_command_helpers() {
     assert!(!crate::paint::command_filter(&cmd).unwrap().is_identity());
     assert_eq!(crate::paint::command_corner_radius(&cmd), 0.0);
 }
+
+// ============================== 滚动容器 ==============================
+
+/// 造一棵滚动容器：视口 100×100，内容 100×150（两项 + 50 间距）。
+///
+/// 与 `tests/unit/hit.rs` 里的同名构件同形 —— 那边钉命中，这边钉绘制。
+fn scroll_el(offset_y: f32, overflow: crate::layout::Overflow) -> Element {
+    let item = |id: &'static str| {
+        Element::new(NodeTag::Box)
+            .with_key(id)
+            .with(&crate::props::WIDTH, PropertyValue::float(100.0))
+            .with(&crate::props::HEIGHT, PropertyValue::float(50.0))
+            .with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(0.5, 0.25, 0.125)),
+            )
+    };
+    let content = Element::new(NodeTag::Box)
+        .with_key("content")
+        .with(
+            &crate::props::DIRECTION,
+            PropertyValue::direction(crate::layout::Direction::Vertical),
+        )
+        .with(&crate::props::SPACING, PropertyValue::float(50.0))
+        .with_children([item("item1"), item("item2")]);
+    Element::new(NodeTag::Box)
+        .with_key("root")
+        .with_children([Element::new(NodeTag::Box)
+            .with_key("scroll")
+            .with(
+                &crate::props::DIRECTION,
+                PropertyValue::direction(crate::layout::Direction::Vertical),
+            )
+            .with(&crate::props::WIDTH, PropertyValue::float(100.0))
+            .with(&crate::props::HEIGHT, PropertyValue::float(100.0))
+            .with(&crate::props::OVERFLOW, PropertyValue::overflow(overflow))
+            .with(
+                &crate::props::SCROLL_OFFSET_Y,
+                PropertyValue::float(offset_y),
+            )
+            .with_children([content])])
+}
+
+/// 滚动容器测试用的根矩形：200×200（够放下 100×100 的视口）。
+const SCROLL_BOUNDS: Rect = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+/// `overflow: scroll` 产出成对的 `PushClip` / `PopClip`，裁剪区 = 视口。
+///
+/// # 为什么这条重要
+///
+/// `PushClip` / `PopClip` 之前**零生产者**（见 `docs/todo/`）—— 命令存在，
+/// 却没有东西产出它们，于是"裁剪"这件事在画面上根本不存在。
+#[test]
+fn overflow_scroll_emits_a_clip_pair_around_the_viewport() {
+    let list = render_of(
+        &scroll_el(0.0, crate::layout::Overflow::Scroll),
+        SCROLL_BOUNDS,
+    );
+    let clips: Vec<Rect> = list
+        .iter()
+        .filter_map(|i| match &i.command {
+            Command::PushClip(r) => Some(*r),
+            _ => None,
+        })
+        .collect();
+    let pops = list
+        .iter()
+        .filter(|i| matches!(&i.command, Command::PopClip))
+        .count();
+    assert_eq!(
+        clips.len(),
+        1,
+        "滚动容器应产出恰好一条 PushClip，实得 {clips:?}"
+    );
+    assert_eq!(pops, 1, "PushClip 必须有配对的 PopClip");
+    assert_eq!(
+        clips[0],
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        "裁剪区就是视口本身"
+    );
+}
+
+/// `overflow: visible`（默认）**不**裁剪。
+#[test]
+fn overflow_visible_emits_no_clip() {
+    let list = render_of(
+        &scroll_el(0.0, crate::layout::Overflow::Visible),
+        SCROLL_BOUNDS,
+    );
+    assert!(
+        !list
+            .iter()
+            .any(|i| matches!(&i.command, Command::PushClip(_) | Command::PopClip)),
+        "visible 不该裁剪 —— 实得 {:?}",
+        list.iter().map(|i| &i.command).collect::<Vec<_>>()
+    );
+}
+
+/// 滚动的内容按 `-scroll_offset` 平移绘制。
+///
+/// # 这条在钉什么
+///
+/// 内容必须**跟着滚动**。若平移漏了（或符号反了），症状是「滚轮在动、
+/// 内容不动」或者「内容往反方向跑」—— 而滚动条还在正常动。
+#[test]
+fn scrolled_children_are_painted_at_the_offset_position() {
+    let list = render_of(
+        &scroll_el(50.0, crate::layout::Overflow::Scroll),
+        SCROLL_BOUNDS,
+    );
+    // `item1` 布局在 0..50；滚了 50 之后应画在 -50..0。
+    let quads: Vec<Rect> = list
+        .iter()
+        .filter_map(|i| match &i.command {
+            Command::Quad { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        quads.iter().any(|r| r.y < 0.0),
+        "滚了 50 之后第一项应当画到视口上方（y < 0），实得 {quads:?}"
+    );
+    // `item2` 布局在 100..150；滚了 50 之后画在 50..100。
+    assert!(
+        quads
+            .iter()
+            .any(|r| (r.y - 50.0).abs() < 0.01 && (r.height - 50.0).abs() < 0.01),
+        "第二项应当画在 50..100，实得 {quads:?}"
+    );
+}
