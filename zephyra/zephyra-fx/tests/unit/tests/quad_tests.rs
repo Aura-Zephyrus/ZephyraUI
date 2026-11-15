@@ -569,6 +569,112 @@ fn dip_of(ndc: [f32; 2]) -> zephyra_core::core::Point {
     }
 }
 
+/// 一条文本命令（一个字形，uv 在 `0.1,0.2` 处、大小 `0.05×0.05`）。
+fn text_cmd(dst: Rect) -> Command {
+    Command::Text {
+        atlas: zephyra_core::paint::TextureRef::new("glyph-atlas"),
+        glyphs: vec![zephyra_core::paint::GlyphQuad {
+            uv: UvRect::new(0.1, 0.2, 0.05, 0.05),
+            dst,
+            color_glyph: false,
+        }]
+        .into(),
+        offset: Point::new(0.0, 0.0),
+        color: Color::rgb(1.0, 1.0, 1.0),
+        filter: zephyra_core::filter::FilterChain::none(),
+        blend: zephyra_core::filter::BlendMode::default(),
+    }
+}
+
+/// 文字完全在裁剪区外 ⇒ **一个字形都不产出**。
+///
+/// # 这条在钉什么
+///
+/// 字形走的是与矩形**不同**的一条分支（`Command::Text` → 字形四边形），而
+/// 裁剪栈只在矩形那条路上被消费过。漏掉的后果是「滚动容器里的背景盒子被裁掉了，
+/// 文字却漏到容器外面」—— 画面上飘着一行行没有底色的字。
+#[test]
+fn text_fully_outside_the_clip_produces_nothing() {
+    let l = list_of(vec![
+        Command::PushClip(Rect::new(0.0, 0.0, 10.0, 10.0)),
+        text_cmd(Rect::new(50.0, 50.0, 8.0, 8.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert!(
+        b.solid.is_empty(),
+        "完全在外的文字不该产出任何顶点，实得 {} 个",
+        b.solid.len()
+    );
+    assert_eq!(b.report.quads, 0);
+}
+
+/// 文字跨过裁剪边界 ⇒ 几何被切到交集，**uv 按比例**跟着切。
+///
+/// # 为什么 uv 也得切
+///
+/// 纹理映射在两轴上都是线性的（见 `Vertex::quad`），所以按比例裁 uv 是精确的；
+/// 只缩几何不缩 uv ⇒ 纹理被拉伸 ⇒ 字形变形。
+#[test]
+fn text_crossing_the_clip_is_cut_with_proportional_uv() {
+    let l = list_of(vec![
+        Command::PushClip(Rect::new(0.0, 0.0, 50.0, 50.0)),
+        text_cmd(Rect::new(40.0, 40.0, 20.0, 20.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert_eq!(b.solid.len(), 4, "一个字形 = 4 个顶点");
+    // 交集是 (40,40)-(50,50)：目标 100×100 ⇒ NDC x∈[-0.2,0]、y∈[0,0.2]。
+    let positions: Vec<[f32; 2]> = b.solid.iter().map(|v| v.position).collect();
+    assert_positions_close(
+        &positions,
+        &[[-0.2, 0.2], [0.0, 0.2], [0.0, 0.0], [-0.2, 0.0]],
+        "几何必须被切到裁剪区与字形的交集",
+    );
+    // 原 uv 是 (0.1,0.2) 起、0.05×0.05；切掉一半（20→10）⇒ 左上角不动、
+    // 尺寸减半。
+    let uvs: Vec<[f32; 2]> = b.solid.iter().map(|v| v.uv).collect();
+    let expect = [[0.1, 0.2], [0.125, 0.2], [0.125, 0.225], [0.1, 0.225]];
+    for (got, want) in uvs.iter().zip(expect.iter()) {
+        assert!(
+            (got[0] - want[0]).abs() < 1e-6 && (got[1] - want[1]).abs() < 1e-6,
+            "uv 必须按比例裁剪：实得 {got:?}，应为 {want:?}"
+        );
+    }
+}
+
+/// 文字完全在裁剪区内 ⇒ 几何与 uv **一字不改**。
+#[test]
+fn text_fully_inside_the_clip_is_unchanged() {
+    let l = list_of(vec![
+        Command::PushClip(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        text_cmd(Rect::new(10.0, 10.0, 20.0, 20.0)),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    assert_eq!(b.solid.len(), 4);
+    let positions: Vec<[f32; 2]> = b.solid.iter().map(|v| v.position).collect();
+    assert_positions_close(
+        &positions,
+        &[[-0.8, 0.8], [-0.4, 0.8], [-0.4, 0.4], [-0.8, 0.4]],
+        "完全在内的字形原样通过",
+    );
+    let uvs: Vec<[f32; 2]> = b.solid.iter().map(|v| v.uv).collect();
+    assert_eq!(uvs[0], [0.1, 0.2], "uv 不能动");
+    assert_eq!(uvs[2], [0.15, 0.25], "uv 不能动");
+}
+
+/// 顶点位置逐个比对（带容差）。
+///
+/// NDC 是 `x / w * 2 - 1` 算出来的，`0.4 * 2 - 1` 在二进制浮点里是
+/// `-0.19999999999999996` 而不是 `-0.2` —— 所以位置**不能**用 `assert_eq!` 比。
+fn assert_positions_close(got: &[[f32; 2]], want: &[[f32; 2]], msg: &str) {
+    assert_eq!(got.len(), want.len(), "{msg}（顶点数不同）");
+    for (g, w) in got.iter().zip(want.iter()) {
+        assert!(
+            (g[0] - w[0]).abs() < 1e-5 && (g[1] - w[1]).abs() < 1e-5,
+            "{msg}：实得 {g:?}，应为 {w:?}"
+        );
+    }
+}
+
 #[test]
 fn images_split_into_batches_per_texture_without_reordering() {
     // a b a  →  三个批次。合并不连续的 a 会把第三段提到第二段前面，

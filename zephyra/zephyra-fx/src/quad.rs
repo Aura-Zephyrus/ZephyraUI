@@ -1662,11 +1662,43 @@ pub fn expand_range_translated_into(
                     if g.dst.width <= 0.0 || g.dst.height <= 0.0 {
                         continue;
                     }
+                    let rect = glyph_shift(g.dst);
+                    // ⚠ 字形**必须**裁剪 —— 与 `Quad` / `Image` / `Path` 同一条规矩。
+                    //
+                    // 漏掉这一步的症状特别有迷惑性：滚动容器里的**背景盒子**被裁掉了，
+                    // 而**文字**漏到容器外面 —— 于是画面上出现「视口下方飘着一行行
+                    // 没有底色的字」。看起来像「裁剪只对矩形生效」，而真相是
+                    // 「矩形那条路裁了、文字那条路忘了」。
+                    //
+                    // uv 必须**按比例**跟着裁：纹理映射在两轴上都是线性的
+                    // （见 [`Vertex::quad`]），所以比例裁剪是精确的；只缩几何不缩 uv
+                    // ⇒ 纹理被拉伸 ⇒ 字形变形。
+                    let (rect, uv) = match clip {
+                        None => (rect, g.uv),
+                        Some(c) => {
+                            let cut = intersect(rect, c);
+                            if cut.width <= 0.0 || cut.height <= 0.0 {
+                                continue;
+                            }
+                            // `rect.width` / `rect.height` 已由上面的零尺寸判据保证 > 0。
+                            let sx = (cut.x - rect.x) / rect.width;
+                            let sy = (cut.y - rect.y) / rect.height;
+                            (
+                                cut,
+                                UvRect::new(
+                                    g.uv.x + g.uv.width * sx,
+                                    g.uv.y + g.uv.height * sy,
+                                    g.uv.width * (cut.width / rect.width),
+                                    g.uv.height * (cut.height / rect.height),
+                                ),
+                            )
+                        }
+                    };
                     out.solid.extend_from_slice(&Vertex::from_uv_rect(
-                        glyph_shift(g.dst),
+                        rect,
                         px,
                         rgba,
-                        g.uv,
+                        uv,
                         kind::GLYPH,
                     ));
                     out.report.quads += 1;
