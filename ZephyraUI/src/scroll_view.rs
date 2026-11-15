@@ -188,13 +188,34 @@ impl ScrollView {
         self.content_size.y > self.viewport_size.y
     }
 
-    /// 滚轮滚动。`delta_y` 正数表示**向下滚**（内容向上移，`scroll_offset.y` 增大）。
+    /// 滚轮滚动。`delta_y` **正数表示向上滚**（往回看，`scroll_offset.y` 减小）。
     /// 返回是否真的滚动了。
+    ///
+    /// # 方向约定：正数 = 向上（别改反）
+    ///
+    /// `delta_y` 的正负沿用宿主给的口径，而它一路上游都是「正数向上」：
+    ///
+    /// - winit 的 `MouseScrollDelta::LineDelta`：Windows 的 `WM_MOUSEWHEEL`
+    ///   高位为正 = 滚轮向前（远离用户）= 向上滚，winit 原样带符号（水平方向
+    ///   它自己取反，见 winit PR #2105）；
+    /// - [`zephyra_fx::ScrollInput::delta_y`]：「正数向上」；
+    /// - 调试桥与 MCP 的 `scroll` 命令：`delta_y > 0` 向上。
+    ///
+    /// 而 `scroll_offset.y > 0` 的含义是「内容向上移、看到下半段」= **向下滚**
+    /// （见本模块的「坐标系契约」）。所以「向上滚」对应的是**减小**偏移 ——
+    /// 两个约定差一个符号，这里必须显式取反。
+    ///
+    /// # 曾经反了（实测）
+    ///
+    /// 2026-11-15 之前这里是 `offset += delta`，即正增量 = 向下滚：物理滚轮
+    /// 向前一格，看到的却是更靠后的内容（滚轮方向与平台相反）。真机验证与
+    /// 排除过程见 `docs/dev-log/2026-11-scroll-wheel-direction.md`。
     pub fn scroll_wheel(&mut self, delta_y: f32) -> bool {
         if self.disabled || !delta_y.is_finite() {
             return false;
         }
-        let delta = delta_y * SCROLL_WHEEL_DELTA;
+        // 「向上滚」= 偏移减小 ⇒ 与 `delta_y` 反号。
+        let delta = -delta_y * SCROLL_WHEEL_DELTA;
         let max_y = self.max_scroll_y();
         let new_y = (self.scroll_offset.y + delta).clamp(0.0, max_y);
         let changed = (new_y - self.scroll_offset.y).abs() > f32::EPSILON;

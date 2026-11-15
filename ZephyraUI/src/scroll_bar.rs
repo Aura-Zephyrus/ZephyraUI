@@ -244,6 +244,12 @@ impl ScrollBar {
     ///
     /// 竖直滚动条只吃 `delta_y`；水平滚动条只吃 `delta_x` —— 交叉的滚轮方向
     /// 不该把水平条也带动（那是内容自己的事）。
+    ///
+    /// # 方向约定：正数 = 向上（与 [`crate::scroll_view::ScrollView::scroll_wheel`] 同款）
+    ///
+    /// 正增量表示**向上滚** ⇒ 偏移**减小**（`offset` 是「内容向上移了多少」，
+    /// 向上滚就是回到更靠前的内容）。符号搞反的话，滚动条会与滚动容器
+    /// 朝**相反**方向动 —— 两个控件各滚各的，谁也说不清是谁错了。
     pub fn wheel(&mut self, delta_x: f32, delta_y: f32) -> f32 {
         let step = match self.axis {
             ScrollBarAxis::Vertical => delta_y,
@@ -255,7 +261,9 @@ impl ScrollBar {
         let page = (self.viewport_length * PAGE_FRACTION).max(1.0);
         // ⚠ **不能**用 `step.signum()`：Rust 的 `f32::signum` 对 `+0.0` 返回
         // `1.0`（不是 `0.0`）—— 零增量会翻一整页。触控板惯性结束时正是零增量。
-        let delta = if step > 0.0 { page } else { -page };
+        //
+        // ⚠ 符号：正增量 = 向上滚 = 偏移减小 ⇒ 与 `step` 反号。
+        let delta = if step > 0.0 { -page } else { page };
         self.offset = self.clamp_offset(self.offset + delta);
         self.offset
     }

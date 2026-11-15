@@ -50,6 +50,24 @@
 - [ ] 窗口恢复可见：首帧完整重绘，无空白
 - [ ] 窗口被完全遮挡：不持续 present
 
+## 后续发现（2026-11-15 补记，P0–P2 落地后撞到的）
+
+- [ ] **滚轮增量单位没统一**：`zephyra_fx::ScrollInput` 的契约写「单位沿用 winit
+      （物理像素或行数）」。Windows 上 winit 永远给 `LineDelta`（行数）⇒ 没问题；
+      但 Linux/X11 的平滑滚动会给 `PixelDelta`（**像素**），而应用（gallery）
+      一律 ×`SCROLL_WHEEL_DELTA`（48 DIP）⇒ **一滚到底**。
+      修法二选一：① 三个宿主把 `PixelDelta` 归一化成「格」（共同落在
+      `zephyra-winit-input`），契约改成「单位 = 格」；② 契约里显式带单位，
+      应用不许假定。
+      ⚠ 本机没有 Linux 设备，**没有实测** ⇒ 不盲改。
+- [ ] `gallery/src/bin/main.rs` **没有 D3D11 分支**（`Cargo.toml` 有 `d3d11`
+      feature，但 bin 里只有 d3d12 / linux-vk 两个 cfg）⇒
+      `--no-default-features --features d3d11` 只会打印「需要一个后端特性才能
+      开窗口」，与 `skills/zephyra-mcp/SKILL.md` 写的不一致。
+- [ ] 桥的 `hit` 命令是**布局矩形探针**（`zephyra-fx/src/bridge.rs::hit_at`
+      直接用 `arranged_rect()`），**不算滚动偏移也不算裁剪** ⇒ 拿它判断
+      「点到的是哪个条目」会与真实命中不同。
+
 ## 明确不做
 
 - 跨帧局部重绘（damage 跨帧）：flip model 下后缓冲 present 后内容未定义，跨帧拼接不可行

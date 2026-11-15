@@ -117,12 +117,17 @@ fn paging_moves_by_ninety_percent_of_the_viewport() {
 #[test]
 fn a_vertical_bar_ignores_the_horizontal_wheel_delta() {
     let mut b = bar();
-    b.set_offset(0.0);
+    // 放在中间：两端都夹住了，方向就看不出来了。
+    b.set_offset(200.0);
     // 横向滚轮不该带动竖直滚动条。
     let off = b.wheel(1.0, 0.0);
-    assert!(off.abs() < 1e-3, "实得 {off}");
+    assert!((off - 200.0).abs() < 1e-3, "实得 {off}");
+    // 纵向滚轮：正增量 = 向上滚 ⇒ 偏移**减小**一页（PAGE_FRACTION × 视口长）。
     let off = b.wheel(0.0, 1.0);
-    assert!(off > 0.0, "纵向滚轮应当翻页");
+    assert!(
+        (off - (200.0 - 100.0 * PAGE_FRACTION)).abs() < 1e-3,
+        "实得 {off}"
+    );
 }
 
 #[test]
@@ -130,9 +135,46 @@ fn a_horizontal_bar_uses_the_horizontal_delta() {
     let mut b = ScrollBar::new("bar");
     b.set_axis(ScrollBarAxis::Horizontal);
     b.set_geometry(200.0, 500.0, 100.0);
-    b.set_offset(0.0);
+    b.set_offset(200.0);
     let off = b.wheel(0.0, 1.0);
-    assert!(off.abs() < 1e-3, "实得 {off} —— 横向条不该吃纵向滚轮");
+    assert!(
+        (off - 200.0).abs() < 1e-3,
+        "实得 {off} —— 横向条不该吃纵向滚轮"
+    );
+    // 正增量 = 向上（向左）滚 ⇒ 偏移减小一页。
     let off = b.wheel(1.0, 0.0);
-    assert!(off > 0.0);
+    assert!(
+        (off - (200.0 - 100.0 * PAGE_FRACTION)).abs() < 1e-3,
+        "实得 {off}"
+    );
+}
+
+/// 滚动条的滚轮方向必须与滚动容器**同款**（正增量 = 向上滚）。
+///
+/// # 为什么单独钉一条
+///
+/// 两个控件不共享状态：滚动条只产出一个偏移，由宿主写回 `ScrollView`。
+/// 两边方向一旦相反，就会出现「拇指往上走、内容往下走」，而**任何一条
+/// 只看单个控件的断言都不会红** —— 必须跨控件比对。
+#[test]
+fn the_bar_and_the_scroll_view_agree_on_the_wheel_direction() {
+    use crate::scroll_view::ScrollView;
+    use zephyra_core::core::Point;
+
+    let mut bar = bar();
+    bar.set_offset(100.0);
+    let mut view = ScrollView::new("scroll");
+    view.set_content_size(Point::new(300.0, 300.0));
+    view.set_viewport_size(Point::new(100.0, 100.0));
+    view.set_scroll_offset(Point::new(0.0, 100.0));
+
+    // 同一个正增量喂给两者：滚动条减 90（视口 × 90%），滚动容器减 48（一格）。
+    let bar_off = bar.wheel(0.0, 1.0);
+    view.scroll_wheel(1.0);
+    assert!(bar_off < 100.0, "滚动条应当向上滚，实得 {bar_off}");
+    assert!(
+        view.scroll_offset().y < 100.0,
+        "滚动容器应当向上滚，实得 {}",
+        view.scroll_offset().y
+    );
 }

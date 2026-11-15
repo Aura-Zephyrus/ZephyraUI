@@ -44,19 +44,49 @@ fn the_offset_is_clamped_to_the_scroll_range() {
 #[test]
 fn the_wheel_scrolls_by_a_fixed_step_and_stops_at_the_ends() {
     let mut v = view();
-    assert!(v.scroll_wheel(1.0));
+    // 负增量 = 向下滚（看到更靠后的内容）⇒ 偏移增大一格。
+    assert!(v.scroll_wheel(-1.0));
     assert!((v.scroll_offset().y - SCROLL_WHEEL_DELTA).abs() < 1e-6);
     // 滚到底：不再变化。
     for _ in 0..100 {
-        v.scroll_wheel(1.0);
-    }
-    assert!((v.scroll_offset().y - 200.0).abs() < 1e-6);
-    assert!(!v.scroll_wheel(1.0), "已经在底了就不该再报变化");
-    // 往上滚回到 0。
-    for _ in 0..100 {
         v.scroll_wheel(-1.0);
     }
+    assert!((v.scroll_offset().y - 200.0).abs() < 1e-6);
+    assert!(!v.scroll_wheel(-1.0), "已经在底了就不该再报变化");
+    // 往上滚回到 0。
+    for _ in 0..100 {
+        v.scroll_wheel(1.0);
+    }
     assert!(v.scroll_offset().y.abs() < 1e-6);
+}
+
+/// 滚轮方向必须与上游一致：**正 `delta_y` = 向上滚**。
+///
+/// # 这条在钉什么
+///
+/// 上游（winit 的 `LineDelta` / `zephyra_fx::ScrollInput` / 调试桥与 MCP 的
+/// `scroll` 命令）全都是「正数向上」。控件层曾经反着做，于是**物理滚轮向前
+/// 一格，看到的却是更靠后的内容** —— 滚轮方向与平台相反。
+///
+/// 方向错了画面上仍然「能滚」，钳位与步长也仍然对，所以**没有别的断言会红**：
+/// 必须专门钉一条。真机验证见
+/// `docs/dev-log/2026-11-scroll-wheel-direction.md`。
+#[test]
+fn a_positive_wheel_delta_scrolls_back_towards_the_top() {
+    let mut v = view();
+    v.set_scroll_offset(Point::new(0.0, 100.0));
+    assert!(v.scroll_wheel(1.0));
+    assert!(
+        (v.scroll_offset().y - (100.0 - SCROLL_WHEEL_DELTA)).abs() < 1e-6,
+        "正增量应当向上滚（偏移减小），实得 {}",
+        v.scroll_offset().y
+    );
+    assert!(v.scroll_wheel(-1.0));
+    assert!(
+        (v.scroll_offset().y - 100.0).abs() < 1e-6,
+        "负增量应当向下滚（偏移增大），实得 {}",
+        v.scroll_offset().y
+    );
 }
 
 #[test]

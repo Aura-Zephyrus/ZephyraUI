@@ -55,7 +55,7 @@ zephyra bridge "click_key switch:solid"      # 按 key 点击
 zephyra bridge "hover 120 48"
 zephyra bridge "press_key Enter"
 zephyra bridge "type_text \"hello world\""    # 一次输入一段文字
-zephyra bridge "scroll 120 48 0 -3"
+zephyra bridge "scroll 120 48 0 3"              # 向上滚 3 格（正 delta_y = 向上）
 zephyra bridge "wait_frames 2"               # 等应用真的画够 2 帧
 zephyra bridge "resize 800 600"              # 改窗口客户区尺寸（物理像素）
 zephyra bridge "touch down 0 120 48"         # 注入一次**触摸**（多点触控）
@@ -67,7 +67,7 @@ zephyra bridge "shot --out a.png"            # 截图
 zephyra bridge "shot --out a.png --rect 430,750,230,40 --scale 3"   # 裁一块 + 放大
 ```
 
-三条坐标约定，避免来回换算：
+四条约定，避免来回换算：
 
 - **一切坐标都是物理像素**（`viewport` 明说 physical-pixels）。树的坐标、
   点击坐标、`resize` 的宽高，同一套。
@@ -75,6 +75,10 @@ zephyra bridge "shot --out a.png --rect 430,750,230,40 --scale 3"   # 裁一块 
   裁剪都是 CLI 的事。
 - **`find` / `hit` 给的是路径，不是 key** —— key **允许重复**（每个导航项
   的标签都叫 `label`），按 key 点会点错那一个。
+- **滚轮增量正数 = 向上**（与 winit / `zephyra_fx::ScrollInput` 同一口径）：
+  `scroll x y dx dy` 的 `delta_y > 0` 是**向上滚**（往回看），`< 0` 向下。
+  控件层必须照这个符号做 —— 反了的话，物理滚轮的方向会与平台相反，
+  见 [`docs/dev-log/2026-11-scroll-wheel-direction.md`](../dev-log/2026-11-scroll-wheel-direction.md)。
 
 ### `touch`：在没有触摸屏的机器上验触控
 
