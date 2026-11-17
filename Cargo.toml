@@ -33,6 +33,11 @@ members = [
     # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
     "zephyra/zephyra-base/zephyra-winit-input",
     "zephyra/zephyra-base/extra/zephyra-camera",
+    # 视频解码（Chromium `media/` 那一套的形状）。与 camera 同一层：Windows 的
+    # DXVA2 硬件解码要碰 D3D11 / COM 边界 ⇒ 碰平台、允许 unsafe。
+    # 不进 default-members（默认构建不该编设备代码）。默认 feature 为空时
+    # 整个 crate 是零依赖的纯逻辑（配置 / 缓冲 / 帧 / 选择器 / H.264 位流）。
+    "zephyra/zephyra-base/extra/zephyra-video",
     # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
     # 与 camera 同一层：Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
     # 不进 default-members（默认构建不该编 COM 那一坨）。
@@ -81,8 +86,9 @@ members = [
     # 不进 default-members，避免默认构建拉入 wgpu 依赖树；`cargo check -p zephyra-ext-wgpu` 按需使用。
     "zephyra/zephyra-base/zephyra-ext-wgpu",
 ]
-# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera`）与 `zephyra-dcomp` 进 members
-# 但**不进** default-members：它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
+# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera` / `zephyra-video` /
+# `zephyra-uia`）与 `zephyra-dcomp` 进 members 但**不进** default-members：
+# 它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
 # 但不会被无差别的 `cargo build` / `cargo test` 编译。这就是"选择编译"落在 Cargo
 # 层面的形式——比在源码里 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
 #

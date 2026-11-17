@@ -11,6 +11,7 @@
 ## 开发状态
 - 此项目目前仍然在编写控件，API极不稳定
 
+
 ## 支持操作系统
 - Windows 10/11
 - Linux
@@ -34,6 +35,8 @@
 |**skia**|[项目地址](https://skia.org/)|BSD-3-Clause license|
 |**AndroidLiquidGlass**|[项目地址](https://github.com/Kyant0/AndroidLiquidGlass)|Apache-2.0 license|
 |**liquid-glass**|[项目地址](https://github.com/archisvaze/liquid-glass)|MIT License|
+|**chromium**|[项目地址](https://www.chromium.org/Home/)|BSD License|
+|**UAVs3D**|[项目地址](https://github.com/uavs3/uavs3d)|BSD License|
 
 
 ## 许可证

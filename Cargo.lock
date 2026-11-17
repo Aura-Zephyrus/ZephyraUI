@@ -3122,6 +3122,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-video"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "zephyra-vulkan"
 version = "0.1.0"
 dependencies = [
