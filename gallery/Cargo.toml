@@ -29,7 +29,7 @@ zephyra-core = { path = "../zephyra/zephyra-core" }
 zephyra-fx = { path = "../zephyra/zephyra-fx" }
 zephyra-style = { path = "../zephyra/zephyra-style" }
 zephyra-ui = { path = "../ZephyraUI" }
-zstylec = { path = "../zstylec" }
+zstyle-compile = { path = "../zstyle-compile" }
 zypui = { path = "../zypui" }
 
 # 背景照片的解码器。材质 / 液态玻璃那页的背景板是一张真实照片，
@@ -53,7 +53,7 @@ zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = t
 winit = "0.30"
 
 [build-dependencies]
-zypuic = { path = "../zypuic" }
+zypui-compile = { path = "../zypui-compile" }
 
 [dev-dependencies]
 # 无障碍树的门禁：证明「画出来的那棵树」能派生出正确的无障碍树

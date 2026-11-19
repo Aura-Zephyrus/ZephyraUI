@@ -4,7 +4,7 @@
 //!
 //! - **release**：build.rs 用 zypuic 把 `frontend/shell.zypui` 与控件组件库
 //!   一起编译成二进制，这里 `include_bytes!` + `decode` —— 运行时**零解析**。
-//! - **dev**：`zypuic::parse_all` 直读源文件（parity 测试在用）。
+//! - **dev**：`zypui_compile::parse_all` 直读源文件（parity 测试在用）。
 //!
 //! 两条路汇进同一份 [`zypui::ir::RawUi`]，实例化只有一份实现。
 //!

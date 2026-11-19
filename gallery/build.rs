@@ -23,7 +23,7 @@ fn main() {
     let controls_name: &'static str = Box::leak(controls.display().to_string().into_boxed_str());
     let shell_name: &'static str = Box::leak(shell.display().to_string().into_boxed_str());
 
-    let bytes = match zypuic::compile(&[
+    let bytes = match zypui_compile::compile(&[
         (controls_name, controls_src.as_str()),
         (shell_name, shell_src.as_str()),
     ]) {

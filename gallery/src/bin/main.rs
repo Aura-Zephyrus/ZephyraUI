@@ -419,7 +419,7 @@ fn report_frame(tag: &str, frame: &zephyra_fx::Frame) {
 fn build_sheet() -> StyleSheet {
     let mut sheet = StyleSheet::new();
     for (name, css) in zephyra_gallery::styles::all() {
-        let result = zstylec::parse(name, css);
+        let result = zstyle_compile::parse(name, css);
         if !result.is_ok() {
             for e in &result.errors {
                 eprintln!("{e}\n");

@@ -41,7 +41,7 @@ const CSS: &str = r#"
 ///
 /// 抽成函数而不是在三个测试里各写一遍：构造写三遍，改一次一定漏两遍。
 fn cache_with(name: &str) -> FrameCache {
-    let parsed = zstylec::parse(name, CSS);
+    let parsed = zstyle_compile::parse(name, CSS);
     assert!(parsed.is_ok(), "stylesheet must parse: {:?}", parsed.errors);
     let sheet = Arc::new(StyleSheet::new().merge(parsed.sheet));
     let mut cache = FrameCache::new();

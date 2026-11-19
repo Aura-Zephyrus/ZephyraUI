@@ -5,7 +5,7 @@
 > 重新生成属性列表：
 >
 > ```text
-> cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec-bin -- props
+> cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec -- props
 > ```
 
 全部 53 个受支持的样式属性（以 `zstylec props` 为准）。

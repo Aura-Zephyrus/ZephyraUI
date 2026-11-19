@@ -40,10 +40,10 @@ cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
 cargo run -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
 cargo run -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe
 # CLI 与编译器前端已迁至独立仓 E:\ZephyraCLI（https://github.com/Aura-Zephyrus/ZephyraCLI）
-# 主仓保留 zstylec / zypuic 的**库**（gallery build.rs 用 zypuic::compile）
+# 主仓保留 zstyle-compile / zypui-compile 两个编译库（gallery build.rs 用 zypui_compile::compile）
 cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zephyra-cli -- <子命令>
-cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec-bin -- fmt [--check] <file.zstyle>
-cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zypuic-bin -- fmt [--check] <file.zypui>
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec -- fmt [--check] <file.zstyle>
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zypuic -- fmt [--check] <file.zypui>
 ```
 
 ### `--workspace` 不是可选项
@@ -52,7 +52,7 @@ cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zypuic-bin -- fmt [--check
 只跑 **754 条**（本机 2026-11-12 实测）。另外这些 crate 在 `members` 里但**不在**
 `default-members`，
 无差别的 `cargo build` / `cargo test` 连编都不编（这是有意的：默认构建不该编译
-unsafe 与设备代码）：`zstylec`、`zephyra-style`、
+unsafe 与设备代码）：`zstyle-compile`、`zephyra-style`、
 `zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
 `zephyra-platform-win`、`zephyra-platform-linux`、`zephyra-winit-d3d12`、
 `zephyra-vulkan`、`zephyra-winit-input`、`zephyra-ui`，以及两个 `extra/` 下的全部包
@@ -249,10 +249,10 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 6. **命名规范就是「通过 clippy 的 `upper_case_acronyms` 且 clippy 零警告」**：
    `SRV` / `PSO` / `ID` 全大写。不要另立「缩写要不要展开」「变量该多长」这类规矩——
    机器查不了、也没有共识，写进规范只会变成口水仗。
-7. **编译库与命令行前端分离**：`zstylec` / `zypuic` 的 lib 留在本 workspace
-   （gallery 的 `build.rs` 要用 `zypuic::compile()`）；CLI 与两个 bin 迁到独立仓
-   `E:\ZephyraCLI`，通过路径依赖本仓的编译库。依赖严格单向（CLI 仓 → 本仓），
-   且「CLI 看到的属性表」与「编译器看到的属性表」仍是同一份 lib。
+7. **编译库与命令行前端分离**：`zstyle-compile` / `zypui-compile` 留在本 workspace
+   （gallery 的 `build.rs` 要用 `zypui_compile::compile()`）；CLI 与两个前端迁到独立仓
+   `E:\ZephyraCLI`，通过路径依赖本仓的编译库。主仓不再出现 zstylec / zypuic 这两个名字。
+   依赖严格单向（CLI 仓 → 本仓），「CLI 看到的属性表」与「编译器看到的属性表」仍是同一份 lib。
 8. **不加「注释必须少」这类 lint**：它会逼出废话注释凑数，与第 1 条正着来。
    注释长度只能靠评审 + 下面那些间接门禁约束。
 

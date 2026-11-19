@@ -55,7 +55,7 @@ fn sheet() -> zephyra_style::ir::StyleSheet {
     // 内嵌源（控件层 + 本应用），不是磁盘目录 —— 理由同 `gates::merged_sheet`。
     let mut sheet = zephyra_style::ir::StyleSheet::new();
     for (name, css) in zephyra_gallery::styles::all() {
-        let parsed = zstylec::parse(name, css);
+        let parsed = zstyle_compile::parse(name, css);
         assert!(
             parsed.is_ok(),
             "{name}.zstyle must parse: {:?}",

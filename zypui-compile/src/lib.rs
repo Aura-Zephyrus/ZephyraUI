@@ -36,12 +36,6 @@ mod tests;
 #[path = "tests/style_gate_tests.rs"]
 mod style_gate_tests;
 
-// `fmt` 的用例：与门禁共用 `crate::fmt` 的判据，这里只测 formatter 自身
-// （产物等价 / 幂等 / 引号不动）。
-#[cfg(test)]
-#[path = "tests/fmt_tests.rs"]
-mod fmt_tests;
-
 // 与 `zstylec::fmt` 同一个理由：根作用域上的 `format` 会跟 std 的 `format!` 宏
 // 撞名，`cargo doc` 直接让整个 crate 文档不出来（`zstylec` 实测踩过）。
 pub use fmt::{format as format_ui, is_formatted};
@@ -79,3 +73,7 @@ pub fn compile(files: &[(&'static str, &str)]) -> Result<Vec<u8>, Vec<Diag>> {
 pub fn has_errors(diags: &[Diag]) -> bool {
     diags.iter().any(|d| d.level == Level::Error)
 }
+
+#[cfg(test)]
+#[path = "tests/fmt_tests.rs"]
+mod fmt_tests;

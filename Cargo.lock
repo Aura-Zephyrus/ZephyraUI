@@ -2985,9 +2985,9 @@ dependencies = [
  "zephyra-window",
  "zephyra-winit",
  "zephyra-winit-d3d12",
- "zstylec",
+ "zstyle-compile",
  "zypui",
- "zypuic",
+ "zypui-compile",
 ]
 
 [[package]]
@@ -3155,7 +3155,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
-name = "zstylec"
+name = "zstyle-compile"
 version = "0.1.0"
 dependencies = [
  "cssparser",
@@ -3171,7 +3171,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zypuic"
+name = "zypui-compile"
 version = "0.1.0"
 dependencies = [
  "zephyra-core",

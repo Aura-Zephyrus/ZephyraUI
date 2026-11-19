@@ -34,7 +34,7 @@ use zephyra_ui::tokens::ALL as TOKENS;
 fn merged_sheet() -> StyleSheet {
     let mut sheet = StyleSheet::new();
     for (name, css) in zephyra_gallery::styles::all() {
-        let parsed = zstylec::parse(name, css);
+        let parsed = zstyle_compile::parse(name, css);
         assert!(
             parsed.is_ok(),
             "{name}.zstyle must parse: {:?}",
@@ -2643,7 +2643,7 @@ fn the_photo_aspect_matches_the_board() {
 ///
 /// # 为什么这条不能靠「看画面」断
 ///
-/// `material:` 拼错时**解析就会失败**（`zstylec::value::enum_value` 只认
+/// `material:` 拼错时**解析就会失败**（`zstyle_compile::value::enum_value` 只认
 /// `solid` / `frosted` / `glass` 三个词），于是那条规则**整块被跳过** ——
 /// 而画面上那块样板只是「没有磨砂」，不报错、不空白，看不出是拼错。
 ///
@@ -3053,7 +3053,7 @@ fn every_stylesheet_rule_matches_something() {
     // 见函数文档「为什么不查控件层」那一节。
     let mut rules: Vec<(usize, String, zephyra_style::ir::Selector)> = Vec::new();
     for (sheet_name, src) in zephyra_gallery::styles::app_only() {
-        let parsed = zstylec::parse(sheet_name, src);
+        let parsed = zstyle_compile::parse(sheet_name, src);
         assert!(
             parsed.is_ok(),
             "{sheet_name}.zstyle must parse: {:?}",

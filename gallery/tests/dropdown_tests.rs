@@ -224,7 +224,7 @@ fn opening_the_menu_does_not_move_the_glass_dropdown() {
     fn merged() -> StyleSheet {
         let mut sheet = StyleSheet::new();
         for (name, css) in zephyra_gallery::styles::all() {
-            let parsed = zstylec::parse(name, css);
+            let parsed = zstyle_compile::parse(name, css);
             assert!(
                 parsed.is_ok(),
                 "{name}.zstyle must parse: {:?}",
@@ -310,7 +310,7 @@ fn morph_keeps_the_button_top_left_corner_fixed() {
 
     let mut sheet = StyleSheet::new();
     for (name, css) in zephyra_gallery::styles::all() {
-        sheet = sheet.merge(zstylec::parse(name, css).sheet);
+        sheet = sheet.merge(zstyle_compile::parse(name, css).sheet);
     }
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);

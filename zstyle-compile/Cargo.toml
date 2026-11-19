@@ -1,5 +1,5 @@
 [package]
-name = "zstylec"
+name = "zstyle-compile"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ description = "zstyle compiler (dev tool): compiles .zstyle text into a binary. 
 # 由代码结构本身保证——不是靠文档约定。
 
 [lib]
-name = "zstylec"
+name = "zstyle_compile"
 path = "src/lib.rs"
 
 [dependencies]

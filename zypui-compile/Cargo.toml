@@ -1,5 +1,5 @@
 [package]
-name = "zypuic"
+name = "zypui-compile"
 description = "ZephyraUI UI-file compiler: hand-written XML-subset parser + validation + binary encoding for .zypui sources. The runtime half lives in zypui"
 version.workspace = true
 edition.workspace = true
@@ -30,7 +30,7 @@ zypui = { path = "../zypui" }
 zephyra-core = { path = "../zephyra/zephyra-core" }
 
 [lib]
-name = "zypuic"
+name = "zypui_compile"
 path = "src/lib.rs"
 
 [lints.rust]

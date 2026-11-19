@@ -74,7 +74,7 @@ zephyra/
     zephyra-bezier/      可配置三次方贝塞尔缓动
 zstylec/             .zstyle 编译器（解析 + 检查）
 ZephyraCLI/            已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraCLI
-                       （zstylec / zypuic 的 lib 仍在本仓，供 build.rs 使用）
+                       （zstyle-compile / zypui-compile 编译库仍在本仓，供 build.rs 使用）
 ZephyraUI/           控件层 + RinUI 风格 gallery
 ```
 
