@@ -72,10 +72,12 @@ zephyra/
       zephyra-camera/    摄像头采集与像素格式
   zephyra-core/extra/   同上，但零依赖 + 无 GPU 可单测的纯逻辑
     zephyra-bezier/      可配置三次方贝塞尔缓动
-zstylec/             .zstyle 编译器（解析 + 检查）
+zstyle-compile/      .zstyle 编译器（解析 + 检查）
 ZephyraCLI/            已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraCLI
-                       （zstyle-compile / zypui-compile 编译库仍在本仓，供 build.rs 使用）
-ZephyraUI/           控件层 + RinUI 风格 gallery
+                       （zstyle-compile / zypui-compile 编译库仍在本仓）
+zephyra-gallery/       已迁出为独立仓：https://github.com/Aura-Zephyrus/zephyra-gallery
+                       （参考应用 + 控件层整树门禁，单向依赖本仓）
+ZephyraUI/           控件层
 ```
 
 ### 三层的关系

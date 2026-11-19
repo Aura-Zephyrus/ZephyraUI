@@ -26,7 +26,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1491 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码与 CLI 已独立成仓，不再计入） |
+| 测试 | `cargo test --workspace` —— 1393 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
 | 隔离门禁 | `cargo tree -p zephyra-vector --depth 1` —— 只出现 `ab_glyph` / `bytemuck`；出现任何 workspace crate 即为破坏隔离 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
@@ -37,8 +37,10 @@ cargo test -p zephyra-core <filter>          # 单 crate / 单条用例
 cargo test -p zephyra-vector                 # 矢量绘制库：几何 / 图标 / 文本 / 顶点展开 / 光栅（294 条）
 cargo test -p zephyra-dcomp --lib            # 纯逻辑断言，不要窗口
 cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
-cargo run -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
-cargo run -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe
+# gallery 已迁至独立仓 E:\zephyra-gallery（https://github.com/Aura-Zephyrus/zephyra-gallery.git）
+# 它单向依赖本仓；控件层的整树门禁（tests/gates.rs）也随之迁出
+cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
+cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe
 # CLI 与编译器前端已迁至独立仓 E:\ZephyraCLI（https://github.com/Aura-Zephyrus/ZephyraCLI）
 # 主仓保留 zstyle-compile / zypui-compile 两个编译库（gallery build.rs 用 zypui_compile::compile）
 cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zephyra-cli -- <子命令>
@@ -96,22 +98,21 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 
 ⚠ 两个非显然的地方：
 
-1. **`--workspace` 在 Linux 上编的是「没有宿主」那一态。** `gallery` 的
+1. **Linux 后端的验证在 gallery 新仓做。** 主仓 `--workspace` 已不含 gallery —— 它迁到了
+   `E:\zephyra-gallery`，所以这里只需保证主仓自身在 Linux 上编过。gallery 的
    `default = ["d3d12"]`，而 d3d12 那个 crate 在非 Windows 上是空的
    （`#![cfg(windows)]`）。所以**判据必须是「平台 且 feature」**，只看 feature 会
    在 `use zephyra_winit_d3d12::HostWindow` 上炸 —— 症状像「Linux 适配把应用弄坏了」，
-   真相只是「默认 feature 指向一个本平台为空的 crate」。真要把 Linux 后端编一遍：
+   真相只是「默认 feature 指向一个本平台为空的 crate」。真要把 Linux 后端编一遍，到新仓跑：
 
    ```bash
-   cargo clippy -p zephyra-gallery -p zephyra-ui --all-targets \
-       --no-default-features \
-       --features zephyra-gallery/linux-vk -- -D warnings
-   cargo run -p zephyra-gallery --bin gallery --no-default-features --features linux-vk
+   # 工作目录 E:\zephyra-gallery
+   cargo clippy --all-targets --no-default-features --features linux-vk -- -D warnings
+   cargo run --bin gallery --no-default-features --features linux-vk
    ```
 
-   ⚠ `zephyra-ui` **没有** `linux-vk` feature（控件层零后端依赖），所以
-   `--features zephyra-ui/linux-vk` 会直接报「the package 'zephyra-ui' does not
-   contain this feature」。
+   ⚠ 不要写 `--features zephyra-ui/linux-vk`：控件层零后端依赖，`zephyra-ui` 没有
+   `linux-vk` feature，后端 feature 只属于 gallery 这个应用 crate。
 
    只给 `--features linux-vk` 而**不**给 `--no-default-features` 会把 d3d12 也编进来：
    能跑（`#[cfg]` 选中的那个出画面），但多编一遍 D3D12 的依赖链。
@@ -244,16 +245,19 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
    `tests/unit/` 是**子目录**，cargo 不会把它当集成测试目标 ——
    `tests/*.rs` 才是。
 
-   `gallery/` 是特例：它的 `tests/` 是 cargo 的集成测试目录（门禁），所以
-   单元测试住 `gallery/tests/unit/` 而不是 `gallery/src/tests/`。
+   gallery 仓（已迁至 `E:\zephyra-gallery`）是特例：它的 `tests/` 是 cargo 的集成测试目录
+   （门禁），所以单元测试住 `gallery/tests/unit/` 而不是 `gallery/src/tests/`。
 6. **命名规范就是「通过 clippy 的 `upper_case_acronyms` 且 clippy 零警告」**：
    `SRV` / `PSO` / `ID` 全大写。不要另立「缩写要不要展开」「变量该多长」这类规矩——
    机器查不了、也没有共识，写进规范只会变成口水仗。
-7. **编译库与命令行前端分离**：`zstyle-compile` / `zypui-compile` 留在本 workspace
-   （gallery 的 `build.rs` 要用 `zypui_compile::compile()`）；CLI 与两个前端迁到独立仓
-   `E:\ZephyraCLI`，通过路径依赖本仓的编译库。主仓不再出现 zstylec / zypuic 这两个名字。
-   依赖严格单向（CLI 仓 → 本仓），「CLI 看到的属性表」与「编译器看到的属性表」仍是同一份 lib。
-8. **不加「注释必须少」这类 lint**：它会逼出废话注释凑数，与第 1 条正着来。
+7. **编译库与命令行前端分离**：`zstyle-compile` / `zypui-compile` 留在本 workspace；
+   CLI 与两个前端迁到独立仓 `E:\ZephyraCLI`，通过路径依赖本仓的编译库。主仓不再出现
+   zstylec / zypuic 这两个名字。依赖严格单向（CLI 仓 → 本仓），「CLI 看到的属性表」与
+   「编译器看到的属性表」仍是同一份 lib。
+8. **应用也独立成仓**：`gallery`（参考应用 + 控件层整树门禁）迁至 `E:\zephyra-gallery`，
+   单向依赖本仓（crate 依赖 + `build.rs` / `tests/gates.rs` 读取 `ZephyraUI/ui/controls.zypui`）。
+   主仓不再包含任何应用 crate。
+9. **不加「注释必须少」这类 lint**：它会逼出废话注释凑数，与第 1 条正着来。
    注释长度只能靠评审 + 下面那些间接门禁约束。
 
 ---
@@ -268,7 +272,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   「修」注释。仓库里已有 **54 个 U+FFFD 分布在 21 个文件**（如
   `zephyra-fx/src/quad.rs`），是历史损坏——看到别扩散，也别当成待修的谜团。
 - **一个二进制只编一个后端**：`d3d12` / `d3d11` 由 feature 选，不做运行时切换
-  （两个都编进来时「画面一空」无法归因）。`gallery` 的 bin **不带**
+  （两个都编进来时「画面一空」无法归因）。gallery 仓（`E:\zephyra-gallery`）的 bin **不带**
   `required-features`：Linux 上 d3d12 是空 crate，而 `required-features` 表达不了
   「d3d12 或 linux-vk」⇒ 照原样写这个 bin 在 Linux 上**永远存不住**。所以改成
   「bin 恒可编，后端由 `gallery/src/bin/main.rs` 里的 `#[cfg(feature)]` 分流」，没开任何

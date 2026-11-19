@@ -32,17 +32,18 @@ MCP 客户端 ──stdio·JSON-RPC── zephyra mcp（CLI）──TCP·行协�
 库层调试桥**默认关闭**，只有设置了 `ZEPHYRA_DEBUG_PORT` 才监听；未设置时零监听，不存在隐式端口。
 
 ```bash
-# Windows PowerShell
+# Windows PowerShell（工作目录 E:\zephyra-gallery）
 $env:ZEPHYRA_DEBUG_PORT = "7878"
-cargo run -p zephyra-gallery --bin gallery
+cargo run --bin gallery
 
-# bash / Linux
-ZEPHYRA_DEBUG_PORT=7878 cargo run -p zephyra-gallery --bin gallery
+# bash / Linux（工作目录为 gallery 仓）
+ZEPHYRA_DEBUG_PORT=7878 cargo run --bin gallery
 ```
 
 - 取值是端口号；**空字符串取默认端口 7878**（`zephyra-fx::bridge` 的 `PORT_ENV` / `DEFAULT_PORT`）。
 - 端口被占时桥绑定失败，**应用照常运行**（stderr 打印绑定失败，无桥继续运行）—— 端口冲突不会让应用起不来。
 - 启动成功的标志是 stderr 出现 `[zephyra] 调试桥已开启 127.0.0.1:7878`。
+- gallery 已迁至独立仓 `E:\zephyra-gallery`（单向依赖主仓），以下命令在该仓运行。
 - 后端切换走工程现有的 Cargo feature，不要同时启用互斥后端：`zephyra-gallery` 默认 `d3d12`，`--no-default-features --features d3d11` 切 D3D11，`--features linux-vk` 切 Vulkan。
 - `zephyra dev` / `zephyra run` 会 `Command::new(cargo)` 起子进程并**继承环境变量**，所以先 `export ZEPHYRA_DEBUG_PORT` 再 `zephyra dev` 同样开桥。
 

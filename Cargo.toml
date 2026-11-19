@@ -73,10 +73,9 @@ members = [
     # 控件层（库）。**不依赖任何渲染后端** —— 后端由应用用 feature 选。
     # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
     "ZephyraUI",
-    # gallery —— `ZephyraUI` 控件层的参考应用。与控件层分开是因为它要选
-    # 渲染后端（d3d12 / d3d11 / linux-vk 互斥），而控件层零后端依赖。
-    # 同样不进 default-members：它编一整套应用。
-    "gallery",
+    # gallery 已迁至独立仓 E:\zephyra-gallery
+    # （https://github.com/Aura-Zephyrus/zephyra-gallery.git）。
+    # 它单向依赖本仓：crate 依赖 + build.rs/tests 读取 ZephyraUI/ui/controls.zypui。
     "zephyra/zephyra-base/zephyra-render-ext",
     "zephyra/zephyra-base/zephyra-ext",
     # wgpu interop（可选，S5）：让用户用 wgpu 开发扩展时可转换 AdapterIdentity/类型。

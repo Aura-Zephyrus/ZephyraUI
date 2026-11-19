@@ -36,8 +36,8 @@
 - **仍待 Linux 运行验收**：本机只装了 `x86_64-pc-windows-msvc`，Wayland
   surface / swapchain、共享设备多窗口、`--multi-window` 只做了编译期与
   人工核对，没有实跑。在 WSL2 上跑：
-  `cargo run -p zephyra-gallery --no-default-features --features linux-vk -- --multi-window`
-  以及 `cargo run -p zephyra-gallery --bin gallery --no-default-features --features linux-vk`。
+  `cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --no-default-features --features linux-vk -- --multi-window`
+  以及 `cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin gallery --no-default-features --features linux-vk`。
   验收点：两个窗口各自 present、主窗口关闭时 Inspector 级联关闭、resize
   后交换链重建、`ZEPHYRA_FRAME_DUMP` 仍能读回。
 

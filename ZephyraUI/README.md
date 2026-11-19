@@ -3,7 +3,7 @@
 一句话：**控件只发结构与分类名，外观全在 `.zstyle`。**
 
 它是一个**库**，不是应用。它不知道颜色、不写死尺寸、不决定一个控件出现在哪一页。
-应用（`gallery/`）把控件摆进页面，并决定那一页长什么样。
+应用（独立的 gallery 仓 `E:\zephyra-gallery`）把控件摆进页面，并决定那一页长什么样。
 
 ## 这个 crate 里有什么
 
@@ -35,7 +35,7 @@ gallery        应用：编译 controls.zypui + 页面编排 + 路由 + 应用�
 ## 结构怎么被应用用上
 
 应用在自己的 `build.rs` 里把**本目录的** `ui/controls.zypui` 与自己的页面模板
-一起编译成一个二进制工件（见 `gallery/build.rs:15`）：
+一起编译成一个二进制工件（见 gallery 仓的 `build.rs:15`）：
 
 ```rust
 let controls = manifest.join("../ZephyraUI/ui/controls.zypui");
@@ -54,7 +54,7 @@ zypuic::compile(&[(controls_name, controls_src), (shell_name, shell_src)])
 `WIDTH` / `HEIGHT` / `BACKGROUND` / `CORNER_RADIUS` / `PADDING` / `SPACING` …
 
 **唯一例外**是 `fill:*` 前缀的 key（进度条填充、滑条 thumb、滚动 thumb）：它们的
-尺寸是**内容**，不是外观。见 `gallery/tests/gates.rs::only_fill_nodes_carry_local_width`。
+尺寸是**内容**，不是外观。见 gallery 仓的 `tests/gates.rs::only_fill_nodes_carry_local_width`。
 
 门禁按**整棵树 × 全部页面 × 全部交互态**判，比你想的更容易红。
 
@@ -73,7 +73,7 @@ zypuic::compile(&[(controls_name, controls_src), (shell_name, shell_src)])
 控件层里不许出现「日一二三四五六」这种写死的中文表头（`DatePicker` 的星期头是
 参数，就是这条的产物）。
 
-门禁：`gallery/tests/gates.rs::control_layer_templates_emit_no_user_facing_text`
+门禁：gallery 仓的 `tests/gates.rs::control_layer_templates_emit_no_user_facing_text`
 （控件层模板**零**裸文案，无豁免）。
 
 #### 控件**自身语义**的文案归本层
@@ -155,10 +155,10 @@ TextField / TextArea / ScrollableTextArea / AutoSuggestBox / TextInputMenu …
 
 ```bash
 cargo test -p zephyra-ui            # 本 crate：令牌镜像校验等
-cargo test -p zephyra-gallery       # 控件的真正判据在这里
+cargo test --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery   # 控件的真正判据在 gallery 仓
 ```
 
-本 crate 自己只有少量单测；**控件的判据在 `gallery/tests/gates.rs`**（按整棵树判，
+本 crate 自己只有少量单测；**控件的判据在 gallery 仓的 `tests/gates.rs`**（按整棵树判，
 遍历全部页面 × 全部交互态，不按函数判 —— 逐函数查只能查到「我记得去查的那个」）。
 另有 `interaction_tests.rs`（命中 / 捕获 / 拖动离位不触发点击）与
 `hover_layout_tests.rs`（hover 改尺寸要重排）。
