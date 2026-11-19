@@ -74,7 +74,7 @@ members = [
     # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
     "ZephyraUI",
     # gallery 已迁至独立仓 E:\zephyra-gallery
-    # （https://github.com/Aura-Zephyrus/zephyra-gallery.git）。
+    # （https://github.com/Aura-Zephyrus/ZephyraUI-gallery.git）。
     # 它单向依赖本仓：crate 依赖 + build.rs/tests 读取 ZephyraUI/ui/controls.zypui。
     "zephyra/zephyra-base/zephyra-render-ext",
     "zephyra/zephyra-base/zephyra-ext",

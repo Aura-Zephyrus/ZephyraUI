@@ -37,7 +37,7 @@ cargo test -p zephyra-core <filter>          # 单 crate / 单条用例
 cargo test -p zephyra-vector                 # 矢量绘制库：几何 / 图标 / 文本 / 顶点展开 / 光栅（294 条）
 cargo test -p zephyra-dcomp --lib            # 纯逻辑断言，不要窗口
 cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
-# gallery 已迁至独立仓 E:\zephyra-gallery（https://github.com/Aura-Zephyrus/zephyra-gallery.git）
+# gallery 已迁至独立仓 E:\zephyra-gallery（https://github.com/Aura-Zephyrus/ZephyraUI-gallery.git）
 # 它单向依赖本仓；控件层的整树门禁（tests/gates.rs）也随之迁出
 cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
 cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe

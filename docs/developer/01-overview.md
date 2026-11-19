@@ -75,7 +75,7 @@ zephyra/
 zstyle-compile/      .zstyle 编译器（解析 + 检查）
 ZephyraCLI/            已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraCLI
                        （zstyle-compile / zypui-compile 编译库仍在本仓）
-zephyra-gallery/       已迁出为独立仓：https://github.com/Aura-Zephyrus/zephyra-gallery
+zephyra-gallery/       已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraUI-gallery
                        （参考应用 + 控件层整树门禁，单向依赖本仓）
 ZephyraUI/           控件层
 ```
