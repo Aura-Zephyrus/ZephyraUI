@@ -36,4 +36,8 @@ pub const PAGES: &[(&str, &str, &str)] = &[
     ("textinput", "Text Input", "edit"),
     // 滚动容器（ScrollView / ScrollBar）：视口裁剪、内容平移、滚动条。
     ("scroll", "Scrolling", "move"),
+    // RinUI 目录补充控件（8 个，见 ROUTES 注释）。
+    ("catalog", "More controls", "star"),
+    // RinUI 目录第二批 10 个控件。
+    ("catalog2", "Even more controls", "grid"),
 ];

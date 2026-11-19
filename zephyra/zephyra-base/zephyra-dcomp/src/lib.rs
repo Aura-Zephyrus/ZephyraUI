@@ -37,7 +37,7 @@
 //!
 //! # 为什么不放进 `zephyra-core` 核心
 //!
-//! 核心的零依赖与 `#![forbid(unsafe_code)]` 是本框架**唯一不可让步**的约束
+//! 核心的无外部依赖与 `#![forbid(unsafe_code)]` 是本框架**唯一不可让步**的约束
 //! （见 `zephyra/zephyra-core/Cargo.toml`）。本 crate 需要 `unsafe`（COM 与 DXGI 全是
 //! FFI）且需要 `windows` 依赖，两者都与该约束冲突，所以独立成包。
 //!

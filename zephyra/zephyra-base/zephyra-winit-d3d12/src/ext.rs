@@ -2,7 +2,7 @@
 #![cfg(windows)]
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use windows::Win32::Foundation::HANDLE;
@@ -24,6 +24,9 @@ pub struct ExtResource {
     pub format: ExternalTextureFormat,
     pub srv_slot: Option<u32>,
     pub pending_cpu: Option<zephyra_ext::CpuTextureDescOwned>,
+    /// `update_texture` 排入的帧队列：渲染器在下一帧就地拷进**同一张**纹理，
+    /// 不重新分配。容量有限（3 帧），相机帧生产更快时丢中间帧 —— 对视频流正确。
+    pub pending_updates: VecDeque<zephyra_ext::CpuTextureDescOwned>,
     /// 保持上传堆存活至 GPU 完成拷贝。替换/卸载时移入 `ExtPool::retired`，由渲染器在 GPU 空闲点释放。
     pub(crate) staging: Option<crate::renderer::UploadBuffer>,
 }
@@ -103,6 +106,7 @@ impl D3D12Importer {
                     format: cpu.format,
                     srv_slot: None,
                     pending_cpu: Some(cpu),
+                    pending_updates: VecDeque::new(),
                     staging: None,
                 },
             ));
@@ -137,6 +141,7 @@ impl ExternalTextureImporter for D3D12Importer {
                         format: desc.format,
                         srv_slot: None,
                         pending_cpu: None,
+                        pending_updates: VecDeque::new(),
                         staging: None,
                     },
                     FrameId(0),
@@ -190,6 +195,35 @@ impl ExtContextImpl for D3D12ExtContext {
 
     fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError> {
         self.pool.borrow_mut().remove(key);
+        Ok(())
+    }
+
+    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
+        let mut pool = self.pool.borrow_mut();
+        let res = pool
+            .textures
+            .get_mut(key)
+            .ok_or_else(|| ExtError::Backend(format!("texture not registered: {key}")))?;
+        // 只排一帧的像素；渲染器按注册时的 width/height/format 就地上传。
+        let needed = (res.width as usize) * (res.height as usize) * 4;
+        if pixels.len() < needed {
+            return Err(ExtError::Backend(format!(
+                "update pixels too small: {} < {needed}",
+                pixels.len()
+            )));
+        }
+        let cpu = zephyra_ext::CpuTextureDescOwned {
+            pixels: pixels.to_vec(),
+            width: res.width,
+            height: res.height,
+            row_pitch,
+            format: res.format,
+        };
+        // 相机帧生产可能快于渲染帧：只留最近 3 帧，旧的直接丢（视频流语义）。
+        res.pending_updates.push_back(cpu);
+        while res.pending_updates.len() > 3 {
+            res.pending_updates.pop_front();
+        }
         Ok(())
     }
 

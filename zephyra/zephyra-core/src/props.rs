@@ -353,6 +353,16 @@ pub static BLEND_MODE: PropertyKey = PropertyKey::new(
 pub static RENDER_SOURCE: PropertyKey =
     PropertyKey::new("RenderSource", PropertyValue::StaticStr(""));
 
+/// 宿主任意 2D 路径几何（Canvas 式动画的接入点）。
+///
+/// 真值走 [`PropertyValue::Custom`]，载荷是 [`crate::paint::DynamicPath`] —— 已三角化的
+/// 顶点（宿主每帧按参数生成）。核心不解释坐标含义，只把它变成 `Command::Path`；
+/// 样式表写不了它、主题解析跳过它。默认值是空串占位（`const` 里造不了 `Custom`），
+/// 读侧（`Node::path_data`）把非 `Custom` 读成「无」。
+///
+/// 不可继承：路径是节点自己的绘制内容。
+pub static PATH_DATA: PropertyKey = PropertyKey::new("Path.Data", PropertyValue::StaticStr(""));
+
 // ============================== 内容 ==============================
 
 /// 图像纹理句柄（宿主定义）。

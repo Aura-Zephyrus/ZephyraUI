@@ -80,9 +80,11 @@ Element ──diff──▶ Node ──style──▶ 具体值 ──layout─�
 ```text
 控件层（未实现）        Button / Slider / ToggleSwitch …
    ↓ 构造 Element、设属性
-通用层 zephyra/zephyra-core   property / theme / tree / layout / paint / filter / hit / input / icon
+通用层 zephyra/zephyra-core   property / theme / tree / layout / paint::render / hit / input
    ↓ DisplayList（纯数据契约，可序列化可断言）
-效果器层 zephyra/zephyra-fx   顶点展开 / 字形图集 / CPU 光栅 / 资源复用策略
+矢量绘制 zephyra/zephyra-vector 几何 / 图标 / 文本 / 字形图集 / 顶点展开 / 光栅
+   ↑ core 与 fx 共同依赖；它不依赖任何 workspace crate
+效果器层 zephyra/zephyra-fx   帧循环 / 调试桥 / 对 vector API 的再导出
    ↓ 顶点流 + 中立的资源需求
 base zephyra/zephyra-base        D3D11 / D3D12 / DComp / 摄像头
    ↓
@@ -96,7 +98,7 @@ base zephyra/zephyra-base        D3D11 / D3D12 / DComp / 摄像头
 判据：**能不能在没有 GPU、没有窗口的环境里写单测**。
 
 - 顶点展开、字形图集打包、CPU 参考光栅、离屏边界计算 —— 全都能纯 CPU 断言，
-  所以进效果器层；
+  所以进矢量绘制库（core 与 fx 都依赖它）；
 - 建纹理、设混合状态、走 DXGI 提交 —— 必须与系统打交道，所以留在 base。
 
 这与 Skia 把 `src/effects` 放在与 `src/core` **并列**处是同一个判断
@@ -143,7 +145,7 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 `zephyra-winit-d3d12` 同样不在 `default-members`，理由与 extra 不同：同一个二进制
 只应有一个后端，无差别构建时两个都编既慢，又让"这次改动影响了哪个后端"不清楚。
 
-`zephyra-dcomp` 需要 `unsafe` 与 `windows` 依赖，与通用层的零依赖 /
+`zephyra-dcomp` 需要 `unsafe` 与 `windows` 依赖，与通用层的无外部依赖 /
 `forbid(unsafe_code)` 两条约束都冲突。它也**不依赖 `zephyra-core`**：
 DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate 同时依赖两者接线。
 
@@ -168,7 +170,7 @@ DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate �
 早期那份 `examples/foundation`（2026-11 删除，见
 `docs/dev-log/2026-11-drop-examples-crate.md`）断言的是：
 
-1. 核心零依赖；
+1. 核心无外部依赖（唯一 workspace 依赖是 `zephyra-vector`）；
 2. 声明树能落地成节点树；
 3. 节点树能降级为已稳定排序的 `DisplayList`；
 4. 稳态 diff 是 no-op；

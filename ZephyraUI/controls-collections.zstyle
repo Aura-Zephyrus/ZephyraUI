@@ -199,6 +199,15 @@ box.setting-item {
     width: 440px;
 }
 
+/* 可点设置项：强调色描边 + 按下态（RinUI SettingItem clickable）。 */
+box.setting-item.clickable {
+    border-color: @accent_fill;
+}
+
+box.setting-item.pressed {
+    background: @control_secondary;
+}
+
 box.setting-icon {
     width: 22px;
     height: 22px;

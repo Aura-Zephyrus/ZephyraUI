@@ -57,7 +57,10 @@ impl Default for Glass {
     /// 四成以上，画面变成一团涂抹 —— 那是**参数演示**该给用户去拧的，不是默认值。
     fn default() -> Self {
         Self {
-            mode: GlassMode::Cheap,
+            // 默认走原版液态玻璃（AndroidLiquidGlass 的 `lens()` 逐字转译）——
+            // 背景真的被掰弯、边缘有 7 通道色散，这才是「液态玻璃」该有的样子。
+            // 便宜路（`PixelOffset`）仍能一键切到，只是不再当默认值。
+            mode: GlassMode::Original,
             thickness: 12,
             bezel: 19,
             dispersion: 4,
@@ -68,28 +71,36 @@ impl Default for Glass {
 
 /// 玻璃块的**两种算法**。
 ///
-/// # 为什么有两种
+/// # 三种算法
 ///
-/// - [`GlassMode::Cheap`] = **SVG 式像素偏移**：形状的边被**向内**推开 + 边缘高光。
-///   位移是**解析**的（掰形状自己的边）⇒ **不采样背景** ⇒ 不开离屏 pass ⇒
-///   **不拷全屏副本**。
-/// - [`GlassMode::Physical`] = **物理折射**（斯涅尔）：背景真的被掰弯。
-///   但那要求一份**全屏**的目标副本 ⇒ 每个玻璃元素一次**整幅解析**
-///   （D3D12 没有「按区解析」，MSAA 开着时必然是整幅的）。
+/// - [`GlassMode::Original`] = **原版液态玻璃**（`Filter::Lens`）：逐字转译
+///   AndroidLiquidGlass 的 `RoundedRectRefractionWithDispersionShaderString`。
+///   背景沿 SDF 倒角带被`circleMap` 位移掰弯，边缘有 7 通道分色（红/橙/黄/绿/
+///   青/蓝/紫按 `(cx·cy)/(hx·hy)` 加权）—— 这才是原版观感。默认档。
+/// - [`GlassMode::Physical`] = **斯涅尔折射**（`Filter::Refraction`）：本仓自己的
+///   折射公式，四个物理量（厚度 / 倒角 / 色散 / IOR）都可调，色散是 R/B 相对 G
+///   的均匀偏移（边缘一圈彩虹，与原版的角部分色不同）。
+/// - [`GlassMode::Cheap`] = **SVG 式像素偏移**：掰形状自己的边，不采样背景 ⇒
+///   不开离屏 pass ⇒ 几乎免费，但背景**不被掰弯**。
 ///
-/// 实测（gallery 1400×800 / Intel UHD 630 / D3D12 / MSAA 开）：
-/// 材质页三块玻璃走物理折射时，**整个离屏路径**要 **5.06 ms/帧**
-/// （三块玻璃 + 一块磨砂样板），换成像素偏移后 **~0**。
+/// # 为什么把原版设为默认
 ///
-/// # 为什么默认是便宜的那条
+/// 用户反馈「玻璃材质控件和原版液态玻璃差别太大」：廉价路没有背景折射、
+/// 物理路的均匀色散又是整圈彩虹 —— 两者都不是原版观感。原版那条路
+/// (`Filter::Lens`) 在三个后端**早已逐字实现**（见 `zephyra.hlsl` 的 `PSLens` /
+/// `zephyra.wgsl` 的 `fs_lens`），只是没接到这块玻璃材质上。
 ///
-/// 需求是「用玻璃的成本压下来」，而**物理折射那条路完整保留** ——
-/// [`GlassMode::Physical`] 一键切过去就能看到、能调、能对比。
-/// 默认跑贵的那条，等于默认把预算花掉。
+/// # 代价
+///
+/// 折射要读「背后」，因此需要一份目标副本：实测（gallery 1400×800 / Intel
+/// UHD 630 / D3D12 / MSAA 开）材质页三块玻璃走离屏折射约 **5.06 ms/帧**，
+/// 廉价路 ~0。要省预算就切到 [`GlassMode::Cheap`] —— 那条路完整保留。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GlassMode {
-    /// SVG 式像素偏移（默认）。
+    /// 原版液态玻璃（`lens()` 逐字转译，默认）。
     #[default]
+    Original,
+    /// SVG 式像素偏移（便宜）。
     Cheap,
     /// 物理折射（斯涅尔）。
     Physical,
@@ -137,6 +148,13 @@ impl Glass {
         let idx =
             (self.thickness as isize + offset).clamp(0, THICKNESS.len() as isize - 1) as usize;
         match self.mode {
+            GlassMode::Original => zephyra_core::filter::Filter::Lens {
+                // 原版 `lens(refractionHeight, refractionAmount)`：倒角带宽度决定
+                // 掰弯在屏幕上的铺开宽度，厚度决定位移峰值。两档都按 1/2 缩放，
+                // 让默认值落在原版 `lens(12, 24)` 的量级（48→24、40→20）。
+                refraction_height: BEZEL[self.bezel] * 0.5,
+                refraction_amount: THICKNESS[idx] * 0.5,
+            },
             GlassMode::Cheap => zephyra_core::filter::Filter::PixelOffset {
                 // ⚠ 像素偏移的 `amount` 是**形状位移**（把边往里推），
                 // 而物理折射的 `strength` 是**折射位移**（掰背景）—— 量级完全不同。
@@ -265,7 +283,10 @@ impl Param {
     /// **物理含义不同** —— 标签必须跟着算法走，否则面板在说一件假事。
     pub fn label_for(self, mode: GlassMode) -> &'static str {
         match (mode, self) {
-            (GlassMode::Cheap, Param::Thickness) => "Amount",
+            // 原版透镜与像素偏移都没有 IOR / 色散旋钮：Thickness / Bezel 在这里
+            // 分别映射成 `refraction_amount` / `refraction_height`（原版）与
+            // `amount` / `bezel`（廉价路），统一叫 Amount / Bezel 比叫「厚度」诚实。
+            (GlassMode::Cheap | GlassMode::Original, Param::Thickness) => "Amount",
             _ => self.label(),
         }
     }

@@ -170,6 +170,7 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
         false,
         "只决定画哪段外部内容，不改布局盒",
     ),
+    (&props::PATH_DATA, false, "动态路径只决定画什么，不改布局盒"),
 ];
 
 #[test]
@@ -242,6 +243,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "MATERIAL_PARAMS",
         "DECORATIONS",
         "RENDER_SOURCE",
+        "PATH_DATA",
         "IMAGE_TEXTURE",
         "IMAGE_SIZE",
         "IMAGE_TINT",
@@ -305,6 +307,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         "MaterialParams",
         "Decorations",
         "RenderSource",
+        "Path.Data",
         "Image.Texture",
         "Image.Size",
         "Image.Tint",

@@ -175,6 +175,14 @@ control.tool-button.pressed {
     background: @control_fill_pressed;
 }
 
+control.tool-button.highlighted {
+    background: @accent_fill;
+}
+
+box.tool-icon.highlighted {
+    icon-color: @on_accent_fill;
+}
+
 box.tool-icon {
     width: 22px;
     height: 22px;

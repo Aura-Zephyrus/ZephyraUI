@@ -191,16 +191,32 @@ fn write_rows(
     width: u32,
     height: u32,
 ) {
+    write_rows_with_pitch(context, tex, rgba, width, height, width * 4);
+}
+
+/// 带**源行距**的 `UpdateSubresource`（P0.2 相机帧原地更新）。
+///
+/// `SysMemPitch` 直接取 `row_pitch`：D3D11 驱动按这个步长读每一行，**不需要**
+/// 在 CPU 侧重排紧 —— 这正是相机帧常见的 `stride > width*4` 情况。
+pub(crate) fn write_rows_with_pitch(
+    context: &ID3D11DeviceContext,
+    tex: &ID3D11Texture2D,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    row_pitch: u32,
+) {
     let row_bytes = (width as usize * 4) as u32;
+    let pitch = row_pitch.max(row_bytes);
+    let needed = (pitch as usize) * (height as usize - 1) + (row_bytes as usize);
     debug_assert!(
-        rgba.len() >= (row_bytes as usize) * (height as usize),
-        "rgba 只有 {} 字节，不够 {width}×{height} 所需的 {} 字节",
-        rgba.len(),
-        (row_bytes as usize) * (height as usize)
+        rgba.len() >= needed,
+        "rgba 只有 {} 字节，不够 {width}×{height} / pitch={row_pitch} 所需的 {needed} 字节",
+        rgba.len()
     );
     let data = D3D11_SUBRESOURCE_DATA {
         pSysMem: rgba.as_ptr() as *const _,
-        SysMemPitch: row_bytes,
+        SysMemPitch: pitch,
         SysMemSlicePitch: 0,
     };
     unsafe {

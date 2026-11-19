@@ -39,9 +39,16 @@
   </control>
 </component>
 
-<component name="ToolButton" params="icon">
-  <control interactive="true" class="tool-button {press ? 'pressed' : (hover ? 'hovered' : '')}">
-    <box key="icon" icon="{icon}" class="{press ? 'pressed' : (hover ? 'hovered' : '')} tool-icon"/>
+<!-- RinUI `ToggleButton.qml` ≡ Button + `checkable` + `highlighted: checked`。 -->
+<component name="ToggleButton" params="label label_key checked">
+  <control interactive="true" focusable="true" activatable="true" class="button {checked ? 'accent' : 'subtle'} {press ? 'pressed' : (hover ? 'hovered' : '')} {focused ? 'focused' : ''}">
+    <text key="label" text="{label_key ? tr(label_key) : label}" class="{checked ? 'accent' : 'subtle'} btn-label"/>
+  </control>
+</component>
+
+<component name="ToolButton" params="icon highlighted">
+  <control interactive="true" class="tool-button {highlighted ? 'highlighted' : ''} {press ? 'pressed' : (hover ? 'hovered' : '')}">
+    <box key="icon" icon="{icon}" class="{highlighted ? 'highlighted' : ''} {press ? 'pressed' : (hover ? 'hovered' : '')} tool-icon"/>
   </control>
 </component>
 
@@ -352,8 +359,8 @@
   </control>
 </component>
 
-<component name="SelectorBar" params="items sel">
-  <box class="selector-bar">
+<component name="SelectorBar" params="items sel state">
+  <box class="selector-bar {state}">
     <for var="e" list="items">
       <control key="{e.id}" interactive="true" class="selector-item {e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')}">
         <text key="label" text="{e.label}" class="{e.id == sel ? 'selected'} {press(e.id) ? 'pressed' : (hover(e.id) ? 'hovered' : '')} selector-label"/>
@@ -372,12 +379,12 @@
   </box>
 </component>
 
+<!-- RinUI `ProgressRing.qml`：Canvas 上一条线宽 6、圆端、从 12 点方向起画的圆弧，
+     **没有文字标签**（数值在 RinUI 里由外部 SpinBox 显示）。这里用预生成的弧线帧
+     图标表达不确定态的旋转；确定态是纯圆环 + 纯色描边。 -->
 <component name="ProgressRing" params="value state show_value">
-  <box class="progress-ring">
+  <box key="{key}" interactive="true" class="progress-ring">
     <box key="ring" class="ring-track {state}">
-      <if cond="show_value">
-        <text key="value" text="{value}" class="ring-value"/>
-      </if>
     </box>
   </box>
 </component>
@@ -396,7 +403,9 @@
         <box key="icon" icon="close" class="bar-close-icon"/>
       </control>
       <else>
-        <control key="bar:close" interactive="true" collapsed="true" class="bar-close">
+        <!-- 关掉后保留同 key 的节点（结构稳定），但换一个类名，让「点关闭」在
+             树指纹里可见 —— 门禁 shape_fingerprint 只看 tag/key/class/text。 -->
+        <control key="bar:close" interactive="true" collapsed="true" class="bar-close closed">
           <box key="icon" icon="close" class="bar-close-icon"/>
         </control>
       </else>
@@ -414,25 +423,27 @@
   </box>
 </component>
 
-<component name="ToolTip" params="text">
-  <box class="tool-tip">
+<!-- RinUI `ToolTip.qml`：默认由 hover 触发显隐；宿主把 `visible` 绑过来即可。 -->
+<component name="ToolTip" params="text visible">
+  <box collapsed="{!visible}" class="tool-tip">
     <text key="text" text="{text}" class="tip-text"/>
   </box>
 </component>
 
 <!-- 三颗点按 frame 轮换大小档（Rust 版 (i + 3 - frame % 3) % 3 展开）。 -->
-<component name="BusyIndicator" params="frame">
+<!-- RinUI `BusyIndicator.qml` 只有 11 行：继承 ProgressRing，state=Running、
+     indeterminate=running。弧线顶点由宿主按连续相位每帧生成（Canvas 式路径动画）。 -->
+<component name="BusyIndicator" params="path">
   <box class="busy">
-    <box key="busy:0" class="busy-dot {frame % 3 == 0 ? 'dot-lg' : (frame % 3 == 1 ? 'dot-sm' : 'dot-md')}"/>
-    <box key="busy:1" class="busy-dot {frame % 3 == 0 ? 'dot-md' : (frame % 3 == 1 ? 'dot-lg' : 'dot-sm')}"/>
-    <box key="busy:2" class="busy-dot {frame % 3 == 0 ? 'dot-sm' : (frame % 3 == 1 ? 'dot-md' : 'dot-lg')}"/>
+    <box key="ring" path="{path}" class="busy-ring"/>
   </box>
 </component>
 
 <component name="PageIndicator" params="count current">
   <box class="page-indicator">
     <for var="i" list="range(count)">
-      <box key="{'pip:' + str(i)}" class="pip {i == current ? 'selected'}"/>
+      <!-- 每个点是可点控件：点第 i 个即切到第 i 页（RinUI `PageIndicator` 的 TapHandler）。 -->
+      <control key="{'pip:' + str(i)}" interactive="true" class="pip {i == current ? 'selected'} {press('pip:' + str(i)) ? 'pressed' : (hover('pip:' + str(i)) ? 'hovered' : '')}"/>
     </for>
   </box>
 </component>
@@ -448,9 +459,9 @@
   </control>
 </component>
 
-<component name="Hyperlink" params="text url">
-  <control interactive="true" url="{url}" class="hyperlink {hover ? 'hovered' : ''}">
-    <text key="label" text="{text}" class="{hover ? 'hovered' : ''} hyperlink-label"/>
+<component name="Hyperlink" params="text url visited">
+  <control interactive="true" url="{url}" class="hyperlink {visited ? 'visited' : ''} {hover ? 'hovered' : ''}">
+    <text key="label" text="{text}" class="{visited ? 'visited' : ''} {hover ? 'hovered' : ''} hyperlink-label"/>
     <box key="underline" class="{hover ? 'hovered' : ''} link-underline"/>
   </control>
 </component>
@@ -541,18 +552,21 @@
 <component name="SpinBox" params="value">
   <control interactive="true" class="spin-box {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <text key="value" text="{value}" class="spin-value"/>
-    <control key="spin:up" interactive="true" class="spin-step {press('spin:up') ? 'pressed' : (hover('spin:up') ? 'hovered' : '')}">
-      <box key="icon" icon="chevron-up" class="spin-step-icon"/>
-    </control>
-    <control key="spin:down" interactive="true" class="spin-step {press('spin:down') ? 'pressed' : (hover('spin:down') ? 'hovered' : '')}">
-      <box key="icon" icon="chevron-down" class="spin-step-icon"/>
-    </control>
+    <!-- 上下按钮竖向叠在右端（Fluent NumberBox 的形态），不再并排悬空。 -->
+    <box key="steps" class="spin-steps">
+      <control key="spin:up" interactive="true" class="spin-step {press('spin:up') ? 'pressed' : (hover('spin:up') ? 'hovered' : '')}">
+        <box key="icon" icon="chevron-up" class="spin-step-icon"/>
+      </control>
+      <control key="spin:down" interactive="true" class="spin-step {press('spin:down') ? 'pressed' : (hover('spin:down') ? 'hovered' : '')}">
+        <box key="icon" icon="chevron-down" class="spin-step-icon"/>
+      </control>
+    </box>
   </control>
 </component>
 
 <!-- 8x2 色板：格子色在样式表 sw-0..15（源码发词）。 -->
-<component name="ColorPicker" params="sel">
-  <box class="color-picker">
+<component name="ColorPicker" params="sel state">
+  <box class="color-picker {state}">
     <box key="sw-row:0" class="swatch-row">
       <for var="i" list="range(8)">
         <box key="{'swatch:' + str(i)}" interactive="true" class="swatch {'sw-' + str(i)} {press('swatch:' + str(i)) ? 'pressed' : (hover('swatch:' + str(i)) ? 'hovered' : '')} {i == sel ? 'selected'}"/>
@@ -619,8 +633,9 @@
   </box>
 </component>
 
-<component name="SettingItem" params="icon title desc">
-  <box class="setting-item">
+<!-- RinUI `SettingItem.qml`：`clickable` 决定是否可点、并显示尾部箭头。 -->
+<component name="SettingItem" params="icon title desc clickable">
+  <box key="{key}" interactive="{clickable}" class="setting-item {clickable ? 'clickable' : ''}">
     <box key="icon" icon="{icon}" class="setting-icon"/>
     <box key="texts" class="setting-texts">
       <text key="title" text="{title}" class="setting-title"/>
@@ -718,10 +733,11 @@
 
 <!-- 单行输入框。children 槽位给 AutoSuggestBox 追加建议列表用
      （Rust 版 field.with_children([list]) 同一形态）。 -->
-<component name="TextField" params="value placeholder cursor selection_begin selection_end">
+<component name="TextField" params="value placeholder cursor selection_begin selection_end scroll_x">
   <control interactive="true" focusable="true" class="text-field {focused ? 'focused'} {press ? 'pressed' : (hover ? 'hovered' : '')}">
     <box key="fill:selection" translate-x="{selection_begin}" width="{selection_end - selection_begin}" class="selection {selection_begin != selection_end ? 'has-selection' : ''}"/>
-    <text key="text" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
+    <!-- 文本本身按 scroll_x 横向平移：长文本不换行、溢出由 .text-field 的 overflow:hidden 裁掉。 -->
+    <text key="text" translate-x="{scroll_x}" text="{value == '' ? placeholder : value}" class="field-text {value == '' ? 'placeholder'} {focused ? 'focused'}"/>
     <box key="cursor" translate-x="{cursor}" class="cursor {focused ? 'focused' : ''}"/>
     <if cond="value != ''">
       <control key="field:clear" interactive="true" class="field-clear {focused ? 'focused'} {hover ? 'hovered' : ''}">

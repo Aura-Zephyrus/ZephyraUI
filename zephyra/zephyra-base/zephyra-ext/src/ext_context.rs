@@ -60,6 +60,22 @@ pub trait ExtContextImpl {
         builder: ExternalTextureBuilder,
     ) -> Result<TextureRegistration, ExtError>;
     fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError>;
+    /// 原地更新**已注册** CPU 纹理的像素（P0.2 相机帧高频更新）。
+    ///
+    /// 默认实现返回错误以保持第三方实现兼容；三个后端各自覆盖。实现必须：
+    /// - 只改内容、`key` 的文字不变（纹理解析结果不变）；
+    /// - 尺寸 / 格式沿用 `register_texture` 时的描述；
+    /// - 立即返回，不做同步 GPU 等待 —— 像素排进队列，由渲染帧消费。
+    fn update_texture(
+        &mut self,
+        _key: &str,
+        _pixels: &[u8],
+        _row_pitch: u32,
+    ) -> Result<(), ExtError> {
+        Err(ExtError::Backend(
+            "update_texture not supported by this backend".into(),
+        ))
+    }
     fn register_hook(
         &mut self,
         kind: Cow<'static, str>,
@@ -97,6 +113,15 @@ impl ExtContext {
     }
     pub fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError> {
         self.inner.unregister_texture(key)
+    }
+    /// 原地更新已注册 CPU 纹理的像素（见 `ExtContextImpl::update_texture`）。
+    pub fn update_texture(
+        &mut self,
+        key: &str,
+        pixels: &[u8],
+        row_pitch: u32,
+    ) -> Result<(), ExtError> {
+        self.inner.update_texture(key, pixels, row_pitch)
     }
     pub fn register_hook(
         &mut self,
@@ -159,6 +184,19 @@ impl ExtContextHandle {
             Rc::downgrade(&self.inner),
             owned,
         ))
+    }
+
+    /// 原地更新已注册 CPU 纹理的像素（P0.2）。
+    ///
+    /// 语义：`key` 必须已由 [`Self::register_texture`] 注册；尺寸 / 格式沿用注册时的
+    /// 描述；`pixels` 每行 `row_pitch` 字节。调用立即返回（仅在内部拷贝像素），
+    /// GPU 上传由下一帧渲染消费 —— 没有逐帧 CPU→GPU 同步等待。
+    ///
+    /// 同一 key 重复调用只替换内容，不改变 `TextureRef(name)` 的解析结果。
+    pub fn update_texture(&self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
+        self.inner
+            .borrow_mut()
+            .update_texture(key, pixels, row_pitch)
     }
 
     pub fn register_hook(

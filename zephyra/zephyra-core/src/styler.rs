@@ -2,8 +2,8 @@
 //!
 //! # 为什么需要一个 trait 而不是直接把 `StyleSheet` 传进来
 //!
-//! `zephyra-core` 是**零依赖**的（`cargo tree -p zephyra-core --depth 1` 只输出自身
-//! 一行，这是计划里写明的不变量）。而解析器（`cssparser`）只能住在 dev 工具
+//! `zephyra-core` **无外部依赖**（`cargo tree -p zephyra-core --depth 1` 恰好两行：
+//! 自身与 `zephyra-vector`）。而解析器（`cssparser`）只能住在 dev 工具
 //! `zstylec` 里。所以 core **不能**认识 `StyleSheet`。
 //!
 //! 于是用 trait 拆开：core 只认「有一个东西能在 diff 之后、布局之前改我的节点」，

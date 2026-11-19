@@ -267,6 +267,8 @@ pub struct WindowTargets {
     pub(crate) ext_pool: std::rc::Rc<std::cell::RefCell<crate::ext::ExtPool>>,
     pub(crate) ext_hooks: std::rc::Rc<std::cell::RefCell<crate::ext::HookTable>>,
     pub(crate) ext_frame: std::rc::Rc<std::cell::Cell<u64>>,
+    /// 本窗口 id（P1.1：窗口作用域的 ext hook 必须按 id 精确匹配，不能只按 kind）。
+    pub(crate) window_id: u64,
 }
 
 impl WindowTargets {
@@ -299,6 +301,7 @@ impl WindowTargets {
             ext_pool: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::ExtPool::default())),
             ext_hooks: std::rc::Rc::new(std::cell::RefCell::new(crate::ext::HookTable::default())),
             ext_frame: std::rc::Rc::new(std::cell::Cell::new(0)),
+            window_id: 0,
         })
     }
 
@@ -899,13 +902,13 @@ pub trait RenderHook: Send + Sync {
     /// 在 `bounds`（屏幕像素坐标）处绘制自绘内容。
     fn draw(
         &mut self,
-        ctx: HookCtx<'_>,
+        ctx: HookCtx,
         bounds: zephyra_core::core::Rect,
         source: &zephyra_core::paint::RenderSource,
     );
     fn draw_with_key(
         &mut self,
-        ctx: HookCtx<'_>,
+        ctx: HookCtx,
         bounds: zephyra_core::core::Rect,
         source: &zephyra_core::paint::RenderSource,
         _resource_key: Option<&str>,
@@ -915,20 +918,50 @@ pub trait RenderHook: Send + Sync {
 }
 
 /// 传给 [`RenderHook`] 的 D3D12 上下文。
-pub struct HookCtx<'a> {
-    /// 设备。
-    pub device: &'a ID3D12Device,
-    /// 记录中的命令列表。
-    pub list: &'a ID3D12GraphicsCommandList,
+///
+/// # 为什么字段是裸指针而不是引用
+///
+/// `HookContext::as_any_mut` 必须返回 `&mut dyn Any`，而 `dyn Any: 'static` ——
+/// 带生命周期的 `HookCtx<'a>` 无法向下转型。用裸指针（`'static`）存设备与命令
+/// 列表，再通过 [`HookCtx::device`] / [`HookCtx::list`] 在 `&self` / `&mut self`
+/// 的生命周期内安全取回引用：钩子 `downcast_mut::<HookCtx>()` 成功，且返回值的
+/// 生命周期被借用检查器钉在这次调用内（不能跨帧持有）。
+pub struct HookCtx {
+    /// 设备（见 [`HookCtx::device`]）。
+    pub device: *const ID3D12Device,
+    /// 记录中的命令列表（见 [`HookCtx::list`]）。
+    pub list: *mut ID3D12GraphicsCommandList,
     /// 当前目标的 RTV 描述符句柄。
     pub rtv: D3D12_CPU_DESCRIPTOR_HANDLE,
     /// 目标像素尺寸（宽，高）。
     pub size: (f32, f32),
     pub frame_index: u64,
-    pub ext_pool: Option<&'a crate::ext::ExtPool>,
+    /// 外部纹理池（仅在渲染回放期间有效，见 [`HookCtx::ext_pool`]）。
+    pub ext_pool: Option<*const crate::ext::ExtPool>,
 }
 
-impl HookContext for HookCtx<'_> {
+impl HookCtx {
+    /// 设备引用（生命周期绑定在本次借用）。
+    pub fn device(&self) -> &ID3D12Device {
+        // SAFETY: 指针由 renderer 在构造时从有效引用取得，且本方法只在钩子的
+        // `&self` 借用期内调用。
+        unsafe { &*self.device }
+    }
+
+    /// 可录制命令的列表（生命周期绑定在本次 `&mut` 借用）。
+    pub fn list(&mut self) -> &mut ID3D12GraphicsCommandList {
+        // SAFETY: 同上；`&mut self` 保证不会与其它借用别名。
+        unsafe { &mut *self.list }
+    }
+
+    /// 按 `resource_key` 查找外部纹理 SRV（ext 回放）。
+    pub fn ext_pool(&self) -> Option<&crate::ext::ExtPool> {
+        // SAFETY: 同上。
+        unsafe { self.ext_pool.map(|p| &*p) }
+    }
+}
+
+impl HookContext for HookCtx {
     fn frame_index(&self) -> u64 {
         self.frame_index
     }
@@ -939,15 +972,13 @@ impl HookContext for HookCtx<'_> {
         None
     }
     fn as_any(&self) -> &dyn std::any::Any {
-        static UNIT: () = ();
-        &UNIT
+        // 让 `HookContextExt::downcast_mut::<HookCtx>()` 成功 —— 钩子据此拿到
+        // `list` / `device` / `rtv` 录制自己的绘制命令（P0.1，笔迹层硬阻塞）。
+        // 只以 `&mut` 借用存在于渲染线程，不跨线程，无需 Send。
+        self
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        fn placeholder() -> &'static mut () {
-            static mut P: () = ();
-            unsafe { &mut *std::ptr::addr_of_mut!(P) }
-        }
-        placeholder()
+        self
     }
 }
 
@@ -2168,6 +2199,108 @@ impl Renderer {
         Ok(slot)
     }
 
+    /// 把一份 CPU 像素拷进 `res.resource`（`resource` 为空时先创建纹理）。
+    ///
+    /// P0.2：`register_texture` 的首次上传与 `update_texture` 的逐帧更新共用这条
+    /// 路径 —— 复用同一张纹理与 SRV，不重新分配。原地更新时先把纹理从
+    /// `PIXEL_SHADER_RESOURCE` 转回 `COPY_DEST`（复制目标必须是这个状态）。
+    /// staging 在 GPU 空闲点（`begin_frame` 的 `wait_gpu`）才由下一帧释放，且每帧
+    /// 只处理队列里**最新**一份更新 ⇒ 同帧内不会丢弃仍被 GPU 引用的 staging。
+    fn stage_ext_cpu_upload(
+        &self,
+        list: &ID3D12GraphicsCommandList,
+        res: &mut crate::ext::ExtResource,
+        cpu: &zephyra_ext::CpuTextureDescOwned,
+    ) -> Result<(), SurfaceError> {
+        let w = cpu.width.max(1);
+        let h = cpu.height.max(1);
+        let tight = (w as usize) * 4;
+        let first = res.resource.is_none();
+        if first {
+            let tex_desc = texture_desc((w, h), D3D12_RESOURCE_FLAG_NONE);
+            res.resource = Some(create_resource(
+                &self.device,
+                &heap_props(D3D12_HEAP_TYPE_DEFAULT),
+                &tex_desc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+            )?);
+        }
+        let texture = res.resource.as_ref().expect("just ensured");
+        let tex_desc = texture_desc((w, h), D3D12_RESOURCE_FLAG_NONE);
+        let mut footprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default();
+        let mut total = 0u64;
+        unsafe {
+            self.device.GetCopyableFootprints(
+                &tex_desc,
+                0,
+                1,
+                0,
+                Some(&mut footprint),
+                None,
+                None,
+                Some(&mut total),
+            );
+        }
+        let row_pitch = footprint.Footprint.RowPitch as usize;
+        if row_pitch < tight {
+            return Err(SurfaceError::new(
+                "ext CPU texture: row pitch too small",
+                windows::core::Error::from(E_FAIL),
+            ));
+        }
+        let staging = UploadBuffer::new(&self.device, total.max((row_pitch * h as usize) as u64))?;
+        unsafe {
+            for row in 0..h as usize {
+                let dst_off = row * row_pitch;
+                let src_off = row * (cpu.row_pitch.max(tight as u32) as usize);
+                let copy = tight.min(cpu.pixels.len().saturating_sub(src_off));
+                if copy > 0 {
+                    std::ptr::copy_nonoverlapping(
+                        cpu.pixels.as_ptr().add(src_off),
+                        staging.mapped.add(dst_off),
+                        copy,
+                    );
+                }
+            }
+            if !first {
+                crate::surface::Gpu::barrier(
+                    list,
+                    texture,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_COPY_DEST,
+                );
+            }
+            list.CopyTextureRegion(
+                &D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(texture.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        SubresourceIndex: 0,
+                    },
+                },
+                0,
+                0,
+                0,
+                &D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: std::mem::ManuallyDrop::new(Some(staging.resource.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        PlacedFootprint: footprint,
+                    },
+                },
+                None,
+            );
+            crate::surface::Gpu::barrier(
+                list,
+                texture,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            );
+        }
+        res.staging = Some(staging);
+        Ok(())
+    }
+
     fn sync_ext_texture_srvs(
         &mut self,
         list: &ID3D12GraphicsCommandList,
@@ -2202,91 +2335,14 @@ impl Renderer {
             let Some(res) = ext_pool.textures.get_mut(&key) else {
                 continue;
             };
-            // CPU 挂起上传：创建默认堆纹理 + staging + 拷贝 + 屏障。
-            if res.resource.is_none() {
-                if let Some(cpu) = res.pending_cpu.take() {
-                    let w = cpu.width.max(1);
-                    let h = cpu.height.max(1);
-                    let tight = (w as usize) * 4;
-                    let tex_desc = texture_desc((w, h), D3D12_RESOURCE_FLAG_NONE);
-                    let texture = create_resource(
-                        &self.device,
-                        &heap_props(D3D12_HEAP_TYPE_DEFAULT),
-                        &tex_desc,
-                        D3D12_RESOURCE_STATE_COPY_DEST,
-                    )?;
-                    let mut footprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default();
-                    let mut total = 0u64;
-                    unsafe {
-                        self.device.GetCopyableFootprints(
-                            &tex_desc,
-                            0,
-                            1,
-                            0,
-                            Some(&mut footprint),
-                            None,
-                            None,
-                            Some(&mut total),
-                        );
-                    }
-                    let row_pitch = footprint.Footprint.RowPitch as usize;
-                    if row_pitch < tight {
-                        return Err(SurfaceError::new(
-                            "ext CPU texture: row pitch too small",
-                            windows::core::Error::from(E_FAIL),
-                        ));
-                    }
-                    let staging = UploadBuffer::new(
-                        &self.device,
-                        total.max((row_pitch * h as usize) as u64),
-                    )?;
-                    let src = &cpu.pixels;
-                    unsafe {
-                        for row in 0..h as usize {
-                            let dst_off = row * row_pitch;
-                            let src_off = row * (cpu.row_pitch.max(tight as u32) as usize);
-                            let copy = tight.min(src.len().saturating_sub(src_off));
-                            if copy > 0 {
-                                std::ptr::copy_nonoverlapping(
-                                    src.as_ptr().add(src_off),
-                                    staging.mapped.add(dst_off),
-                                    copy,
-                                );
-                            }
-                        }
-                        list.CopyTextureRegion(
-                            &D3D12_TEXTURE_COPY_LOCATION {
-                                pResource: std::mem::ManuallyDrop::new(Some(texture.clone())),
-                                Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
-                                Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
-                                    SubresourceIndex: 0,
-                                },
-                            },
-                            0,
-                            0,
-                            0,
-                            &D3D12_TEXTURE_COPY_LOCATION {
-                                pResource: std::mem::ManuallyDrop::new(Some(
-                                    staging.resource.clone(),
-                                )),
-                                Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                                Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
-                                    PlacedFootprint: footprint,
-                                },
-                            },
-                            None,
-                        );
-                        crate::surface::Gpu::barrier(
-                            list,
-                            &texture,
-                            D3D12_RESOURCE_STATE_COPY_DEST,
-                            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                        );
-                    }
-                    // 保持 staging 存活至 GPU 完成（简化策略；后续可接 fence 回收）。
-                    res.staging = Some(staging);
-                    res.resource = Some(texture);
-                }
+            // CPU 首次上传 / 逐帧原地更新共用同一条 staging 路径。每帧只取队列里
+            // 最新的一份更新 —— 相机帧生产快于渲染帧时丢中间帧是正确语义。
+            let pending = res
+                .pending_cpu
+                .take()
+                .or_else(|| res.pending_updates.drain(..).next_back());
+            if let Some(cpu) = pending {
+                self.stage_ext_cpu_upload(list, res, &cpu)?;
             }
             if let Some(slot) = res.srv_slot {
                 self.ext_srv_keys.insert(key.clone(), slot);
@@ -2469,12 +2525,12 @@ impl Renderer {
                     let payload = imported_payload
                         .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
                     let mut ctx = HookCtx {
-                        device,
-                        list,
+                        device: device as *const _,
+                        list: (list as *const _) as *mut _,
                         rtv: env.rtv,
                         size: (env.size.0 as f32, env.size.1 as f32),
                         frame_index: targets.ext_frame.get(),
-                        ext_pool: Some(&*ext_pool),
+                        ext_pool: Some(&*ext_pool as *const _),
                     };
                     let mut handled = false;
                     {
@@ -2495,13 +2551,14 @@ impl Renderer {
                                     key_str
                                 ));
                             }
-                        } else if let Some((w, k)) = ext_hooks
+                        } else if let Some(h) = ext_hooks
                             .window
-                            .keys()
-                            .find(|(_, k)| k.as_str() == hook_kind)
-                            .cloned()
+                            .get_mut(&(targets.window_id, hook_kind.to_string()))
                         {
-                            if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                            // P1.1：按 `(窗口 id, kind)` **精确**匹配 —— 早先只按
+                            // kind `.find`，A 窗口注册的钩子会被 B 窗口命中（多窗口
+                            // 下同 kind 不同行为的场景直接串台）。
+                            {
                                 let ext_src = zephyra_render_ext::registration::RenderSource::new(
                                     key_str,
                                     Some(payload),

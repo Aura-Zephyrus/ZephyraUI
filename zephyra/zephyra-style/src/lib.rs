@@ -12,8 +12,9 @@
 //!
 //! # 为什么不并进 core
 //!
-//! `zephyra-core` 是零依赖的（`cargo tree -p zephyra-core --depth 1` 只输出自身
-//! 一行，这是计划里写明的不变量）。CSS 解析器迟早要引 crate，所以它必须住在这里。
+//! `zephyra-core` 无外部依赖（`cargo tree -p zephyra-core --depth 1` 恰好两行：
+//! 自身与零 workspace 依赖的 `zephyra-vector`）。CSS 解析器迟早要引 crate，
+//! 所以它必须住在这里。
 //!
 //! # 两种模式，一份 IR
 //!

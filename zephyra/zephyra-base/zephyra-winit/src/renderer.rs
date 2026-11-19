@@ -638,12 +638,12 @@ pub trait RenderHook: Send + Sync {
     ///
     /// `source.payload::<T>()` 取回宿主在 [`zephyra_core::paint::RenderSource::new`]
     /// 里放的载荷。`resource_key` 为新契约的纹理池键（可选，兼容迁移）。
-    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+    fn draw(&mut self, ctx: HookCtx, bounds: Rect, source: &RenderSource);
 
     /// 带 `resource_key` 的绘制入口（默认委托到 [`Self::draw`]）。
     fn draw_with_key(
         &mut self,
-        ctx: HookCtx<'_>,
+        ctx: HookCtx,
         bounds: Rect,
         source: &RenderSource,
         _resource_key: Option<&str>,
@@ -653,31 +653,53 @@ pub trait RenderHook: Send + Sync {
 }
 
 /// 传给 [`RenderHook`] 的 D3D11 上下文。
-pub struct HookCtx<'a> {
-    /// 立即上下文。
-    pub context: &'a ID3D11DeviceContext,
-    /// 设备（需要新建资源时用）。
-    pub device: &'a ID3D11Device,
-    /// 当前渲染目标（离屏 pass 中途就是离屏 RT——但 v1 自绘源不进离屏，见
-    /// `Command::Custom` 文档；这个字段保持完整以防将来放开）。
-    pub rtv: &'a ID3D11RenderTargetView,
+///
+/// # 为什么字段是裸指针而不是引用
+///
+/// `HookContext::as_any_mut` 必须返回 `&mut dyn Any`，而 `dyn Any: 'static` ——
+/// 带生命周期的 `HookCtx<'a>` 无法向下转型。裸指针（`'static`）配合下面的安全
+/// 访问器让钩子能 `downcast_mut::<HookCtx>()` 拿到可录制命令的上下文，而返回
+/// 引用的生命周期仍被借用检查器钉在本次调用内。
+pub struct HookCtx {
+    /// 立即上下文（见 [`HookCtx::context`]）。
+    pub context: *const ID3D11DeviceContext,
+    /// 设备（需要新建资源时用，见 [`HookCtx::device`]）。
+    pub device: *const ID3D11Device,
+    /// 当前渲染目标（见 [`HookCtx::rtv`]）。
+    pub rtv: *const ID3D11RenderTargetView,
     /// 目标像素尺寸（宽，高）。
     pub size: (f32, f32),
     /// 帧序号（新契约 HookContext 要求）。
     pub frame_index: u64,
     /// 外部纹理池（`resource_key` 查找）。仅在渲染回放期间有效。
-    pub(crate) ext_pool: Option<&'a crate::ext::ExtPool>,
+    pub(crate) ext_pool: Option<*const crate::ext::ExtPool>,
 }
 
-impl HookCtx<'_> {
+impl HookCtx {
+    /// 立即上下文引用。
+    pub fn context(&self) -> &ID3D11DeviceContext {
+        // SAFETY: 指针由 renderer 构造时取自有效引用，只在钩子的借用期内使用。
+        unsafe { &*self.context }
+    }
+    /// 设备引用。
+    pub fn device(&self) -> &ID3D11Device {
+        // SAFETY: 同上。
+        unsafe { &*self.device }
+    }
+    /// 渲染目标引用。
+    pub fn rtv(&self) -> &ID3D11RenderTargetView {
+        // SAFETY: 同上。
+        unsafe { &*self.rtv }
+    }
     /// 按 `resource_key` 查找外部纹理 SRV（ext 回放）。
     pub fn ext_srv(&self, key: &str) -> Option<&ID3D11ShaderResourceView> {
-        self.ext_pool?.srv(key)
+        // SAFETY: 同上。
+        unsafe { self.ext_pool?.as_ref()?.srv(key) }
     }
 }
 
 /// `HookContext` 实现：提供后端无关的公共访问。
-impl HookContext for HookCtx<'_> {
+impl HookContext for HookCtx {
     fn frame_index(&self) -> u64 {
         self.frame_index
     }
@@ -699,21 +721,13 @@ impl HookContext for HookCtx<'_> {
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
-        static UNIT: () = ();
-        &UNIT
+        // P0.1：让 `HookContextExt::downcast_mut::<HookCtx>()` 成功，钩子据此
+        // 拿到 context / device / rtv 录制自己的绘制命令。
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        // 返回静态可变引用不安全/不合理；提供一个线程局部占位以满足签名。
-        // 后端特定访问请直接使用 `HookCtx` 的公有字段。
-        fn placeholder() -> &'static mut () {
-            // 单次可变借用语义无法对静态满足；用 Box 泄漏的极小占位不可取。
-            // 这里用 unsafe 获取静态 mut 占位，仅用于 downcast 失败路径（不可达的正确用法）。
-            static mut P: () = ();
-            // SAFETY: 占位仅用于 trait 签名满足；调用方不应依赖其内容。
-            unsafe { &mut *std::ptr::addr_of_mut!(P) }
-        }
-        placeholder()
+        self
     }
 }
 
@@ -1230,12 +1244,12 @@ impl Renderer {
                     let payload = imported_payload
                         .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
                     let mut ctx = HookCtx {
-                        context,
-                        device,
-                        rtv,
+                        context: context as *const _,
+                        device: device as *const _,
+                        rtv: rtv as *const _,
                         size: (size.0 as f32, size.1 as f32),
                         frame_index: self.ext_frame.get(),
-                        ext_pool: Some(&*ext_pool),
+                        ext_pool: Some(&*ext_pool as *const _),
                     };
                     // 优先 ext 注册的 DrawHook（kind 选 Hook），再回退内部 RenderHook。
                     let mut handled = false;
@@ -2353,13 +2367,13 @@ struct DrawHookAdapter(Box<DrawHook>);
 unsafe impl Sync for DrawHookAdapter {}
 
 impl RenderHook for DrawHookAdapter {
-    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+    fn draw(&mut self, ctx: HookCtx, bounds: Rect, source: &RenderSource) {
         self.draw_with_key(ctx, bounds, source, None);
     }
 
     fn draw_with_key(
         &mut self,
-        mut ctx: HookCtx<'_>,
+        mut ctx: HookCtx,
         bounds: Rect,
         source: &RenderSource,
         resource_key: Option<&str>,
@@ -2430,3 +2444,7 @@ impl RenderLifecycle for Renderer {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/renderer_tests.rs"]
+mod tests;

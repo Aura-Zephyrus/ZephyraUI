@@ -54,6 +54,21 @@ use zephyra_window::{
     Backend, HostEventOutcome, HostTick, WindowHandle, WindowHost, WindowKey, WindowSpec,
 };
 
+/// 用系统默认程序打开外部 URL（超链接的真实功能）。
+///
+/// `View` 不碰系统 API，只发意图；宿主在这里兑现。失败静默 —— 打不开链接不该
+/// 让窗口崩掉，也不该污染 UI 状态。
+fn open_external_url(url: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    let _ = url;
+}
+
 /// 窗口 + GPU + 保留树的组合体。
 ///
 /// 保留树（[`Node`]）跨帧存活 —— 这正是保留式相对即时式的收益：状态与纹理得以复用，
@@ -82,6 +97,8 @@ pub struct HostWindow<V: View> {
     seen_generation: u64,
     view: V,
     theme: &'static Theme,
+    /// 应用注入的图标集（含自定义 SVG）。`None` = 用内置 `icon::builtin()`。
+    icons: Option<&'static zephyra_core::icon::IconSet>,
     /// 帧缓存 —— 保留树 + `DisplayList` + 上一帧视口，全在核心里。
     ///
     /// 理由与 `zephyra-winit` 那份**逐字相同**：这三样原来分散在本结构体的
@@ -444,6 +461,15 @@ impl<V: View> HostWindow<V> {
         self.targets.ext_handle(&shared.gpu.device)
     }
 
+    /// 注入应用自己的图标集（含自定义 SVG path data）。
+    ///
+    /// 不调用则沿用内置 `zephyra_core::icon::builtin()`。图标集必须是 `'static`
+    /// （缓存以图标数据地址为键，见 `IconSet::get`），通常由 `Box::leak` 得到。
+    pub fn with_icons(mut self, icons: &'static zephyra_core::icon::IconSet) -> Self {
+        self.icons = Some(icons);
+        self
+    }
+
     /// [`Self::new_lenient`] + **指定初始客户区尺寸**（**物理像素**）。
     ///
     /// # 为什么必须有这条
@@ -586,8 +612,11 @@ impl<V: View> HostWindow<V> {
         //
         // 共享 `Renderer` 的采样数在 `shared_stack()` 里由同一个进程级
         // `msaa_samples()` 决定，所以与这里的 `chain.samples()` 一致。
-        let targets =
+        let mut targets =
             WindowTargets::new(&gpu.device).expect("建本窗口渲染目标（几何缓冲 / 离屏 RTV 堆）");
+        // P1.1：窗口 id 在 `Backend::create` 里还会被覆盖成 handle.key() ——
+        // 这里先给个占位（构造函数没有 self，单窗口兼容路径也没有 handle）。
+        targets.window_id = WindowKey::unspecified().as_u64();
         let generation = shared_guard.generation;
         drop(shared_guard);
         eprintln!(
@@ -617,6 +646,7 @@ impl<V: View> HostWindow<V> {
             seen_generation: generation,
             view,
             theme,
+            icons: None,
             cache: FrameCache::new(),
             router: InputRouter::new(),
             pointer: None,
@@ -793,6 +823,33 @@ impl<V: View> HostWindow<V> {
         self.router.hovered()
     }
 
+    /// IME 候选窗该贴的插入点坐标（客户区物理像素）。
+    ///
+    /// 早先用最近一次**指针位置**当代理，于是输入法窗口跟着鼠标跑而不是跟着
+    /// 光标。焦点系统建成后，直接从布局树上取焦点节点的 `cursor` 子节点矩形 ——
+    /// 模板里光标盒子的 `translate-x` 正是按字符下标算的插入点。
+    fn ime_caret(&self) -> (f32, f32) {
+        let Some(node) = self.cache.node() else {
+            return self.pointer_pos;
+        };
+        let Some(focused) = self.focus.focused() else {
+            return self.pointer_pos;
+        };
+        let Some(field) = node.find(focused) else {
+            return self.pointer_pos;
+        };
+        if let Some(cursor) = field.find(&ElementKey::Name("cursor")) {
+            let r = cursor.rect();
+            // ⚠ `rect()` 是布局矩形，**不含绘制期 translate-x**。光标靠
+            //   `translate-x = 字形步进宽度` 跟着文本走，必须把它加上，
+            //   否则候选窗永远贴在输入框最左边。
+            let tx = cursor.translate_x(zephyra_core::context::Context::new(self.theme));
+            return (r.x + tx, r.y + r.height);
+        }
+        let r = field.rect();
+        (r.x, r.y + r.height)
+    }
+
     /// 按应用请求设置窗口外观（暗色模式 / 圆角 / 标题栏与边框颜色）。
     ///
     /// # 为什么要宿主转发一层，而不是让应用直接调 `zephyra-platform-win`
@@ -919,7 +976,7 @@ impl<V: View> HostWindow<V> {
             // 应用自己的图标库应当自己建一个 `IconSet` 再挂进来 —— 那是宿主的事，
             // 与纹理句柄同一层。
             let ctx = Context::with_engine(theme, &shared.engine)
-                .with_icons(zephyra_core::icon::builtin());
+                .with_icons(self.icons.unwrap_or_else(zephyra_core::icon::builtin));
             let element = self.view.view(&ctx);
             let size = self.client_size();
 
@@ -1635,8 +1692,9 @@ impl<V: View> HostWindow<V> {
         )
         .map_err(|e| format!("建根签名 / PSO / 描述符堆: {e}"))?;
         // 本窗口的渲染目标也一起重建 —— 它引用的设备马上要被替换。
-        let targets =
+        let mut targets =
             WindowTargets::new(&gpu.device).map_err(|e| format!("重建本窗口渲染目标: {e}"))?;
+        targets.window_id = self.window_key.as_u64();
         // 全部成功才替换。赋值顺序按「谁引用谁」：先放引用方（DComp），再放被引用的
         // （chain），最后是设备与渲染器 —— 与字段声明顺序**相反**，因为这里是部分
         // 重建而不是整体析构。
@@ -1688,8 +1746,9 @@ impl<V: View> HostWindow<V> {
             },
             None => (None, None),
         };
-        let targets = WindowTargets::new(&shared.gpu.device)
+        let mut targets = WindowTargets::new(&shared.gpu.device)
             .map_err(|e| format!("重建本窗口渲染目标: {e}"))?;
+        targets.window_id = self.window_key.as_u64();
         self.compositor = compositor;
         self.visual = visual;
         self.chain = chain;
@@ -1906,7 +1965,13 @@ impl<V: View> HostWindow<V> {
         // ⚠ 这一批指针事件里有没有**取消**（系统抢走了手势）。
         // 应用要靠它**不**把「按下 → 松开」当成点击 —— 用户的手指还在屏幕上。
         let cancelled = zephyra_fx::has_cancelled(&self.pending_pointer_events);
+        // P1.2：布局后的 key → 矩形快照（与 pointer_events 同一物理像素空间）。
+        let mut rects = Vec::new();
+        if let Some(node) = self.cache.node() {
+            node.collect_keyed_rects(&mut rects);
+        }
         let state = InputState {
+            rects,
             hovered: self.router.hovered().cloned(),
             // 键盘激活复用指针的 pressed 通道（指针优先）—— Space 按住时模板出
             // 按下态、抬起时归空，与应用既有的「上帧按着→这帧松了 = 点击」重建逻辑
@@ -1939,6 +2004,8 @@ impl<V: View> HostWindow<V> {
             } else {
                 None
             },
+            // 行为焦点：鼠标点击设的焦点也在这里（文本输入要送到它）。
+            active_focus: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -1956,6 +2023,9 @@ impl<V: View> HostWindow<V> {
             languages: self.system_languages.clone(),
         };
         self.view.on_input(&state);
+        if let Some(url) = self.view.take_pending_url() {
+            open_external_url(url);
+        }
     }
 
     /// 记下「输入刚刚到达」。
@@ -2413,6 +2483,24 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         self.window_key
     }
 
+    fn drain_posted(&mut self) -> bool {
+        let Some(handle) = &self.handle else {
+            return false;
+        };
+        let drained = handle.waker().drain();
+        if drained.wakes.is_empty() && drained.messages.is_empty() {
+            return false;
+        }
+        for token in drained.wakes {
+            self.view.on_wake(token);
+        }
+        for mut msg in drained.messages {
+            self.view.on_message(&mut *msg);
+        }
+        self.dirty = true;
+        true
+    }
+
     fn winit_id(&self) -> Option<WindowId> {
         Some(self.window.id())
     }
@@ -2525,12 +2613,16 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 self.activation.clear();
             }
             WEvent::Ime(ime) => {
-                // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，
-                // 于是用**最近一次指针位置**当代理（用户点进输入框就是在那）。
-                // 有了焦点系统之后这里改成向控件要 caret rect —— 那之前不要
-                // 假装知道，`Ime::Start` 的坐标本来就是「贴在哪儿」的提示。
+                // 候选窗贴在**焦点文本框的光标**下沿，不再跟鼠标跑（见 `ime_caret`）。
+                // ⚠ 光在 `Ime::Start{x,y}` 里告诉应用坐标**不够** —— winit 不知道，
+                //   OS 候选窗会默认跑到屏幕左下角。必须显式调 `set_ime_cursor_area`。
+                let caret = self.ime_caret();
+                self.window.set_ime_cursor_area(
+                    winit::dpi::PhysicalPosition::new(caret.0, caret.1),
+                    winit::dpi::PhysicalSize::new(2u32, 18u32),
+                );
                 self.translator
-                    .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
+                    .ime(&ime, caret, &mut self.pending_text_events);
                 self.dirty = true;
             }
             WEvent::MouseWheel { delta, .. } => {
@@ -2756,12 +2848,21 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
 /// [`HostWindow::new_lenient_opts`]。共享 GPU 栈由 `shared_stack()` 单例保证 ——
 /// 每个窗口都拿到同一个 `Arc<Mutex<Shared>>`。
 #[derive(Default)]
-pub struct D3d12Backend;
+pub struct D3d12Backend {
+    /// 应用注入的图标集（含自定义 SVG），传给本后端创建的每个窗口。
+    icons: Option<&'static zephyra_core::icon::IconSet>,
+}
 
 impl D3d12Backend {
     /// 建一个后端入口（共享栈在第一个窗口创建时才真正初始化）。
     pub fn new() -> Self {
-        Self
+        Self { icons: None }
+    }
+
+    /// 让本后端创建的每个窗口都使用应用注入的图标集。
+    pub fn with_icons(mut self, icons: &'static zephyra_core::icon::IconSet) -> Self {
+        self.icons = Some(icons);
+        self
     }
 }
 
@@ -2779,7 +2880,11 @@ impl Backend for D3d12Backend {
         let opts = spec.resolve(&config);
         let size = opts.size.unwrap_or(DEFAULT_WINDOW_SIZE);
         let mut host = HostWindow::new_lenient_opts(event_loop, view, size, opts);
+        if let Some(icons) = self.icons {
+            host.icons = Some(icons);
+        }
         host.window_key = handle.key();
+        host.targets.window_id = host.window_key.as_u64();
         host.handle = Some(handle);
         Ok(host)
     }

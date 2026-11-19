@@ -12,14 +12,15 @@
 
 > **如果某个改动需要修改 `zephyra/zephyra-core/` 或 `zephyra/zephyra-fx/`，说明迁移缝漏了。**
 
-当前状态下这条判据成立：核心零依赖、效果器层零系统 API。
+当前状态下这条判据成立：核心无外部依赖（唯一 workspace 依赖是 `zephyra-vector`）、效果器层零系统 API。
 
 ```bash
 $ cargo tree -p zephyra-core --depth 1
-zephyra v0.1.0
+zephyra-core v0.1.0
+└── zephyra-vector v0.1.0
 ```
 
-建议把它做成 CI 检查（`cargo tree -p zephyra-core --depth 1 | wc -l` 应为 1）。
+建议把它做成 CI 检查（`cargo tree -p zephyra-core --depth 1 | wc -l` 应为 2）。
 
 ## 已被移除的宿主：iced
 
@@ -190,7 +191,7 @@ D3D11/D3D12 的模型决定的，不是可以绕过的选择。
 
 - `zephyra-core` 全部模块（`core` / `property` / `props` / `theme` / `id` / `element` /
   `node` / `diff` / `context` / `style` / `filter` / `layout` / `paint` / `hit` /
-  `input` / `icon`）—— 零依赖，`forbid(unsafe_code)`，与宿主无关。
+  `input` / `icon`）—— 无外部依赖，`forbid(unsafe_code)`，与宿主无关；绘制代码在同层的 `zephyra-vector`。
 - `zephyra-fx` 全部模块 —— 一个系统 API 都不碰，`forbid(unsafe_code)`。
 - `zephyra::text` 的 **trait 定义**（实现会换，签名不变）。
 - `zephyra-dcomp` 与宿主的关系：它只管上屏，不碰 `DisplayList` 的内容，因此换呈现

@@ -464,6 +464,34 @@ box.page-textinput {
     cross-align: stretch;
 }
 
+/* RinUI 目录补充控件页：9 行 DemoRow 纵向排开。 */
+box.page-catalog {
+    direction: vertical;
+    spacing: 16px;
+    cross-align: stretch;
+}
+
+/* 色板 + 所选颜色预览并排。 */
+box.color-row {
+    direction: horizontal;
+    spacing: 16px;
+    cross-align: center;
+}
+
+box.color-preview {
+    width: 48px;
+    height: 48px;
+    corner-radius: 12px;
+    corner-shape: superellipse(1.5);
+}
+
+/* 第二批 10 个控件页。 */
+box.page-catalog2 {
+    direction: vertical;
+    spacing: 16px;
+    cross-align: stretch;
+}
+
 /* 按钮直接变形为菜单（同一控件，无额外弹层元素）。
  * 展开时切到绝对定位+菜单尺寸（浮动），坐标=窗口中心（菜单 220×114）。
  * 注意：从流式切到 absolute 会移除该控件的占位，可能造成行内细微位移；

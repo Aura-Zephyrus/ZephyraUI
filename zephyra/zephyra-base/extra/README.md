@@ -34,11 +34,9 @@
 //! |---|---|---|
 //! | `zephyra-camera` | 摄像头采集与像素格式转换 | `capture` feature（nokhwa） |
 //! | `zephyra-uia` | 无障碍 / UI Automation | 整段是（COM 边界） |
-//! | `zephyra-video` | 视频解码：H.264 位流 + DXVA2 硬件解码 + AVS3 / AV1 / VP8 / VP9 / HEVC | `dxva2`（D3D11）／`uavs3d` / `av1` / `vp8` / `vp9` / `hevc` feature（vendored C/C++ 解码器） |
 //!
-//! `zephyra-video` 的默认构建是**零依赖的纯逻辑** —— 连 DPB 与
-//! `DXVA_PicParams_H264` 的字节拼装都在里面，那些必须能在没有 GPU 的机器上
-//! 单测：字节布局错了这件事，要等到某台机器的驱动拒绝解码时才暴露就太晚了。
+//! 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video.git
+//! （主仓与它完全解耦，零双向依赖）。
 
-// 本目录的三个包都是「可选能力」，不是主线的必经之路。
+// 本目录的两个包都是「可选能力」，不是主线的必经之路。
 // 折射（refraction）与背景采样尚未落地 —— 它们需要碰三个后端的渲染器。

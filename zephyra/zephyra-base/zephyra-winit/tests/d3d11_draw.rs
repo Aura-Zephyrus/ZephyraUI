@@ -2821,7 +2821,7 @@ use zephyra_winit::renderer::{HookCtx, RenderHook};
 struct FillRed;
 
 impl RenderHook for FillRed {
-    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+    fn draw(&mut self, ctx: HookCtx, bounds: Rect, source: &RenderSource) {
         // 载荷通道：宿主塞的类型擦除数据必须原样到达钩子。
         assert_eq!(source.kind, "test:fill-red");
         assert_eq!(source.payload::<u32>(), Some(&7u32));
@@ -2835,12 +2835,12 @@ impl RenderHook for FillRed {
         };
         // `ClearView` 在 `ID3D11DeviceContext1` 上；运行时上下文 cast 一下。
         let dc1: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext1 = ctx
-            .context
+            .context()
             .cast()
             .expect("D3D11.1 的立即上下文应当能 cast 出 DeviceContext1");
         let color = [1.0f32, 0.0, 0.0, 1.0];
         unsafe {
-            dc1.ClearView(ctx.rtv, &color, Some(&[rect]));
+            dc1.ClearView(ctx.rtv(), &color, Some(&[rect]));
         }
     }
 }

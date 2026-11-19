@@ -339,6 +339,19 @@ impl Node {
         self.find(key).map(|n| n.rect())
     }
 
+    /// 收集本子树中所有带 key 节点的矩形（P1.2 `InputState::rect_of` 的数据源）。
+    ///
+    /// 深度优先、文档序；宿主在 `on_input` 之前对已布局的树调用一次，把快照塞进
+    /// `InputState`，应用即可按 key 查「控件在哪」，与 `pointer_events` 同一坐标系。
+    pub fn collect_keyed_rects(&self, out: &mut Vec<(ElementKey, Rect)>) {
+        if let Some(k) = self.key() {
+            out.push((k.clone(), self.rect()));
+        }
+        for child in &self.children {
+            child.collect_keyed_rects(out);
+        }
+    }
+
     /// 本元素矩形在窗口里的**中心点**（布局几何中心）。
     pub fn center(&self) -> crate::core::Point {
         let r = self.rect();

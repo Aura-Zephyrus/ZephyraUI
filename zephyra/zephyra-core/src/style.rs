@@ -399,6 +399,15 @@ impl Node {
             .unwrap_or_else(crate::paint::RenderSource::none)
     }
 
+    /// 宿主提供的动态路径（没挂时返回 `None`）。
+    ///
+    /// 与 `render_source` 同律：`Custom` 载荷对样式系统不透明，主题解析跳过。
+    /// 默认值是空串占位，`get::<DynamicPath>()` 取不到即「无」。
+    pub fn path_data(&self, ctx: Context<'_>) -> Option<crate::paint::DynamicPath> {
+        self.value(&crate::props::PATH_DATA, ctx)
+            .and_then(|v| v.get::<crate::paint::DynamicPath>())
+    }
+
     /// 图像边长（`-1` = 撑满节点矩形）。
     pub fn image_size(&self, ctx: Context<'_>) -> f32 {
         self.number(&crate::props::IMAGE_SIZE, ctx)

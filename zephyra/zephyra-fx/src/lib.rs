@@ -17,10 +17,13 @@
 //! # 层次
 //!
 //! ```text
-//!   zephyra            纯逻辑，零依赖（DisplayList / 布局 / diff / 输入）
+//!   zephyra-core       纯逻辑，无外部依赖（DisplayList / 布局 / diff / 输入）
 //!        │
 //!        ▼
-//!   zephyra-fx   ← 本 crate：把 DisplayList 变成顶点流/字形图集，与谁渲染无关
+//!   zephyra-vector  ← 绘制库：几何 / 图标 / 文本 / 顶点展开 / 光栅
+//!        ▲
+//!        │  re-export
+//!   zephyra-fx   ← 本 crate：帧循环 / 调试桥 / 宿主 API
 //!        │
 //!        ├──► base/zephyra-winit      D3D11 后端
 //!        ├──► base/zephyra-winit-d3d12  D3D12 后端
@@ -45,18 +48,20 @@
 //!
 //! **任何 D3D 类型。** 没有 `ID3D11Device`、没有 `ID3D12Device`、没有
 //! `IDXGIFactory`。凡是碰驱动的东西都该在某个后端 crate 里。
+//!
+//! 绘制代码也不在这里：`quad` / `geom_clip` / `offscreen` / `cpu_raster` /
+//! `texture` / `pixels` 与字形来源都已搬进 `zephyra-vector`，本 crate 只按
+//! 原路径再导出，宿主写法不变。
 
 #![cfg_attr(windows, allow(dead_code))]
 
 pub mod bridge;
 pub mod cpu_only;
-pub mod cpu_raster;
-pub mod geom_clip;
-pub mod offscreen;
-pub mod pixels;
-pub mod quad;
-pub mod text;
-pub mod texture;
+
+// 后端无关的绘制代码已搬进 `zephyra-vector`。这里按原路径再导出，
+// 使宿主与既有的 `crate::quad` / `crate::text` 写法继续可用。
+pub use zephyra_vector::text;
+pub use zephyra_vector::{cpu_raster, geom_clip, offscreen, pixels, quad, texture};
 
 pub use pixels::{srgb_bytes, write_bmp, PixelRead};
 pub use quad::RenderReport;
@@ -131,6 +136,17 @@ pub struct InputState {
     /// 多一圈蓝边）；只有 Tab 引入的焦点才可见。焦点的**行为**（Space / Enter /
     /// 无障碍）走宿主内部的 `FocusState::focused`，与本字段无关。
     pub focused: Option<ElementKey>,
+    /// **行为焦点**（键盘事件该送谁）：与 `focused` 不同，这里**不**经过
+    /// `is_visible()` 过滤 —— 鼠标点进文本框得到的焦点也在这里。
+    ///
+    /// # 为什么必须和 `focused` 分开
+    ///
+    /// `focused` 是「焦点环该画在谁身上」（focus-visible 语义：鼠标点击不画蓝边）。
+    /// 但**文本输入、Space/Enter 激活、无障碍**要的是「键盘事件送到谁」—— 鼠标
+    /// 点进文本框后用户立刻打字，事件必须进那个框。把两者混成一个（只用
+    /// `focused`）的症状是：点一下输入框，打字没反应，因为鼠标焦点被可见性过滤
+    /// 成了 `None`。
+    pub active_focus: Option<ElementKey>,
     /// 当前活跃指针数。
     pub pointers: usize,
     /// 本次同步收到的**文本输入**事件，按接收顺序排列。
@@ -229,6 +245,23 @@ pub struct InputState {
     /// 放在这里而不是另开一个 trait 方法：它与视口 / 缩放比同属
     /// 「宿主每帧开头把外部事实推给视图」那一批，多一条路径只会更容易漏。
     pub languages: Vec<String>,
+    /// 布局后带 key 节点的矩形快照（P1.2，物理像素，与 `pointer_events` 同一空间）。
+    ///
+    /// 宿主在 `on_input` 之前从已布局的树上采一份。`Vec` 而非 `HashMap` 是因为
+    /// 节点数只有几十个、线性查足够快，且 `Vec` 保留 `Default` / `PartialEq`，
+    /// 不会破坏应用里大量 `InputState { ..Default::default() }` 的写法。
+    pub rects: Vec<(ElementKey, zephyra_core::core::Rect)>,
+}
+
+impl InputState {
+    /// 查询带 key 节点的**布局后**矩形（P1.2）。
+    ///
+    /// 与 `pointer_events` 同一坐标系（物理像素、绝对坐标），可直接用于绝对定位、
+    /// 滚动条拇指、下拉浮层等需要「控件在哪」的场景。`None` = 该 key 此刻不在树上
+    /// 或没有布局矩形。
+    pub fn rect_of(&self, key: &ElementKey) -> Option<zephyra_core::core::Rect> {
+        self.rects.iter().find(|(k, _)| k == key).map(|(_, r)| *r)
+    }
 }
 
 /// 一次滚轮输入。
@@ -338,7 +371,31 @@ pub trait View {
     fn wants_frames(&self) -> bool {
         false
     }
+
+    /// 跨线程唤醒（P0.3）：有消息被投进本视图的队列，宿主随后会调
+    /// [`Self::on_message`]；`waker_token` 是唤醒的单调序号，可在调试时对照。
+    ///
+    /// 默认空实现 —— 不需要跨线程通知的视图无需关心。
+    fn on_wake(&mut self, _waker_token: u64) {}
+
+    /// 处理一条跨线程投递的消息（P0.3）。
+    ///
+    /// 宿主在事件循环排空队列时按**投递顺序**逐条调用，调用后紧接着的一帧会重画，
+    /// 因此状态变更当帧可见。默认空实现。
+    fn on_message(&mut self, _msg: &mut dyn std::any::Any) {}
+
+    /// 取出本帧「用外部程序打开 URL」的意图（默认无）。
+    ///
+    /// `View` 不碰系统 API —— 它在点击处理里记下 URL，宿主每帧 drain 后调用平台
+    /// 壳打开浏览器。门禁/离线路径只调 `on_input` / `click`，不会触发外部进程。
+    fn take_pending_url(&mut self) -> Option<&'static str> {
+        None
+    }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/tests/input_state_tests.rs"]
+mod input_state_tests;
 
 /// 一帧的输出：diff 统计 + 渲染统计。
 ///

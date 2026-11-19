@@ -22,7 +22,7 @@
 ## 依赖边界
 
 ```
-zephyra-core   零依赖，禁 unsafe
+zephyra-core   无外部依赖（只依赖 zephyra-vector），禁 unsafe
      ↑
 ZephyraUI     本 crate：控件样式表 + 令牌 + 结构声明 + 控件语义文案（零后端）
      ↑

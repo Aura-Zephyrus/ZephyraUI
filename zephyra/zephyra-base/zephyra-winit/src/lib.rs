@@ -95,6 +95,18 @@ pub use zephyra_fx;
 /// 另一处就静默变成另一个键，症状是「z-index 不生效」且没有任何编译或运行错误。
 pub use zephyra_fx::Z_INDEX;
 
+/// 用系统默认程序打开外部 URL（超链接的真实功能，View 只发意图）。
+fn open_external_url(url: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    let _ = url;
+}
+
 /// 窗口 + GPU + 保留树的组合体。
 ///
 /// 保留树（`Node`）跨帧存活 —— 这正是保留式相对即时式的收益：状态与纹理
@@ -615,6 +627,27 @@ impl<V: View> HostWindow<V> {
         self.router.hovered().map(|k| k.to_string())
     }
 
+    /// IME 候选窗该贴的插入点坐标（见 D3D12 宿主同名方法）。
+    fn ime_caret(&self) -> (f32, f32) {
+        let Some(node) = self.cache.node() else {
+            return self.pointer_pos;
+        };
+        let Some(focused) = self.focus.focused() else {
+            return self.pointer_pos;
+        };
+        let Some(field) = node.find(focused) else {
+            return self.pointer_pos;
+        };
+        if let Some(cursor) = field.find(&zephyra_core::id::ElementKey::Name("cursor")) {
+            let r = cursor.rect();
+            // `rect()` 不含绘制期 translate-x（光标靠它跟随文本），必须加上。
+            let tx = cursor.translate_x(zephyra_core::context::Context::new(self.theme));
+            return (r.x + tx, r.y + r.height);
+        }
+        let r = field.rect();
+        (r.x, r.y + r.height)
+    }
+
     /// 推进一帧：声明 → 核心帧缓存 → （必要时）回放。
     ///
     /// # 分工
@@ -809,7 +842,13 @@ impl<V: View> HostWindow<V> {
         // ⚠ 这一批指针事件里有没有**取消**（系统抢走了手势）。
         // 应用要靠它**不**把「按下 → 松开」当成点击 —— 用户的手指还在屏幕上。
         let cancelled = zephyra_fx::has_cancelled(&self.pending_pointer_events);
+        // P1.2：布局后的 key → 矩形快照。
+        let mut rects = Vec::new();
+        if let Some(node) = self.cache.node() {
+            node.collect_keyed_rects(&mut rects);
+        }
         self.view.on_input(&InputState {
+            rects,
             hovered: self.router.hovered().cloned(),
             // 键盘激活复用指针的 pressed 通道：指针优先，键盘闩作后备。于是
             // Space 按住时模板出按下态、抬起时归空——与指针按下完全同构，应用
@@ -842,6 +881,8 @@ impl<V: View> HostWindow<V> {
             } else {
                 None
             },
+            // 行为焦点：鼠标点击设的焦点也在这里（文本输入要送到它）。
+            active_focus: self.focus.focused().cloned(),
             pointers: self.router.pointer_count(),
             text_events: std::mem::take(&mut self.pending_text_events),
             scroll: self.pending_scroll.take(),
@@ -856,6 +897,9 @@ impl<V: View> HostWindow<V> {
             // This host has no platform integration crate to query language preferences.
             languages: Vec::new(),
         });
+        if let Some(url) = self.view.take_pending_url() {
+            open_external_url(url);
+        }
     }
 
     /// 取本帧渲染目标并回放 `DisplayList`。
@@ -1460,6 +1504,24 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         self.window_key
     }
 
+    fn drain_posted(&mut self) -> bool {
+        let Some(handle) = &self.handle else {
+            return false;
+        };
+        let drained = handle.waker().drain();
+        if drained.wakes.is_empty() && drained.messages.is_empty() {
+            return false;
+        }
+        for token in drained.wakes {
+            self.view.on_wake(token);
+        }
+        for mut msg in drained.messages {
+            self.view.on_message(&mut *msg);
+        }
+        self.dirty = true;
+        true
+    }
+
     fn winit_id(&self) -> Option<WindowId> {
         Some(self.window.id())
     }
@@ -1583,10 +1645,15 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 }
             }
             WindowEvent::Ime(ime) => {
-                // 插入点：焦点系统还没建，宿主不知道控件把光标画在哪，于是用
-                // 最近一次指针位置当代理（用户点进输入框就是在那）。
+                // 候选窗贴焦点文本框的光标下沿，不再跟鼠标跑。
+                // ⚠ 必须告诉 winit 光标区域，否则 OS 候选窗默认跑到屏幕左下角。
+                let caret = self.ime_caret();
+                self.window.set_ime_cursor_area(
+                    winit::dpi::PhysicalPosition::new(caret.0, caret.1),
+                    winit::dpi::PhysicalSize::new(2u32, 18u32),
+                );
                 self.translator
-                    .ime(&ime, self.pointer_pos, &mut self.pending_text_events);
+                    .ime(&ime, caret, &mut self.pending_text_events);
                 self.dirty = true;
             }
             WindowEvent::Focused(false) => {

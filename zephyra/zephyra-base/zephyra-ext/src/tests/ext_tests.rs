@@ -20,6 +20,7 @@ struct MockState {
     window_hooks: HashMap<(u64, String), ()>,
     unregister_count: Rc<Cell<u32>>,
     hook_unregister_count: Rc<Cell<u32>>,
+    updates: Vec<(String, Vec<u8>, u32)>,
 }
 
 struct MockExt {
@@ -65,6 +66,16 @@ impl ExtContextImpl for MockExt {
         s.textures.remove(key);
         Ok(())
     }
+    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
+        if !self.state.borrow().textures.contains_key(key) {
+            return Err(ExtError::Backend(format!("texture not registered: {key}")));
+        }
+        self.state
+            .borrow_mut()
+            .updates
+            .push((key.to_string(), pixels.to_vec(), row_pitch));
+        Ok(())
+    }
     fn register_hook(
         &mut self,
         kind: Cow<'static, str>,
@@ -107,6 +118,41 @@ impl ExtContextImpl for MockExt {
 
 fn handle(mock: MockExt) -> ExtContextHandle {
     ExtContextHandle::new(Box::new(mock))
+}
+
+/// P0.2：`update_texture` 原地更新 —— 已注册 key 成功入队、不改变注册表，
+/// 未注册 key 报错；快照的字节与行距原样送达后端。
+#[test]
+fn update_texture_enqueues_without_reregistering() {
+    let (mock, state) = MockExt::new();
+    let h = handle(mock);
+    let b = ExternalTextureBuilder::new("cam", (640, 480)).source_cpu(CpuTextureDescOwned {
+        pixels: vec![0; 640 * 480 * 4],
+        width: 640,
+        height: 480,
+        row_pitch: 640 * 4,
+        format: ExternalTextureFormat::Rgba8UnormSrgb,
+    });
+    let _tex = h.register_texture(b).unwrap();
+
+    assert_eq!(
+        h.update_texture("cam", &[1, 2, 3, 4], 2560)
+            .err()
+            .map(|e| e.to_string()),
+        None
+    );
+    let s = state.borrow();
+    assert_eq!(s.textures.len(), 1, "更新不应新建/替换纹理注册表项");
+    assert_eq!(s.updates.len(), 1);
+    assert_eq!(s.updates[0].0, "cam");
+    assert_eq!(s.updates[0].1, vec![1, 2, 3, 4]);
+    assert_eq!(s.updates[0].2, 2560);
+    drop(s);
+
+    assert!(
+        h.update_texture("missing", &[0; 4], 4).is_err(),
+        "未注册的 key 必须报错而不是静默成功"
+    );
 }
 
 #[test]

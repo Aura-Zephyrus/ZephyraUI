@@ -40,7 +40,8 @@ DXGI 提交这些必须与系统打交道，所以留在本层。
 绘制命令列表 —— 纯数据、可比较、可序列化。base 负责回放它。
 
 这意味着核心从不 import 任何宿主类型。`cargo tree -p zephyra-core --depth 1` 的输出
-应当只有 `zephyra-core` 自己一行；一旦它开始输出依赖，说明这条被破坏了。
+应当恰好两行：`zephyra-core` 与 `zephyra-vector`（后端无关的绘制库，只依赖
+`ab_glyph` / `bytemuck`）。一旦出现其它依赖，说明这条被破坏了。
 
 **2. 不得决定"画什么"。**
 
@@ -79,22 +80,13 @@ base 不依赖 `zephyra-controls`（将来若有）。它只依赖核心，或�
 | `zephyra-vulkan` | 窗口 + 裸 Vulkan（ash）后端（与两个 Windows 后端互不依赖） | Linux | 需要 |
 | `zephyra-winit-input` | winit 事件 → core `TextEvent` 的翻译，三宿主**共用一份** | 全平台 | 否 |
 | `zephyra-dcomp` | DirectComposition 呈现：device/target/visual 树 + composition swapchain | Windows | 需要 |
-| `zephyra-video` | 视频解码：H.264 位流 + DXVA2 硬件解码 + AVS3（uavs3d）/ AV1（dav1d）/ VP8·VP9（libvpx）/ HEVC（libde265） | Windows（硬件解码）/ 全平台（纯逻辑 + 软件解码） | 需要（仅 `dxva2` / `uavs3d` / `av1` / `vp8` / `vp9` / `hevc` feature） |
 
-`zephyra-dcomp` 与 `zephyra-video` 都是**可选子包**：在 workspace `members` 里但
-**不在** `default-members` 里，所以无差别的 `cargo build` / `cargo test` 既不编译设备代码、
-也不编译 unsafe 代码。
+`zephyra-dcomp` 是**可选子包**：在 workspace `members` 里但**不在** `default-members` 里，
+所以无差别的 `cargo build` / `cargo test` 既不编译设备代码、也不编译 unsafe 代码。
 
-`zephyra-video` 的默认构建（不开 feature）是**零依赖的纯逻辑** —— 解码配置、缓冲、
-帧布局、解码器选择、H.264 位流解析、DXVA2 的 DPB 与图片参数拼装、AVS3 NAL 切分，
-全部能在没有 GPU 的机器上单测。开 `dxva2` feature 才编进真正碰 D3D11 / COM 的那一半；
-开 `uavs3d` feature 才编进 `native/uavs3d/` 的 C 解码器（BSD-3 许可，逐字节副本）。
-
-AVS3 / AV1 / VP8 / VP9 / HEVC 五个后端都是全平台的软件解码（输出 I420 / NV12
-系统内存帧），与三个渲染后端都无关 —— 它们按 `VideoDecoder` 接口接进
-`zephyra-video`，不需要宿主做任何事。AV1 / VP8 / VP9 用的是 Chromium 同款库
-（dav1d / libvpx），源码与配置都是 `DEPS` pin 的同 commit 副本；HEVC 用
-libde265（LGPL-3.0+，分发需注意许可证）。
+> 视频解码已独立成仓：**https://github.com/Aura-Zephyrus/zephyra-video.git**。
+> 主仓与它完全解耦：零双向依赖，也不保留 path/git 依赖。它包含 H.264 位流、
+> DXVA2 硬件解码与 AVS3 / AV1 / VP8 / VP9 / HEVC 软件后端，门禁在其仓库内运行。
 
 ## extra —— 「不是所有项目都需要」的包
 
@@ -103,7 +95,7 @@ libde265（LGPL-3.0+，分发需注意许可证）。
 | 位置 | 判据 | 现有成员 |
 | --- | --- | --- |
 | `zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
-| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera`、`zephyra-uia`、`zephyra-video` |
+| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera`、`zephyra-uia` |
 
 「选择编译」在这里是 Cargo 层面的事实，不是源码里的 `#[cfg(feature=...)]`：
 这些包在 `members` 里但**不在** `default-members` 里，于是无差别构建**连依赖解析
@@ -116,23 +108,10 @@ libde265（LGPL-3.0+，分发需注意许可证）。
 `zephyra-uia`（无障碍 / UI Automation）也在这一层：它整段是 Windows 的 COM 边界
 （原始提供者 + 窗口过程子类），与 camera 同一理由不进 `default-members`。
 
-`zephyra-video`（视频解码）同理由：Windows 的 DXVA2 硬件解码要碰 D3D11 / COM 边界。
-它的默认构建是零依赖的纯逻辑（解码配置 / 缓冲 / 帧 / 解码器选择 / H.264 位流 /
-DPB / DXVA2 图片参数），开 `dxva2` feature 才编进设备代码。
-
 ```bash
 cargo test -p zephyra-dcomp --lib           # 纯逻辑断言，不需要窗口
 cargo test -p zephyra-dcomp --test smoke   # 需要真实窗口 + GPU
 cargo test -p zephyra-uia                  # 无障碍树 + 图案（Windows）
-cargo test -p zephyra-video                # 解码配置 / 位流 / DPB / DXVA2 参数 / AVS3 NAL 切分（零依赖）
-cargo build -p zephyra-video --features dxva2   # DXVA2 硬件解码（Windows）
-cargo test -p zephyra-video --features uavs3d   # AVS3：编 vendored C 解码器 + FFI 烟测（全平台）
-cargo test -p zephyra-video --features av1      # AV1：vendored dav1d
-cargo test -p zephyra-video --features vp9      # VP9：vendored libvpx
-cargo test -p zephyra-video --features av1,vp9  # 两者一起（默认不编任何 C 代码）
-cargo test -p zephyra-video --features vp8      # VP8（复用 libvpx）
-cargo test -p zephyra-video --features hevc     # HEVC（libde265）
-cargo test -p zephyra-video --all-features      # 全部后端一起
 ```
 
 ## 渲染策略（zephyra-winit）

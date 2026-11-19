@@ -763,8 +763,8 @@ fn only_fill_nodes_carry_local_width() {
     // 若将来重新引入带填充的控件，把这条改回「WIDTH 只能出现在 key 以
     // `fill:` 开头的节点上」并恢复计数下界。
     assert_eq!(
-        fills, 3,
-        "gallery 的 fill:* 节点数变了（当前应为 3：slider solid/glass 各一枚，text field 选区块一枚）。         若新增/移除带填充的控件，按实际数量更新本判据与上方注释"
+        fills, 4,
+        "gallery 的 fill:* 节点数变了（当前应为 4：slider solid/glass 各一枚，text field 选区块一枚，catalog 进度条一枚）。         若新增/移除带填充的控件，按实际数量更新本判据与上方注释"
     );
     assert!(
         bad.is_empty(),
@@ -2055,12 +2055,12 @@ use zephyra_gallery::app::glass::{
 /// 滤镜数进来，`pick(0, …)` 就指到把手而不是玻璃块，这条门禁原本钉的是
 /// 「参数面板真的在改玻璃块」，把手是另一条通道。
 ///
-/// # 为什么两种算法都要收
+/// # 为什么三种算法都要收
 ///
-/// 玻璃默认跑**便宜那条**（[`GlassMode::Cheap`] ⇒ [`Filter::PixelOffset`]），
-/// 物理折射那条只在 `GlassMode::Physical` 下出现。只收 `Refraction` 的话，
-/// 这条门禁在**默认档**下会因为「树上一块折射都没有」而失败 —— 而它要钉的
-/// 恰恰是「默认档也真的可调」。
+/// 玻璃默认跑**原版透镜**（[`GlassMode::Original`] ⇒ [`Filter::Lens`]），
+/// 便宜路走 `PixelOffset`、斯涅尔路走 `Refraction`。只收其中一种的话，
+/// 这条门禁在别的模式下会因为「树上一块匹配滤镜都没有」而失败 —— 而它要
+/// 钉的恰恰是「每种算法都真的可调」。
 ///
 /// # 为什么读 `iter_local` 而不是 `get`
 ///
@@ -2089,6 +2089,7 @@ fn refraction_filters(root: &Node) -> Vec<zephyra_core::filter::Filter> {
                         f,
                         zephyra_core::filter::Filter::Refraction { .. }
                             | zephyra_core::filter::Filter::PixelOffset { .. }
+                            | zephyra_core::filter::Filter::Lens { .. }
                     ) {
                         out.push(*f);
                     }
@@ -2146,7 +2147,7 @@ fn glass_params_are_not_hard_coded() {
     //
     // ⚠ **四参数的契约只在物理折射那条路上成立**：便宜路（`PixelOffset`）
     // 只有 `amount` / `bezel` 两个字段，色散与折射率在那边没有对应物。
-    // 所以这一段显式切到 `Physical`（默认是 `Cheap`）。便宜路那两个字段
+    // 所以这一段显式切到 `Physical`（默认是 `Original`）。便宜路那两个字段
     // 由 `cheap_glass_mode_moves_amount_and_bezel` 单独钉。
     let mut base = Gallery::default();
     base.route = "materials";
@@ -2256,13 +2257,10 @@ fn glass_params_are_not_hard_coded() {
 ///
 /// # 为什么单列一条
 ///
-/// [`glass_params_are_not_hard_coded`] 断的是物理折射的四参数契约，而玻璃
-/// **默认**跑便宜路 —— 那条路上树里是 `PixelOffset { amount, bezel }`。
-/// 两个字段分别由 `Thickness` / `Bezel` 两个档位驱动（`Dispersion` / `Ior`
-/// 在便宜路上没有对应物，改了也只改树上那两个字段）。
-///
-/// 这条同时钉住「默认档就是便宜路」：`GlassMode::default()` 若被改成
-/// `Physical`，下面第一句就会因为树上是 `Refraction` 而失败。
+/// [`glass_params_are_not_hard_coded`] 断的是物理折射的四参数契约，而便宜路
+/// （切到它之后）树里是 `PixelOffset { amount, bezel }`。两个字段分别由
+/// `Thickness` / `Bezel` 两个档位驱动（`Dispersion` / `Ior` 在便宜路上没有
+/// 对应物，改了也只改树上那两个字段）。
 #[test]
 fn cheap_glass_mode_moves_amount_and_bezel() {
     use zephyra_core::filter::Filter;
@@ -2270,17 +2268,13 @@ fn cheap_glass_mode_moves_amount_and_bezel() {
     fn amount_bezel(f: &Filter) -> (f32, f32) {
         match f {
             Filter::PixelOffset { amount, bezel } => (*amount, *bezel),
-            other => panic!("默认档应当是像素偏移玻璃，树上却是 {other:?}"),
+            other => panic!("便宜路应当是像素偏移玻璃，树上却是 {other:?}"),
         }
     }
 
     let mut base = Gallery::default();
     base.route = "materials";
-    assert_eq!(
-        base.glass.mode,
-        GlassMode::Cheap,
-        "玻璃的默认算法必须是便宜路（见 `GlassMode` 的文档）"
-    );
+    base.glass.mode = GlassMode::Cheap;
     let warm = filters_at(&base);
     assert!(
         warm.len() >= 3,
@@ -2292,6 +2286,7 @@ fn cheap_glass_mode_moves_amount_and_bezel() {
     for (param, changes_amount) in [(Param::Thickness, true), (Param::Bezel, false)] {
         let mut g = Gallery::default();
         g.route = "materials";
+        g.glass.mode = GlassMode::Cheap;
         assert!(g.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
         let m = amount_bezel(&filters_at(&g)[0]);
         if changes_amount {
@@ -2308,11 +2303,73 @@ fn cheap_glass_mode_moves_amount_and_bezel() {
     for param in [Param::Dispersion, Param::Ior] {
         let mut g = Gallery::default();
         g.route = "materials";
+        g.glass.mode = GlassMode::Cheap;
         g.glass.nudge(param, 1);
         assert_eq!(
             amount_bezel(&filters_at(&g)[0]),
             b,
             "`{param:?}` 在便宜路上没有对应物，却改了 `amount` / `bezel`"
+        );
+    }
+}
+
+/// 原版液态玻璃（`Filter::Lens`）的两个物理量必须随参数变，且它是默认算法。
+///
+/// 这条钉住用户反馈的修复：玻璃材质控件的默认观感必须和 AndroidLiquidGlass
+/// 的 `lens()` 一致（背景被掰弯、角部 7 通道分色），而不是没有背景折射的
+/// 像素偏移或整圈彩虹的斯涅尔均匀色散。
+#[test]
+fn original_glass_mode_moves_refraction_params() {
+    use zephyra_core::filter::Filter;
+
+    fn amount_height(f: &Filter) -> (f32, f32) {
+        match f {
+            Filter::Lens {
+                refraction_height,
+                refraction_amount,
+            } => (*refraction_amount, *refraction_height),
+            other => panic!("默认档应当是原版透镜玻璃，树上却是 {other:?}"),
+        }
+    }
+
+    let mut base = Gallery::default();
+    base.route = "materials";
+    assert_eq!(
+        base.glass.mode,
+        GlassMode::Original,
+        "玻璃的默认算法必须是原版液态玻璃（见 `GlassMode` 的文档）"
+    );
+    let warm = filters_at(&base);
+    assert!(
+        warm.len() >= 3,
+        "液态玻璃页上只有 {} 块玻璃 —— 这条门禁可能恒真",
+        warm.len()
+    );
+    let b = amount_height(&warm[0]);
+
+    for (param, changes_amount) in [(Param::Thickness, true), (Param::Bezel, false)] {
+        let mut g = Gallery::default();
+        g.route = "materials";
+        assert!(g.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
+        let m = amount_height(&filters_at(&g)[0]);
+        if changes_amount {
+            assert_ne!(b.0, m.0, "`{param:?}` 加一档后 `refraction_amount` 没变");
+            assert_eq!(b.1, m.1, "`{param:?}` 加一档后 `refraction_height` 也变了");
+        } else {
+            assert_ne!(b.1, m.1, "`{param:?}` 加一档后 `refraction_height` 没变");
+            assert_eq!(b.0, m.0, "`{param:?}` 加一档后 `refraction_amount` 也变了");
+        }
+    }
+
+    // 透镜的分色强度是 shader 里按 `(cx·cy)/(hx·hy)` 写死的，没有面板旋钮。
+    for param in [Param::Dispersion, Param::Ior] {
+        let mut g = Gallery::default();
+        g.route = "materials";
+        g.glass.nudge(param, 1);
+        assert_eq!(
+            amount_height(&filters_at(&g)[0]),
+            b,
+            "`{param:?}` 在原版透镜里没有对应物，却改了折射参数"
         );
     }
 }
@@ -2429,9 +2486,10 @@ fn glass_param_tables_line_up() {
 ///
 /// # 两种算法各测一遍
 ///
-/// 便宜路（默认）只有 Amount / Bezel 两个旋钮 —— 色散与折射率在那边**没有
-/// 对应物**，面板不画它们。物理折射那条才是四行八键。少测一边就会出现
-/// 「切到物理之后 `[+]` 是摆设」或「便宜模式下画了四个、两个点了没用」。
+/// 默认（原版透镜）与便宜路都只有 Amount / Bezel 两个旋钮 —— 色散与折射率
+/// 在那两条路上**没有对应物**，面板不画它们。物理折射那条才是四行八键。
+/// 少测一边就会出现「切到物理之后 `[+]` 是摆设」或「两旋钮模式下画了四个、
+/// 两个点了没用」。
 ///
 /// # 恒真防御
 ///

@@ -54,6 +54,11 @@ box.selector-bar {
     cross-align: center;
 }
 
+/* 已点过一次：轻微降透明度，让「点了已选中项」在树里也有状态变化。 */
+box.selector-bar.tapped {
+    opacity: 0.98;
+}
+
 control.selector-item {
     height: 34px;
     padding: 12px;

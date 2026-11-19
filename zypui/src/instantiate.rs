@@ -485,6 +485,11 @@ pub(crate) fn build_node(
                             ));
                         }
                     },
+                    // 动态路径：表达式语言没有路径字面量，唯 `Val::Raw` 一路。
+                    "path" => match v {
+                        Val::Raw(pv) => el_el.with(&props::PATH_DATA, pv),
+                        _ => el_el,
+                    },
                     // 编译期白名单拦过；到这里说明 IR 被绕过 zypuic 直构。
                     other => {
                         return crate::err(format!("未知属性名 `{other}`（应被 zypuic 拦下）"))

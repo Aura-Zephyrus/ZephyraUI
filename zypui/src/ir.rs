@@ -169,6 +169,8 @@ pub struct UseNode {
 ///   [`crate::Val::Raw`] 一路 —— 表达式语言没有它的字面量） |
 /// | `blend` | [`zephyra_core::props::BLEND_MODE`] | 混合模式（同上，结构值） |
 /// | `render-source` | [`zephyra_core::props::RENDER_SOURCE`] | 宿主注册的只读 `kind` 名称 |
+/// | `path` | [`zephyra_core::props::PATH_DATA`] | 结构值（[`zephyra_core::paint::DynamicPath`]）——
+///   每帧生成的路径顶点；表达式语言没有它的字面量，唯 [`crate::Val::Raw`] 一路 |
 /// | `url` | `Host::prop_key` 解析的键 | 字符串（hyperlink 的去向：数据）。
 /// | `translate-x` / `translate-y` | [`zephyra_core::props::TRANSLATE_X`] /
 ///   [`zephyra_core::props::TRANSLATE_Y`] | 数值 —— 绘制时偏移，不改布局盒与命中测试。
@@ -200,6 +202,7 @@ pub const BARE_ATTRS: &[&str] = &[
     "blend",
     "decoration",
     "render-source",
+    "path",
     "translate-x",
     "translate-y",
     "scale-x",

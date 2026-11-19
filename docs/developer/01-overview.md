@@ -40,7 +40,7 @@
 
 ```text
 zephyra/
-  zephyra-core/      通用层：零依赖，#![forbid(unsafe_code)]
+  zephyra-core/      通用层：无外部依赖，#![forbid(unsafe_code)]
     property.rs      属性系统：定义、存储、继承、变更优先级
     props.rs         标准属性键（三方共用：布局/绘制/控件层）
     theme.rs         设计令牌 + Light/Dark
@@ -49,16 +49,18 @@ zephyra/
     diff.rs          Element→Node 对账 + DiffStats
     context.rs       只读上下文（主题 + 文本引擎）
     layout.rs        Measure / Arrange 协议
-    paint.rs         DisplayList —— 核心与后端的唯一契约
-    filter.rs        效果描述：Filter / FilterChain / BlendMode
-    geom/            路径几何：展平 / 笔画展开 / 多孔耳切三角化
+    paint.rs         paint::render 驱动（Node 树 → DisplayList）；数据类型来自 vector
     hit.rs           命中测试
     id.rs            NodeTag / ElementKey —— diff 的身份判定词汇
     frame.rs         帧缓存：跨帧存树与列表，回答「这一帧画什么」
     input/           指针事件词汇表、手势识别、视口变换、输入路由
-    icon/            SVG path 解析 + 图标注册表
-    text/            文本测量与排版抽象（trait）+ 字形图集
-  zephyra-fx/        效果器层：顶点展开 / 字形图集打包 / CPU 光栅 / 离屏规划
+  zephyra-vector/    矢量绘制库：core 与 fx 都依赖它；只依赖 ab_glyph + bytemuck
+    core.rs/filter.rs/decoration.rs/paint.rs  绘制契约与几何基元
+    geom/            路径几何：展平 / 描边 / 多孔耳切三角化
+    icon/            SVG path 解析 + 图标注册表 + 内嵌字形
+    text/            文本排版 + 字形图集 + ab_glyph 字体来源
+    render/          顶点展开 / CPU 光栅 / 离屏规划 / 像素读写
+  zephyra-fx/        效果器层：帧循环 / 调试桥 / 对 vector 渲染 API 的再导出
                      （零系统 API，与 base 并列而非其子目录）
   zephyra-base/      系统适配层：凡是要问操作系统才能回答的事
     zephyra-winit/     winit + D3D11 宿主
@@ -78,8 +80,9 @@ ZephyraUI/           控件层 + RinUI 风格 gallery
 
 ### 三层的关系
 
-- **core**：零依赖、`forbid(unsafe_code)`。不认识操作系统。
-- **fx**：效果器。零系统 API，但会算——顶点展开、图集打包、CPU 光栅。
+- **core**：无外部依赖（唯一 workspace 依赖是 `zephyra-vector`）、`forbid(unsafe_code)`。不认识操作系统。
+- **vector**：后端无关的绘制库。几何 / 图标 / 文本 / 顶点展开 / 光栅都在这里。
+- **fx**：效果器。零系统 API；帧循环与调试桥在这里，绘制能力从 vector 再导出。
 - **base**：凡是要问操作系统才能回答的事才在这里。它不认识控件。
 
 ## 下一步

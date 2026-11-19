@@ -2,17 +2,20 @@
 resolver = "2"
 # `zephyra/` 分三层，依赖方向单向（上层不知道下层存在）：
 #
-#   zephyra-core   通用层（零依赖）：画什么 —— property/tree/layout/paint/input/icon
+#   zephyra-core   通用层（无外部依赖）：画什么 —— property/tree/layout/diff/input/frame
 #      ↓ DisplayList（纯数据、可序列化、可断言）
-#   zephyra-fx     效果器层：怎么把描述变成像素 —— 顶点展开/字形图集/光栅/资源复用
+#   zephyra-vector 矢量绘制库：路径几何 / 图标 / 文本排版 / 字形图集 / 顶点展开 / 光栅
+#      ↑ core 与 fx 都依赖它；它只依赖 ab_glyph + bytemuck，不认识任何 workspace crate
+#   zephyra-fx     效果器层：帧循环 / 调试桥 / 对 vector 渲染 API 的再导出
 #      ↓ 顶点流 + 中立的资源需求
 #   zephyra-base/  系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
 #
-# 效果器层与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
-# 并列处相同：效果**描述**是纯数据、零系统依赖，而效果**执行**才需要 GPU。
-# 前者能进 core 与效果器层，后者必须留在 base。
+# 绘制库与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
+# 并列处相同：绘制**描述与展开**是纯数据、零系统依赖，而真正的**执行**才需要 GPU。
 members = [
     "zephyra/zephyra-core",
+    # 后端无关的矢量绘制库：core 与 fx 都依赖它；它自己不依赖任何 workspace crate。
+    "zephyra/zephyra-vector",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-style",
     "zstylec",
@@ -33,11 +36,8 @@ members = [
     # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
     "zephyra/zephyra-base/zephyra-winit-input",
     "zephyra/zephyra-base/extra/zephyra-camera",
-    # 视频解码（Chromium `media/` 那一套的形状）。与 camera 同一层：Windows 的
-    # DXVA2 硬件解码要碰 D3D11 / COM 边界 ⇒ 碰平台、允许 unsafe。
-    # 不进 default-members（默认构建不该编设备代码）。默认 feature 为空时
-    # 整个 crate 是零依赖的纯逻辑（配置 / 缓冲 / 帧 / 选择器 / H.264 位流）。
-    "zephyra/zephyra-base/extra/zephyra-video",
+    # 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video
+    # 主仓与它完全解耦（零双向依赖，也不保留 path/git 依赖）。
     # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
     # 与 camera 同一层：Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
     # 不进 default-members（默认构建不该编 COM 那一坨）。
@@ -86,8 +86,8 @@ members = [
     # 不进 default-members，避免默认构建拉入 wgpu 依赖树；`cargo check -p zephyra-ext-wgpu` 按需使用。
     "zephyra/zephyra-base/zephyra-ext-wgpu",
 ]
-# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera` / `zephyra-video` /
-# `zephyra-uia`）与 `zephyra-dcomp` 进 members 但**不进** default-members：
+# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera` / `zephyra-uia`）
+# 与 `zephyra-dcomp` 进 members 但**不进** default-members：
 # 它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
 # 但不会被无差别的 `cargo build` / `cargo test` 编译。这就是"选择编译"落在 Cargo
 # 层面的形式——比在源码里 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
@@ -100,6 +100,7 @@ members = [
 # 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
 default-members = [
     "zephyra/zephyra-core",
+    "zephyra/zephyra-vector",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-base/zephyra-winit",
 ]

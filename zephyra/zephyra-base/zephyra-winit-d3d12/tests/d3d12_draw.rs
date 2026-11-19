@@ -1787,7 +1787,7 @@ use zephyra_winit_d3d12::renderer::{HookCtx, RenderHook};
 struct FillRed;
 
 impl RenderHook for FillRed {
-    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource) {
+    fn draw(&mut self, mut ctx: HookCtx, bounds: Rect, source: &RenderSource) {
         // 载荷通道：宿主塞的类型擦除数据必须原样到达钩子。
         assert_eq!(source.kind, "test:fill-red");
         assert_eq!(source.payload::<u32>(), Some(&7u32));
@@ -1800,9 +1800,10 @@ impl RenderHook for FillRed {
         };
         // 钩子拿到的是**记录中**的命令列表 —— 画什么都记进同一帧，随 `submit`
         // 一起交给 GPU。这正是 D3D12 侧「宿主任意代码接入渲染管线」的形态。
+        let rtv = ctx.rtv; // Copy 句柄，先取出避免与 `list()` 的 &mut 借用冲突。
         unsafe {
-            ctx.list
-                .ClearRenderTargetView(ctx.rtv, &[1.0f32, 0.0, 0.0, 1.0], Some(&[rect]));
+            ctx.list()
+                .ClearRenderTargetView(rtv, &[1.0f32, 0.0, 0.0, 1.0], Some(&[rect]));
         }
     }
 }

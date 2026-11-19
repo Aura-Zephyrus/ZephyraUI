@@ -13,8 +13,10 @@ box.progress-ring {
 box.ring-track {
     width: 60px;
     height: 60px;
-    corner-radius: 158.4px;
-    corner-shape: superellipse(1.5);
+    /* 纯圆：半径 = 半边长 + corner-shape:round（= superellipse(1)）。
+       早先 superellipse(1.5) 配大半径画出来是圆角方块，不是圆。 */
+    corner-radius: 30px;
+    corner-shape: round;
     background: transparent;
     border-width: 6px;
     border-color: @control_strong;
@@ -110,6 +112,11 @@ control.bar-close {
     background: transparent;
 }
 
+/* 关闭后的 InfoBar 关闭按钮：仍占位但不可见（collapsed 是结构开关）。 */
+control.bar-close.closed {
+    opacity: 0;
+}
+
 control.bar-close.hovered {
     background: @control_secondary;
 }
@@ -189,12 +196,18 @@ text.tip-text {
     text-color: @content;
 }
 
-/* ---- BusyIndicator ---- */
+/* ---- BusyIndicator（RinUI：≡ ProgressRing 不确定态） ---- */
 
 box.busy {
     direction: horizontal;
     cross-align: center;
-    spacing: 10px;
+}
+
+/* 一枚旋转的圆端弧线：几何在 busy-arc-N.svg 里（半径 24/18，viewBox 48）。 */
+box.busy-ring {
+    width: 56px;
+    height: 56px;
+    icon-color: @accent_fill;
 }
 
 box.busy-dot {
@@ -236,5 +249,26 @@ box.pip {
 
 box.pip.selected {
     width: 18px;
+    background: @accent_fill;
+}
+
+control.pip {
+    width: 7px;
+    height: 7px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @control_strong;
+}
+
+control.pip.selected {
+    width: 18px;
+    background: @accent_fill;
+}
+
+control.pip.hovered {
+    background: @content_secondary;
+}
+
+control.pip.pressed {
     background: @accent_fill;
 }

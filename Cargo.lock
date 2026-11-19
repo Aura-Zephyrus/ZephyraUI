@@ -3015,6 +3015,9 @@ dependencies = [
 [[package]]
 name = "zephyra-core"
 version = "0.1.0"
+dependencies = [
+ "zephyra-vector",
+]
 
 [[package]]
 name = "zephyra-dcomp"
@@ -3046,9 +3049,8 @@ dependencies = [
 name = "zephyra-fx"
 version = "0.1.0"
 dependencies = [
- "ab_glyph",
- "bytemuck",
  "zephyra-core",
+ "zephyra-vector",
 ]
 
 [[package]]
@@ -3122,11 +3124,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "zephyra-video"
+name = "zephyra-vector"
 version = "0.1.0"
 dependencies = [
- "cc",
- "windows 0.62.2",
+ "ab_glyph",
+ "bytemuck",
 ]
 
 [[package]]

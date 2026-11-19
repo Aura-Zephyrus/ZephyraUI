@@ -52,6 +52,13 @@ pub trait WindowHost {
     /// 本窗口的稳定标识。
     fn key(&self) -> WindowKey;
 
+    /// 本窗口 id 的 `u64` 表示（P1.1：多窗口 ext hook 精确匹配用）。
+    ///
+    /// 默认由 [`Self::key`] 派生；真实宿主无需单独存储。
+    fn window_id(&self) -> u64 {
+        self.key().as_u64()
+    }
+
     /// winit 的窗口 id（事件分发用）。
     ///
     /// `Option` 只为测试替身：真实宿主恒返回 `Some`。
@@ -59,6 +66,14 @@ pub trait WindowHost {
 
     /// 处理一个窗口事件。
     fn handle_event(&mut self, event: WindowEvent) -> HostEventOutcome;
+
+    /// 排空跨线程投递（P0.3），把消息交给 `View`；返回是否有状态变化需要重画。
+    ///
+    /// 默认空实现：测试替身与无桥后端无需处理。真实宿主持有 `WindowHandle`，
+    /// 从其 `AppWaker` 取走消息并按序调用 `View::on_wake` / `View::on_message`。
+    fn drain_posted(&mut self) -> bool {
+        false
+    }
 
     /// 跑一次"该画就画"。
     fn tick(&mut self) -> HostTick;

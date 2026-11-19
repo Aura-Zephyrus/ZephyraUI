@@ -213,6 +213,33 @@ impl ExtContextImpl for D3D11ExtContext {
         Ok(())
     }
 
+    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
+        let pool = self.pool.borrow();
+        let res = pool
+            .textures
+            .get(key)
+            .ok_or_else(|| ExtError::Backend(format!("texture not registered: {key}")))?;
+        // 尺寸沿用注册时创建的那张纹理（Query desc，不重新分配）。
+        let mut desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC::default();
+        unsafe { res.texture.GetDesc(&mut desc) };
+        let tight = (desc.Width as usize) * (desc.Height as usize) * 4;
+        if pixels.len() < tight {
+            return Err(ExtError::Backend(format!(
+                "update pixels too small: {} < {tight}",
+                pixels.len()
+            )));
+        }
+        crate::texture::write_rows_with_pitch(
+            &self.importer.context,
+            &res.texture,
+            pixels,
+            desc.Width,
+            desc.Height,
+            row_pitch,
+        );
+        Ok(())
+    }
+
     fn register_hook(
         &mut self,
         kind: Cow<'static, str>,

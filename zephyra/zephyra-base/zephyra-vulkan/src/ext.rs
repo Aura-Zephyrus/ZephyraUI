@@ -1,7 +1,7 @@
 //! Vulkan 扩展桥接（ash）：`ExtContextImpl` + 纹理导入最小实现。
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use zephyra_ext::prelude::*;
@@ -20,6 +20,8 @@ pub struct ExtResource {
     pub height: u32,
     /// CPU 上传待处理数据（renderer 集成 image view/descriptor 后消费）。
     pub pending_cpu: Option<zephyra_ext::CpuTextureDescOwned>,
+    /// `update_texture` 排入的帧队列（最多 3 帧）；渲染器就地更新同一张图像。
+    pub pending_updates: VecDeque<zephyra_ext::CpuTextureDescOwned>,
 }
 
 #[derive(Default)]
@@ -86,6 +88,7 @@ impl ExtContextImpl for VulkanExtContext {
                     width,
                     height,
                     pending_cpu: Some(cpu.clone()),
+                    pending_updates: VecDeque::new(),
                 },
             ));
         }
@@ -107,6 +110,7 @@ impl ExtContextImpl for VulkanExtContext {
                             width,
                             height,
                             pending_cpu: None,
+                            pending_updates: VecDeque::new(),
                         },
                     ));
                 }
@@ -133,6 +137,33 @@ impl ExtContextImpl for VulkanExtContext {
 
     fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError> {
         self.pool.borrow_mut().remove(key);
+        Ok(())
+    }
+
+    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
+        let mut pool = self.pool.borrow_mut();
+        let res = pool
+            .textures
+            .get_mut(key)
+            .ok_or_else(|| ExtError::Backend(format!("texture not registered: {key}")))?;
+        let needed = (res.width as usize) * (res.height as usize) * 4;
+        if pixels.len() < needed {
+            return Err(ExtError::Backend(format!(
+                "update pixels too small: {} < {needed}",
+                pixels.len()
+            )));
+        }
+        res.pending_updates
+            .push_back(zephyra_ext::CpuTextureDescOwned {
+                pixels: pixels.to_vec(),
+                width: res.width,
+                height: res.height,
+                row_pitch,
+                format: zephyra_ext::prelude::ExternalTextureFormat::Rgba8UnormSrgb,
+            });
+        while res.pending_updates.len() > 3 {
+            res.pending_updates.pop_front();
+        }
         Ok(())
     }
 

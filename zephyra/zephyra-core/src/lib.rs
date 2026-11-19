@@ -89,7 +89,8 @@ pub mod diff;
 pub mod element;
 pub mod filter;
 pub mod frame;
-pub mod geom;
+// 矢量几何已搬进 zephyra-vector；按原路径再导出，调用方零改动。
+pub use zephyra_vector::geom;
 pub mod hit;
 pub mod i18n;
 pub mod icon;
@@ -113,12 +114,6 @@ pub mod visual;
 #[cfg(test)]
 #[path = "../tests/unit/frame_tests.rs"]
 mod frame_tests;
-#[cfg(test)]
-#[path = "../tests/unit/geom_tests.rs"]
-mod geom_tests;
-#[cfg(test)]
-#[path = "../tests/unit/icon_tests.rs"]
-mod icon_tests;
 #[cfg(test)]
 #[path = "../tests/unit/layout_classification_tests.rs"]
 mod layout_classification_tests;

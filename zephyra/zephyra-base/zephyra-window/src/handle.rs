@@ -11,10 +11,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use winit::event_loop::EventLoopProxy;
 
 use zephyra_core::theme::ThemeVariant;
 
 use crate::spec::WindowKey;
+use crate::waker::AppWaker;
 
 /// 投给 [`crate::WindowSet`] 的一条命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,11 +48,25 @@ pub struct WindowHandle {
     key: WindowKey,
     queue: Queue,
     alive: Rc<Cell<bool>>,
+    /// 跨线程唤醒器（P0.3）：与 `WindowSet` 共享存活标志，关窗时一并失效。
+    waker: AppWaker,
 }
 
 impl WindowHandle {
-    pub(crate) fn new(key: WindowKey, queue: Queue, alive: Rc<Cell<bool>>) -> Self {
-        Self { key, queue, alive }
+    pub(crate) fn new(
+        key: WindowKey,
+        queue: Queue,
+        alive: Rc<Cell<bool>>,
+        proxy: Option<EventLoopProxy<()>>,
+        waker_alive: Arc<AtomicBool>,
+    ) -> Self {
+        let waker = AppWaker::new(proxy, waker_alive);
+        Self {
+            key,
+            queue,
+            alive,
+            waker,
+        }
     }
 
     /// 这个句柄对应的窗口标识。
@@ -58,6 +77,14 @@ impl WindowHandle {
     /// 窗口是否还活着。
     pub fn is_alive(&self) -> bool {
         self.alive.get()
+    }
+
+    /// 可跨线程 clone 的唤醒器（P0.3）。
+    ///
+    /// 采集线程 / 文件对话框回调可以拿它 `post(msg)`，宿主在下一帧把消息交给
+    /// `View::on_message`。窗口关闭后 `wake` / `post` 静默丢弃。
+    pub fn waker(&self) -> AppWaker {
+        self.waker.clone()
     }
 
     /// 请求关闭窗口。

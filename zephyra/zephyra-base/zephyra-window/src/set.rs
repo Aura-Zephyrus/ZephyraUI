@@ -38,6 +38,8 @@ struct Entry {
     owner: Option<WindowKey>,
     host: Box<dyn WindowHost>,
     alive: Rc<Cell<bool>>,
+    /// 与 `WindowHandle` 的 `AppWaker` 共享的存活标志（P0.3 关窗时一并失效）。
+    waker_alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// 每线程一个的窗口协调者。
@@ -63,6 +65,8 @@ pub struct WindowSet<B: Backend> {
     on_start: Option<StartHandler<B>>,
     on_tick: Option<TickHandler<B>>,
     on_window_closed: Option<CloseHandler<B>>,
+    /// 事件循环代理（P0.3）：只在 `run()` 里拿得到，`WindowSet::new` 的测试路径为 None。
+    waker_proxy: Option<winit::event_loop::EventLoopProxy<()>>,
 }
 
 /// 首次 `resumed` 的处理器。抽成别名只为了让字段类型可读（clippy 的
@@ -91,6 +95,7 @@ impl<B: Backend> WindowSet<B> {
             on_start: None,
             on_tick: None,
             on_window_closed: None,
+            waker_proxy: None,
         }
     }
 
@@ -111,6 +116,7 @@ impl<B: Backend> WindowSet<B> {
     {
         let event_loop = EventLoop::new()?;
         let mut set = Self::new(backend, shutdown);
+        set.waker_proxy = Some(event_loop.create_proxy());
         set.on_start = Some(Box::new(on_start));
         event_loop.run_app(&mut set)
     }
@@ -158,7 +164,14 @@ impl<B: Backend> WindowSet<B> {
     {
         let key = self.allocate_key();
         let alive = Rc::new(Cell::new(true));
-        let handle = WindowHandle::new(key, self.queue.clone(), alive.clone());
+        let waker_alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let handle = WindowHandle::new(
+            key,
+            self.queue.clone(),
+            alive.clone(),
+            self.waker_proxy.clone(),
+            waker_alive.clone(),
+        );
         let view = make_view(handle.clone());
         let host = self
             .backend
@@ -171,6 +184,7 @@ impl<B: Backend> WindowSet<B> {
             owner,
             host: Box::new(host),
             alive,
+            waker_alive,
         });
         // ⚠ 必须在 `Box` 完成**之后**调 `start()`：live-resize / UIA 子类化
         // 持有指向宿主的裸指针，地址必须先稳定。
@@ -256,6 +270,9 @@ impl<B: Backend> WindowSet<B> {
             let mut entry = self.windows.remove(position);
             entry.host.teardown();
             entry.alive.set(false);
+            entry
+                .waker_alive
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             // 宿主（含 winit Window）在这里析构：交换链先死、窗口最后死，
             // 顺序由各后端自己的字段声明保证。
             drop(entry);
@@ -289,7 +306,14 @@ impl<B: Backend> WindowSet<B> {
         owner: Option<WindowKey>,
     ) -> WindowHandle {
         let alive = Rc::new(Cell::new(true));
-        let handle = WindowHandle::new(key, self.queue.clone(), alive.clone());
+        let waker_alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let handle = WindowHandle::new(
+            key,
+            self.queue.clone(),
+            alive.clone(),
+            self.waker_proxy.clone(),
+            waker_alive.clone(),
+        );
         let winit_id = host.winit_id();
         self.windows.push(Entry {
             key,
@@ -297,6 +321,7 @@ impl<B: Backend> WindowSet<B> {
             owner,
             host,
             alive,
+            waker_alive,
         });
         handle
     }
@@ -410,6 +435,13 @@ impl<B: Backend> ApplicationHandler for WindowSet<B> {
             self.close_all();
             event_loop.exit();
             return;
+        }
+
+        // P0.3：先排空跨线程投递（各宿主据此调 View::on_wake / on_message 并
+        // 标脏），再聚合 tick —— 消息当帧可见，不会被 `aggregate_tick` 的
+        // 「静止 → Wait」判断漏掉。
+        for entry in &mut self.windows {
+            entry.host.drain_posted();
         }
 
         let aggregate = self.aggregate_tick();

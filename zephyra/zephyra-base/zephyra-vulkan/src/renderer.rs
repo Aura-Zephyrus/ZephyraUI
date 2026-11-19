@@ -398,6 +398,8 @@ pub struct RenderCtx<'a> {
 /// 只能靠肉眼发现的问题。设备（instance / device / queue）才是真正共享的那层。
 pub struct Renderer {
     device: ash::Device,
+    /// 本窗口 id（P1.1：窗口作用域的 ext hook 按 `(id, kind)` 精确匹配）。
+    window_id: u64,
     /// 本窗口交换链的颜色格式。管线把它烤进 `VkPipeline`，所以从 [`Device`]
     /// 移到这里（见 `Surface::format` 的文档）。
     format: vk::Format,
@@ -512,10 +514,10 @@ impl std::fmt::Debug for Renderer {
 /// Vulkan 后端的外部渲染源钩子。
 pub trait RenderHook: Send + Sync {
     /// 把 `source` 的内容绘制到 `bounds`（屏幕像素坐标）覆盖的区域。
-    fn draw(&mut self, ctx: HookCtx<'_>, bounds: Rect, source: &RenderSource);
+    fn draw(&mut self, ctx: HookCtx, bounds: Rect, source: &RenderSource);
     fn draw_with_key(
         &mut self,
-        ctx: HookCtx<'_>,
+        ctx: HookCtx,
         bounds: Rect,
         source: &RenderSource,
         _resource_key: Option<&str>,
@@ -525,18 +527,38 @@ pub trait RenderHook: Send + Sync {
 }
 
 /// 传给 [`RenderHook`] 的 Vulkan 录制上下文。
-pub struct HookCtx<'a> {
+///
+/// # 为什么字段是裸指针而不是引用
+///
+/// `HookContext::as_any_mut` 必须返回 `&mut dyn Any`，而 `dyn Any: 'static` ——
+/// 带生命周期的 `HookCtx<'a>` 无法向下转型。裸指针（`'static`）配合安全访问器
+/// 让钩子能 `downcast_mut::<HookCtx>()`，返回引用的生命周期仍被借用检查器钉在
+/// 本次调用内。`cmd` 是 `Copy` 句柄，不借用任何东西，保持公开。
+pub struct HookCtx {
     /// 当前帧的活命令缓冲，调用点处于主 render pass 内。
     pub cmd: vk::CommandBuffer,
-    /// 与该命令缓冲相同设备的 Vulkan 函数表。
-    pub device: &'a ash::Device,
+    /// 与该命令缓冲相同设备的 Vulkan 函数表（见 [`HookCtx::device`]）。
+    pub device: *const ash::Device,
     /// 当前 render target 的尺寸（宽，高）。
     pub size: (f32, f32),
     pub frame_index: u64,
-    pub ext_pool: Option<&'a crate::ext::ExtPool>,
+    pub ext_pool: Option<*const crate::ext::ExtPool>,
 }
 
-impl HookContext for HookCtx<'_> {
+impl HookCtx {
+    /// 函数表引用。
+    pub fn device(&self) -> &ash::Device {
+        // SAFETY: 指针由 renderer 构造时取自有效引用，只在钩子的借用期内使用。
+        unsafe { &*self.device }
+    }
+    /// 外部纹理池引用（仅在渲染回放期间有效）。
+    pub fn ext_pool(&self) -> Option<&crate::ext::ExtPool> {
+        // SAFETY: 同上。
+        unsafe { self.ext_pool.map(|p| &*p) }
+    }
+}
+
+impl HookContext for HookCtx {
     fn frame_index(&self) -> u64 {
         self.frame_index
     }
@@ -547,15 +569,11 @@ impl HookContext for HookCtx<'_> {
         None
     }
     fn as_any(&self) -> &dyn std::any::Any {
-        static UNIT: () = ();
-        &UNIT
+        // P0.1：让 `HookContextExt::downcast_mut::<HookCtx>()` 成功。
+        self
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        fn placeholder() -> &'static mut () {
-            static mut P: () = ();
-            unsafe { &mut *std::ptr::addr_of_mut!(P) }
-        }
-        placeholder()
+        self
     }
 }
 
@@ -838,6 +856,7 @@ impl Renderer {
 
         Ok(Self {
             device: device.clone(),
+            window_id: 0,
             format,
             desc_layout,
             desc_layout_dst,
@@ -926,6 +945,11 @@ impl Renderer {
         )
     }
 
+    /// 设置本窗口 id（P1.1，由 `Backend::create` 在拿到 `WindowHandle` 后调用）。
+    pub fn set_window_id(&mut self, id: u64) {
+        self.window_id = id;
+    }
+
     /// 图像纹理表（只读）。
     pub fn textures(&self) -> &TextureTable {
         &self.textures
@@ -980,6 +1004,37 @@ impl Renderer {
             memory,
         });
         Ok(())
+    }
+
+    /// 原地更新已注册纹理的像素（P0.2）：复用同一张 `VkImage` / SRV，
+    /// **不新建资源、不重分配纹理表槽位**。
+    ///
+    /// 与 [`Self::upload_texture`] 的区别仅在于跳过 `create_image_texture` 与销毁
+    /// 旧句柄 —— 那正是「每帧重注册 → 分配次数随帧数增长」的根因。
+    pub fn update_texture_in_place(
+        &mut self,
+        dev: &Device,
+        name: &str,
+        pixels: &[u8],
+        (width, height): (u32, u32),
+    ) -> Result<(), SurfaceError> {
+        let image = self
+            .textures
+            .index
+            .get(name)
+            .and_then(|s| self.textures.slots.get(*s as usize))
+            .and_then(|s| s.as_ref())
+            .map(|s| s.image)
+            .ok_or_else(|| {
+                SurfaceError::new("update_texture_in_place: not registered", "no image")
+            })?;
+        upload_image_from_layout(
+            dev,
+            image,
+            pixels,
+            (width, height),
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        )
     }
 
     /// 离屏 RT 对的帧缓冲 `(fb_a, fb_b)`；单采样时 None。
@@ -1254,8 +1309,9 @@ impl Renderer {
     /// 屏幕尺寸缩放，σ 直接缩水一个数量级。
     /// 消费 ext pool 中的 CPU 挂起纹理并同步卸载（132：使 `resource_key` 走通用采样路径）。
     fn sync_ext_cpu_textures(&mut self, dev: &Device) -> Result<(), SurfaceError> {
+        // bool = 是否为 `update_texture` 的原地更新（首次注册为 false）。
         let (pending, live_keys): (
-            Vec<(String, zephyra_ext::CpuTextureDescOwned)>,
+            Vec<(String, zephyra_ext::CpuTextureDescOwned, bool)>,
             HashSet<String>,
         ) = {
             let mut pool = self.ext_pool.borrow_mut();
@@ -1263,7 +1319,9 @@ impl Renderer {
             let mut out = Vec::new();
             for (k, res) in pool.textures.iter_mut() {
                 if let Some(cpu) = res.pending_cpu.take() {
-                    out.push((k.clone(), cpu));
+                    out.push((k.clone(), cpu, false));
+                } else if let Some(cpu) = res.pending_updates.drain(..).next_back() {
+                    out.push((k.clone(), cpu, true));
                 }
             }
             (out, live)
@@ -1284,7 +1342,7 @@ impl Renderer {
             }
             self.ext_texture_keys.remove(&k);
         }
-        for (key, cpu) in pending {
+        for (key, cpu, is_update) in pending {
             let pixels = if cpu.row_pitch == cpu.width.saturating_mul(4) {
                 cpu.pixels
             } else {
@@ -1301,7 +1359,12 @@ impl Renderer {
                 }
                 out
             };
-            self.upload_texture(dev, &key, &pixels, (cpu.width, cpu.height))?;
+            if is_update {
+                // P0.2：原地更新 —— 复用同一张 VkImage，不新建资源。
+                self.update_texture_in_place(dev, &key, &pixels, (cpu.width, cpu.height))?;
+            } else {
+                self.upload_texture(dev, &key, &pixels, (cpu.width, cpu.height))?;
+            }
             self.ext_texture_keys.insert(key);
         }
         Ok(())
@@ -1569,10 +1632,10 @@ impl Renderer {
                             .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
                         let mut ctx = HookCtx {
                             cmd,
-                            device: &self.device,
+                            device: &self.device as *const _,
                             size: (self.size.0 as f32, self.size.1 as f32),
                             frame_index: self.ext_frame.get(),
-                            ext_pool: Some(&*ext_pool),
+                            ext_pool: Some(&*ext_pool as *const _),
                         };
                         let mut handled = false;
                         {
@@ -1594,13 +1657,13 @@ impl Renderer {
                                         resource_key
                                     ));
                                 }
-                            } else if let Some((w, k)) = ext_hooks
+                            } else if let Some(h) = ext_hooks
                                 .window
-                                .keys()
-                                .find(|(_, k)| k.as_str() == hook_kind)
-                                .cloned()
+                                .get_mut(&(self.window_id, hook_kind.to_string()))
                             {
-                                if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                                // P1.1：按 `(窗口 id, kind)` 精确匹配，旧版只按
+                                // kind 找会让别的窗口注册的同名 hook 串台。
+                                {
                                     let ext_src =
                                         zephyra_render_ext::registration::RenderSource::new(
                                             resource_key,
@@ -1714,10 +1777,10 @@ impl Renderer {
                         .unwrap_or_else(|| source.payload_any() as &dyn std::any::Any);
                     let mut ctx = HookCtx {
                         cmd,
-                        device: &self.device,
+                        device: &self.device as *const _,
                         size: (self.size.0 as f32, self.size.1 as f32),
                         frame_index: self.ext_frame.get(),
-                        ext_pool: Some(&*ext_pool),
+                        ext_pool: Some(&*ext_pool as *const _),
                     };
                     let mut handled = false;
                     {
@@ -1738,13 +1801,12 @@ impl Renderer {
                                     resource_key
                                 ));
                             }
-                        } else if let Some((w, k)) = ext_hooks
+                        } else if let Some(h) = ext_hooks
                             .window
-                            .keys()
-                            .find(|(_, k)| k.as_str() == hook_kind)
-                            .cloned()
+                            .get_mut(&(self.window_id, hook_kind.to_string()))
                         {
-                            if let Some(h) = ext_hooks.window.get_mut(&(w, k)) {
+                            // P1.1：按 `(窗口 id, kind)` 精确匹配。
+                            {
                                 let ext_src = zephyra_render_ext::registration::RenderSource::new(
                                     resource_key,
                                     Some(payload),
@@ -3488,6 +3550,18 @@ fn upload_image(
     pixels: &[u8],
     (w, h): (u32, u32),
 ) -> Result<(), SurfaceError> {
+    upload_image_from_layout(dev, image, pixels, (w, h), vk::ImageLayout::UNDEFINED)
+}
+
+/// 与 [`upload_image`] 相同，但允许指定上传前图像的布局 —— 原地更新时图像已经是
+/// `SHADER_READ_ONLY_OPTIMAL`，用 `UNDEFINED` 当旧布局在同步验证层下是非法的。
+fn upload_image_from_layout(
+    dev: &Device,
+    image: vk::Image,
+    pixels: &[u8],
+    (w, h): (u32, u32),
+    old_layout: vk::ImageLayout,
+) -> Result<(), SurfaceError> {
     let device = &dev.device;
     let byte_len = pixels.len() as vk::DeviceSize;
     let buffer = unsafe {
@@ -3545,7 +3619,7 @@ fn upload_image(
     let to_dst = vk::ImageMemoryBarrier::builder()
         .src_access_mask(vk::AccessFlags::empty())
         .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .old_layout(vk::ImageLayout::UNDEFINED)
+        .old_layout(old_layout)
         .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)

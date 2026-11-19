@@ -22,9 +22,9 @@
 //!
 //! # 为什么这一层住在 `zephyra-style` 而不是 `zephyra-core`
 //!
-//! core 的零依赖是硬门禁（`cargo tree -p zephyra-core --depth 1` 只输出
-//! 它自己一行），所以 core **不能**依赖 `zephyra-bezier`。而 `anim` 必须
-//! 依赖它 —— 于是这条边落在 core 之上的纯 CPU 声明层。
+//! core 的无外部依赖是硬门禁（`cargo tree -p zephyra-core --depth 1` 恰好两行：
+//! 自身与 `zephyra-vector`），所以 core **不能**依赖 `zephyra-bezier`。而 `anim`
+//! 必须依赖它 —— 于是这条边落在 core 之上的纯 CPU 声明层。
 //!
 //! 顺带一提：从职责上它也属于这一层 —— `anim` 的产物是「档位」，而档位
 //! 最终变成 `.enter-1` … `.enter-8` 那些**分类名**，正是声明层的东西。

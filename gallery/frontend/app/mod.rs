@@ -14,11 +14,14 @@
 //! （`wants_dark`），宿主每帧对账后执行 `set_theme` —— 于是"想切的"与
 //! "在用的"永远可分开观测，不会出现"点了没反应但也不知道为什么"。
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
+use zephyra_core::core::Point;
+use zephyra_core::geom::{triangulate, FillRule};
 use zephyra_core::i18n::{Messages, Preferences, Tag};
 use zephyra_core::id::ElementKey;
 use zephyra_core::input::TextEvent;
+use zephyra_core::paint::DynamicPath;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, PointerInputPhase, View};
 
@@ -66,6 +69,17 @@ pub mod shell;
 /// 「背景是空的」—— 与「照片解码失败」完全同形。
 pub const MOUNTAIN_TEXTURE: &str = "bg-mountain";
 
+/// 选择器栏的三段文案 key（模板 `items` 用，`sel:N` 是点击身份）。
+const CATALOG_SELECTOR_KEYS: [&str; 3] =
+    ["ui.catalog.sel-0", "ui.catalog.sel-1", "ui.catalog.sel-2"];
+
+/// 色板选中后驱动真实预览色：复用 `.zstyle` 里的 `sw-0..15` 类，
+/// 颜色留在样式表（源码不写外观），预览块套上同一个类即取到同款颜色。
+const CATALOG_SWATCH_CLASSES: [&str; 16] = [
+    "sw-0", "sw-1", "sw-2", "sw-3", "sw-4", "sw-5", "sw-6", "sw-7", "sw-8", "sw-9", "sw-10",
+    "sw-11", "sw-12", "sw-13", "sw-14", "sw-15",
+];
+
 pub const ROUTES: &[(&str, &str, &str)] = &[
     ("guide", "Quick start", "home"),
     ("state", "State", "check"),
@@ -86,6 +100,12 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("textinput", "Text Input", "pen"),
     // 滚动容器（ScrollView / ScrollBar）：视口裁剪、内容平移、滚动条。
     ("scroll", "Scrolling", "move"),
+    // RinUI 目录补充控件：进度条 / 进度环 / 信息栏 / 色板 / 数字框 /
+    // 忙碌指示器 / 展开器 / 选择器栏（模板与样式既有，本轮补状态模型 + 演示）。
+    ("catalog", "More controls", "star"),
+    // RinUI 目录第二批 10 个控件（切换按钮 / 工具按钮 / 超链接 / 徽章 /
+    // 提示条 / 页面指示器 / 设置项 / 设置展开器 / 卡片 / 胶囊按钮）。
+    ("catalog2", "Even more controls", "grid"),
 ];
 
 /// 控件参考页的**族**（顺序即 segmented 的段顺序）。
@@ -191,6 +211,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "route.slider", "Slider"),
     ("en", "route.textinput", "Text Input"),
     ("en", "route.scroll", "Scrolling"),
+    ("en", "route.catalog", "More controls"),
+    ("en", "route.catalog2", "Even more controls"),
     (
         "en",
         "ui.small-nav-collapsed-to-icons",
@@ -264,6 +286,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "ui.thick", "Thick"),
     ("en", "ui.decorations", "Decorations"),
     ("en", "ui.glass.pixel-offset", "Pixel offset"),
+    ("en", "ui.glass.original", "Liquid glass (original)"),
     ("en", "ui.glass.physical-refraction", "Physical refraction"),
     // ---- 布局页：flex ----
     (
@@ -340,6 +363,47 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("en", "ui.scroll.drag", "Drag / wheel"),
     ("en", "ui.scroll.state", "Offset"),
+    ("en", "ui.catalog.blurb", "RinUI-style controls with real state: click, drag, select and watch them react."),
+    ("en", "ui.catalog.title", "More controls"),
+    ("en", "ui.catalog.progress", "Progress bar"),
+    ("en", "ui.catalog.ring", "Progress ring"),
+    ("en", "ui.catalog.infobar", "Info bar"),
+    ("en", "ui.catalog.color", "Color picker"),
+    ("en", "ui.catalog.spin", "Number box"),
+    ("en", "ui.catalog.busy", "Busy indicator"),
+    ("en", "ui.catalog.expander", "Expander"),
+    ("en", "ui.catalog.selector", "Selector bar"),
+    ("en", "ui.catalog.avatar", "Avatar"),
+    ("en", "ui.catalog.bar-title", "Heads up"),
+    ("en", "ui.catalog.bar-text", "This InfoBar can be dismissed with the close button."),
+    ("en", "ui.catalog.expander-title", "Expand me"),
+    ("en", "ui.catalog.sel-0", "One"),
+    ("en", "ui.catalog.sel-1", "Two"),
+    ("en", "ui.catalog.sel-2", "Three"),
+    ("en", "ui.c2.blurb", "Ten more RinUI-style controls with real state."),
+    ("en", "ui.c2.title", "Even more controls"),
+    ("en", "ui.c2.toggle", "Toggle button"),
+    ("en", "ui.c2.pill", "Pill button"),
+    ("en", "ui.c2.tool", "Tool button"),
+    ("en", "ui.c2.link", "Hyperlink"),
+    ("en", "ui.c2.badge", "Info badge"),
+    ("en", "ui.c2.tip", "Tool tip"),
+    ("en", "ui.c2.pages", "Page indicator"),
+    ("en", "ui.c2.setting", "Setting item"),
+    ("en", "ui.c2.setexp", "Setting expander"),
+    ("en", "ui.c2.card", "Card"),
+    ("en", "ui.c2.toggle-label", "Toggle"),
+    ("en", "ui.c2.pill-label", "Pill"),
+    ("en", "ui.c2.link-label", "RinUI docs"),
+    ("en", "ui.c2.inc", "+1"),
+    ("en", "ui.c2.next", "Next"),
+    ("en", "ui.c2.tip-text", "A Fluent-style tooltip"),
+    ("en", "ui.c2.tip-target", "Hover me"),
+    ("en", "ui.c2.setting-title", "Setting title"),
+    ("en", "ui.c2.setting-desc", "Setting description"),
+    ("en", "ui.c2.setexp-title", "Setting expander"),
+    ("en", "ui.c2.setexp-desc", "Tap the header to expand"),
+    ("en", "ui.c2.card-label", "Clickable card"),
     (
         "en",
         "ui.scroll.item-hint",
@@ -364,6 +428,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "route.slider", "滑块"),
     ("zh-Hans", "route.textinput", "文本输入"),
     ("zh-Hans", "route.scroll", "滚动容器"),
+    ("zh-Hans", "route.catalog", "更多控件"),
+    ("zh-Hans", "route.catalog2", "更多控件 2"),
     (
         "zh-Hans",
         "ui.small-nav-collapsed-to-icons",
@@ -429,6 +495,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "ui.thick", "厚"),
     ("zh-Hans", "ui.decorations", "装饰"),
     ("zh-Hans", "ui.glass.pixel-offset", "像素偏移"),
+    ("zh-Hans", "ui.glass.original", "原版液态玻璃"),
     ("zh-Hans", "ui.glass.physical-refraction", "物理折射"),
     // ---- 布局页：flex ----
     (
@@ -510,6 +577,47 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("zh-Hans", "ui.scroll.drag", "拖动 / 滚轮"),
     ("zh-Hans", "ui.scroll.state", "滚动位置"),
+    ("zh-Hans", "ui.catalog.blurb", "带真实状态的 RinUI 风格控件：点、拖、选，看它们实时响应。"),
+    ("zh-Hans", "ui.catalog.title", "更多控件"),
+    ("zh-Hans", "ui.catalog.progress", "进度条"),
+    ("zh-Hans", "ui.catalog.ring", "进度环"),
+    ("zh-Hans", "ui.catalog.infobar", "信息栏"),
+    ("zh-Hans", "ui.catalog.color", "颜色选择器"),
+    ("zh-Hans", "ui.catalog.spin", "数字框"),
+    ("zh-Hans", "ui.catalog.busy", "忙碌指示器"),
+    ("zh-Hans", "ui.catalog.expander", "展开器"),
+    ("zh-Hans", "ui.catalog.selector", "选择器栏"),
+    ("zh-Hans", "ui.catalog.avatar", "头像"),
+    ("zh-Hans", "ui.catalog.bar-title", "提示"),
+    ("zh-Hans", "ui.catalog.bar-text", "这条信息栏可以用关闭按钮关掉。"),
+    ("zh-Hans", "ui.catalog.expander-title", "点我展开"),
+    ("zh-Hans", "ui.catalog.sel-0", "一"),
+    ("zh-Hans", "ui.catalog.sel-1", "二"),
+    ("zh-Hans", "ui.catalog.sel-2", "三"),
+    ("zh-Hans", "ui.c2.blurb", "再补十个带真实状态的 RinUI 风格控件。"),
+    ("zh-Hans", "ui.c2.title", "更多控件 2"),
+    ("zh-Hans", "ui.c2.toggle", "切换按钮"),
+    ("zh-Hans", "ui.c2.pill", "胶囊按钮"),
+    ("zh-Hans", "ui.c2.tool", "工具按钮"),
+    ("zh-Hans", "ui.c2.link", "超链接"),
+    ("zh-Hans", "ui.c2.badge", "信息徽章"),
+    ("zh-Hans", "ui.c2.tip", "工具提示"),
+    ("zh-Hans", "ui.c2.pages", "页面指示器"),
+    ("zh-Hans", "ui.c2.setting", "设置项"),
+    ("zh-Hans", "ui.c2.setexp", "设置展开器"),
+    ("zh-Hans", "ui.c2.card", "卡片"),
+    ("zh-Hans", "ui.c2.toggle-label", "切换"),
+    ("zh-Hans", "ui.c2.pill-label", "胶囊"),
+    ("zh-Hans", "ui.c2.link-label", "RinUI 文档"),
+    ("zh-Hans", "ui.c2.inc", "+1"),
+    ("zh-Hans", "ui.c2.next", "下一页"),
+    ("zh-Hans", "ui.c2.tip-text", "Fluent 风格的工具提示"),
+    ("zh-Hans", "ui.c2.tip-target", "悬停我"),
+    ("zh-Hans", "ui.c2.setting-title", "设置标题"),
+    ("zh-Hans", "ui.c2.setting-desc", "设置说明"),
+    ("zh-Hans", "ui.c2.setexp-title", "设置展开器"),
+    ("zh-Hans", "ui.c2.setexp-desc", "点标题栏展开"),
+    ("zh-Hans", "ui.c2.card-label", "可点击的卡片"),
     ("zh-Hans", "ui.scroll.item-hint", "把我滚出去 —— 我住在视口外。"),
     // ---- ja ----
     ("ja", "route.guide", "クイックスタート"),
@@ -523,6 +631,8 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "route.slider", "スライダー"),
     ("ja", "route.textinput", "テキスト入力"),
     ("ja", "route.scroll", "スクロール"),
+    ("ja", "route.catalog", "その他のコントロール"),
+    ("ja", "route.catalog2", "その他のコントロール 2"),
     (
         "ja",
         "ui.small-nav-collapsed-to-icons",
@@ -592,6 +702,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "ui.thick", "厚い"),
     ("ja", "ui.decorations", "装飾"),
     ("ja", "ui.glass.pixel-offset", "ピクセルオフセット"),
+    ("ja", "ui.glass.original", "オリジナルのリキッドガラス"),
     ("ja", "ui.glass.physical-refraction", "物理折射"),
     // ---- レイアウト頁：flex ----
     (
@@ -673,6 +784,47 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ),
     ("ja", "ui.scroll.drag", "ドラッグ / ホイール"),
     ("ja", "ui.scroll.state", "オフセット"),
+    ("ja", "ui.catalog.blurb", "実際に状態を持つ RinUI 風コントロール。クリック・ドラッグ・選択に反応します。"),
+    ("ja", "ui.catalog.title", "その他のコントロール"),
+    ("ja", "ui.catalog.progress", "プログレスバー"),
+    ("ja", "ui.catalog.ring", "プログレスリング"),
+    ("ja", "ui.catalog.infobar", "情報バー"),
+    ("ja", "ui.catalog.color", "カラーピッカー"),
+    ("ja", "ui.catalog.spin", "数値ボックス"),
+    ("ja", "ui.catalog.busy", "ビジーインジケーター"),
+    ("ja", "ui.catalog.expander", "エキスパンダー"),
+    ("ja", "ui.catalog.selector", "セレクターバー"),
+    ("ja", "ui.catalog.avatar", "アバター"),
+    ("ja", "ui.catalog.bar-title", "お知らせ"),
+    ("ja", "ui.catalog.bar-text", "この情報バーは閉じるボタンで閉じられます。"),
+    ("ja", "ui.catalog.expander-title", "クリックして展開"),
+    ("ja", "ui.catalog.sel-0", "一"),
+    ("ja", "ui.catalog.sel-1", "二"),
+    ("ja", "ui.catalog.sel-2", "三"),
+    ("ja", "ui.c2.blurb", "状態を持つ RinUI 風コントロールをさらに 10 個追加しました。"),
+    ("ja", "ui.c2.title", "その他のコントロール 2"),
+    ("ja", "ui.c2.toggle", "トグルボタン"),
+    ("ja", "ui.c2.pill", "ピルボタン"),
+    ("ja", "ui.c2.tool", "ツールボタン"),
+    ("ja", "ui.c2.link", "ハイパーリンク"),
+    ("ja", "ui.c2.badge", "情報バッジ"),
+    ("ja", "ui.c2.tip", "ツールチップ"),
+    ("ja", "ui.c2.pages", "ページインジケーター"),
+    ("ja", "ui.c2.setting", "設定項目"),
+    ("ja", "ui.c2.setexp", "設定エキスパンダー"),
+    ("ja", "ui.c2.card", "カード"),
+    ("ja", "ui.c2.toggle-label", "切り替え"),
+    ("ja", "ui.c2.pill-label", "ピル"),
+    ("ja", "ui.c2.link-label", "RinUI ドキュメント"),
+    ("ja", "ui.c2.inc", "+1"),
+    ("ja", "ui.c2.next", "次へ"),
+    ("ja", "ui.c2.tip-text", "Fluent 風ツールチップ"),
+    ("ja", "ui.c2.tip-target", "ホバーしてください"),
+    ("ja", "ui.c2.setting-title", "設定タイトル"),
+    ("ja", "ui.c2.setting-desc", "設定の説明"),
+    ("ja", "ui.c2.setexp-title", "設定エキスパンダー"),
+    ("ja", "ui.c2.setexp-desc", "ヘッダーをタップして展開"),
+    ("ja", "ui.c2.card-label", "クリック可能なカード"),
     ("ja", "ui.scroll.item-hint", "私をスクロールして — ビューポートの外にいます。"),
 ];
 
@@ -1132,6 +1284,68 @@ pub struct Gallery {
     /// TextField 当前文本的静态引用（用于 `Val::S`，需 `&'static str`）。
     /// 在 `on_input` 里文本变化时经 `Box::leak` 更新。
     pub text_field_text: &'static str,
+    /// 光标 / 选区端点的**像素**偏移（由 `view()` 用 text engine 按实际字形步进测得）。
+    ///
+    /// 字节下标不能直接当 `translate-x`：15px 字体下 ASCII 每字约 7px、CJK 约 15px，
+    /// 拿字节数当像素会让光标几乎不动。`Cell` 让 `view(&self)` 能写入、`binding(&self)` 能读。
+    pub text_field_cursor_px: std::cell::Cell<f32>,
+    pub text_field_sel_begin_px: std::cell::Cell<f32>,
+    pub text_field_sel_end_px: std::cell::Cell<f32>,
+    /// 字符边界的 (字节下标, 累计像素宽度) 表，由 `view(ctx)` 用文本引擎生成；
+    /// `on_input` 拿它把点击的像素 x 反查成字节下标（照 Chromium `FindCursorPosition`）。
+    pub text_advances: std::cell::RefCell<Vec<(usize, f32)>>,
+    /// 文本横向滚动偏移（保持光标可见，`overflow: hidden` 裁掉溢出部分）。
+    pub text_scroll_x: std::cell::Cell<f32>,
+    /// 拖选锚点（字节下标）；`None` = 不在拖选。
+    pub text_drag_anchor: Option<usize>,
+    /// 连击计数与时钟（毫秒，累加 `dt_ms`）：2 击选词 / 3 击全选。
+    pub text_click_count: u32,
+    pub text_click_clock_ms: f32,
+    /// 最近一次 pointer-down 的**内容局部** x（连击落点判据）。
+    pub text_last_down_x: f32,
+    // ---- RinUI 目录补充控件（8 个，状态模型在 zephyra_ui::catalog） ----
+    pub catalog_progress: zephyra_ui::Progress,
+    /// 进度条点击次数：映射成 `paused` / 空两个状态词，让点击在树里有可见变化。
+    pub catalog_progress_taps: u32,
+    pub catalog_ring: zephyra_ui::Progress,
+    /// 进度环点击后在 running / paused / error 三态间轮换。
+    pub catalog_ring_taps: u32,
+    pub catalog_bar: zephyra_ui::InfoBarState,
+    pub catalog_color: zephyra_ui::ColorPickerState,
+    /// 色板 / 选择器栏的点击次数：映射成状态类，让「点已选中项」也有可见变化。
+    pub catalog_color_taps: u32,
+    pub catalog_selector_taps: u32,
+    pub catalog_spin: zephyra_ui::SpinBoxState,
+    pub catalog_busy: zephyra_ui::BusyIndicatorState,
+    pub catalog_expander: zephyra_ui::ExpanderState,
+    pub catalog_selector: zephyra_ui::SelectorBarState,
+    pub catalog_avatar: zephyra_ui::AvatarState,
+    /// 数字框 / 进度环的百分比文本缓存（`Val::S` 需 &'static str，仅在值变化时泄漏一次）。
+    pub catalog_spin_text: &'static str,
+    pub catalog_ring_text: &'static str,
+    pub catalog_selector_text: &'static str,
+    /// 忙碌指示器当前帧的图标名缓存（`Val::S` 需 &'static str）。
+    pub catalog_busy_icon: &'static str,
+    // ---- RinUI 目录第二批 10 个控件 ----
+    pub c2_toggle: zephyra_ui::ToggleState,
+    pub c2_pill: zephyra_ui::ToggleState,
+    pub c2_tool: zephyra_ui::ToolButtonState,
+    pub c2_link: zephyra_ui::HyperlinkState,
+    pub c2_badge: zephyra_ui::InfoBadgeState,
+    pub c2_tip: zephyra_ui::ToolTipState,
+    pub c2_pages: zephyra_ui::PageIndicatorState,
+    pub c2_setting: zephyra_ui::SettingItemState,
+    pub c2_setexp: zephyra_ui::SettingExpanderState,
+    pub c2_card: zephyra_ui::CardState,
+    /// 五个动作按钮的按下态（点击在树里可见）。
+    pub c2_badge_btn: bool,
+    pub c2_tip_btn: bool,
+    pub c2_pages_btn: bool,
+    pub c2_setting_btn: bool,
+    pub c2_card_btn: bool,
+    pub c2_badge_text: &'static str,
+    /// 超链接点击后待宿主打开的外部 URL（`take_pending_url` 每帧取走）。
+    pub pending_url: Option<&'static str>,
     /// 多行文本区域（TextArea）：演示多行编辑、跨行光标、滚动偏移。
     pub text_area: zephyra_ui::TextArea,
     /// TextArea 当前文本的静态引用（同上）。
@@ -1484,6 +1698,49 @@ impl Default for Gallery {
             // 单行文本输入框：初值为空，演示光标、选区、IME 组字。
             text_field: zephyra_ui::TextField::new("text:field"),
             text_field_text: "",
+            text_field_cursor_px: std::cell::Cell::new(0.0),
+            text_field_sel_begin_px: std::cell::Cell::new(0.0),
+            text_field_sel_end_px: std::cell::Cell::new(0.0),
+            text_advances: std::cell::RefCell::new(Vec::new()),
+            text_scroll_x: std::cell::Cell::new(0.0),
+            text_drag_anchor: None,
+            text_click_count: 0,
+            text_click_clock_ms: 0.0,
+            text_last_down_x: 0.0,
+            catalog_progress: zephyra_ui::Progress::new(0.65),
+            catalog_progress_taps: 0,
+            catalog_ring: zephyra_ui::Progress::new(0.45),
+            catalog_ring_taps: 0,
+            catalog_bar: zephyra_ui::InfoBarState::new("info"),
+            catalog_color: zephyra_ui::ColorPickerState::new(15),
+            catalog_color_taps: 0,
+            catalog_selector_taps: 0,
+            catalog_spin: zephyra_ui::SpinBoxState::new(5, 0, 99),
+            catalog_busy: zephyra_ui::BusyIndicatorState::new(),
+            catalog_expander: zephyra_ui::ExpanderState::new(true),
+            catalog_selector: zephyra_ui::SelectorBarState::new(1, 3),
+            catalog_avatar: zephyra_ui::AvatarState::new("ZL", true),
+            catalog_spin_text: "5",
+            catalog_ring_text: "45%",
+            catalog_selector_text: "sel:1",
+            catalog_busy_icon: "busy-arc-0",
+            c2_toggle: zephyra_ui::ToggleState::new(true),
+            c2_pill: zephyra_ui::ToggleState::new(false),
+            c2_tool: zephyra_ui::ToolButtonState::new(false),
+            c2_link: zephyra_ui::HyperlinkState::new(),
+            c2_badge: zephyra_ui::InfoBadgeState::new(5, "success", true),
+            c2_tip: zephyra_ui::ToolTipState::new(false),
+            c2_pages: zephyra_ui::PageIndicatorState::new(3, 1),
+            c2_setting: zephyra_ui::SettingItemState::new(false),
+            c2_setexp: zephyra_ui::SettingExpanderState::new(false),
+            c2_card: zephyra_ui::CardState::new(false),
+            c2_badge_btn: false,
+            c2_tip_btn: false,
+            c2_pages_btn: false,
+            c2_setting_btn: false,
+            c2_card_btn: false,
+            c2_badge_text: "5",
+            pending_url: None,
             // 多行文本区域：初值为一段示例文本，演示多行编辑。
             text_area: zephyra_ui::TextArea::with_text(
                 "text:area",
@@ -1577,6 +1834,111 @@ impl Gallery {
     ///
     /// 所以这里取**并集**：`pressed_keys` 非空就用它（宿主填的时候它已含
     /// `pressed`），否则退回 `pressed` 一个。
+    /// 把内容局部 x（含滚动）反查成字节下标。
+    ///
+    /// 照 Chromium `RenderText::FindCursorPosition`：字形中点之前归左边界、之后归
+    /// 右边界。advance 表由 `view()` 按真实字形步进生成，所以 ASCII / CJK / IME
+    /// 组字都落在实际字符边界上（不会把多字节字符切断）。
+    fn text_byte_at_px(&self, local_x: f32) -> usize {
+        let table = self.text_advances.borrow();
+        match table.len() {
+            0 => 0,
+            1 => table[0].0,
+            _ => {
+                for pair in table.windows(2) {
+                    let mid = (pair[0].1 + pair[1].1) * 0.5;
+                    if local_x < mid {
+                        return pair[0].0;
+                    }
+                }
+                table.last().unwrap().0
+            }
+        }
+    }
+
+    /// 把字节下标选到所在「词」的边界（照 Chromium `SelectWord`）。
+    ///
+    /// 字母 / 数字 / 下划线视为一个词；CJK 与标点各自成词（本仓没有分词词典，
+    /// 这是最接近 Chrome 的保守取舍）。光标停在词间空白时选中那个空白字符。
+    fn text_select_word(&mut self) {
+        let text = self.text_field.text().to_string();
+        let pos = self.text_field.cursor().min(text.len());
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut start = pos;
+        for (i, c) in text[..pos].char_indices().rev() {
+            if is_word(c) {
+                start = i;
+            } else {
+                break;
+            }
+        }
+        let mut end = pos;
+        for (i, c) in text[pos..].char_indices() {
+            if is_word(c) {
+                end = pos + i + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if start == pos && end == pos {
+            end = text[pos..]
+                .chars()
+                .next()
+                .map(|c| pos + c.len_utf8())
+                .unwrap_or(pos);
+        }
+        self.text_field.set_selection(start..end);
+    }
+
+    /// 把忙碌指示器的**连续相位**变成路径顶点（Canvas 式动画，不是图标帧采样）。
+    ///
+    /// 照 RinUI `ProgressRing.qml:51-79`：`lineWidth=6`、`lineCap=round`，圆心在节点
+    /// 中心、中线半径 `(56-6)/2=25`，弧从 `startAngle-90°` 起、扫过 `sweepAngle`。
+    /// 用一条闭合轮廓（外弧 → 末端圆帽 → 内弧反向 → 起点圆帽）—— `stroke_outline`
+    /// 对弧线会产出自交轮廓而被 `triangulate` 拒绝，手工构造则稳定可三角化。
+    /// 顶点是节点局部坐标，paint 会套上节点变换。
+    fn catalog_busy_path(&self) -> zypui::Val {
+        use zephyra_core::geom::Contour;
+        let start = (self.catalog_busy.start_angle() - 90.0).to_radians();
+        let sweep = self.catalog_busy.sweep_angle().to_radians();
+        let steps = ((sweep.abs() / 0.15).ceil() as usize).clamp(2, 96);
+        let (ro, ri, cap) = (28.0f32, 22.0f32, 3.0f32); // 中线 25 ± 半线宽 3
+        let mut ring: Vec<Point> = Vec::with_capacity(steps * 2 + 16);
+        for i in 0..=steps {
+            let a = start + sweep * (i as f32 / steps as f32);
+            ring.push(Point::new(28.0 + ro * a.cos(), 28.0 + ro * a.sin()));
+        }
+        let end = start + sweep;
+        let end_center = Point::new(28.0 + 25.0 * end.cos(), 28.0 + 25.0 * end.sin());
+        for i in 1..8 {
+            let t = end + std::f32::consts::PI * i as f32 / 8.0;
+            ring.push(Point::new(
+                end_center.x + cap * t.cos(),
+                end_center.y + cap * t.sin(),
+            ));
+        }
+        for i in (0..=steps).rev() {
+            let a = start + sweep * (i as f32 / steps as f32);
+            ring.push(Point::new(28.0 + ri * a.cos(), 28.0 + ri * a.sin()));
+        }
+        let start_center = Point::new(28.0 + 25.0 * start.cos(), 28.0 + 25.0 * start.sin());
+        for i in 1..8 {
+            let t = start + std::f32::consts::PI + std::f32::consts::PI * i as f32 / 8.0;
+            ring.push(Point::new(
+                start_center.x + cap * t.cos(),
+                start_center.y + cap * t.sin(),
+            ));
+        }
+        let vertices: Arc<[zephyra_core::paint::Vertex]> =
+            match triangulate(&[Contour::new(ring)], FillRule::NonZero) {
+                Ok(mesh) => mesh.vertices.into(),
+                Err(_) => Arc::from(Vec::new()), // 退化相位：本帧不画，下一帧恢复。
+            };
+        zypui::Val::Raw(zephyra_core::property::PropertyValue::custom(
+            DynamicPath::new(vertices),
+        ))
+    }
+
     fn pressed_set(state: &InputState) -> Vec<ElementKey> {
         if state.pressed_keys.is_empty() {
             state.pressed.iter().cloned().collect()
@@ -1711,9 +2073,14 @@ impl Gallery {
             // ⚠ 不切 `filter`、只切 `mode`：滤镜由 `view()` 每帧按 `mode` 重建，
             // 而 `mode` 是**状态**（进 `PropertyValue` 的相等表 ⇒ diff 能认出来）。
             GLASS_MODE_KEY => {
+                // 默认原版透镜 ↔ 廉价像素偏移。斯涅尔四参数那条路仍完整保留
+                // （`GlassMode::Physical`，门禁直接构造它验证四参数接线）。
                 self.glass.mode = match self.glass.mode {
-                    crate::app::glass::GlassMode::Cheap => crate::app::glass::GlassMode::Physical,
-                    crate::app::glass::GlassMode::Physical => crate::app::glass::GlassMode::Cheap,
+                    crate::app::glass::GlassMode::Cheap
+                    | crate::app::glass::GlassMode::Physical => {
+                        crate::app::glass::GlassMode::Original
+                    }
+                    crate::app::glass::GlassMode::Original => crate::app::glass::GlassMode::Cheap,
                 };
             }
             // 玻璃页「装饰」开关：控制三块玻璃的 `decoration`（glass ↔ none）。
@@ -1805,6 +2172,94 @@ impl Gallery {
             }
             "text:paste" => {
                 self.text_field.paste(self.clipboard_text);
+            }
+            // ---- RinUI 目录第二批 10 个控件 ----
+            "c2:toggle" => self.c2_toggle.toggle(),
+            "c2:pill" => self.c2_pill.toggle(),
+            "c2:tool" => self.c2_tool.toggle(),
+            "c2:link" => {
+                self.c2_link.visit();
+                self.pending_url = Some("https://ui.rinlit.cn/zh/");
+            }
+            "c2:badge-inc" => {
+                self.c2_badge
+                    .set_count(self.c2_badge.text().parse::<i32>().unwrap_or(0) + 1);
+                self.c2_badge_btn = !self.c2_badge_btn;
+                self.c2_badge_text = Box::leak(self.c2_badge.text().into_boxed_str());
+            }
+            "c2:tip-target" => {
+                self.c2_tip.toggle();
+                self.c2_tip_btn = self.c2_tip.is_visible();
+            }
+            "c2:pages-next" => {
+                self.c2_pages.next();
+                self.c2_pages_btn = !self.c2_pages_btn;
+            }
+            // 直接点第 N 个点切到第 N 页。
+            _ if key.starts_with("pip:") => {
+                if let Ok(i) = key["pip:".len()..].parse::<u32>() {
+                    // 点当前页再点一次 = 前进一页（避免空操作，也符合常见分页习惯）。
+                    if self.c2_pages.current() == i {
+                        self.c2_pages.next();
+                    } else {
+                        self.c2_pages.set_current(i);
+                    }
+                }
+            }
+            "c2:setting" => {
+                self.c2_setting.toggle();
+                self.c2_setting_btn = !self.c2_setting_btn;
+            }
+            "c2:card-toggle" => {
+                self.c2_card.toggle();
+                self.c2_card_btn = !self.c2_card_btn;
+            }
+            "c2:setexp" => self.c2_setexp.toggle(),
+            // ---- RinUI 目录补充控件 ----
+            "catalog:ring" => {
+                self.catalog_ring_taps = self.catalog_ring_taps.wrapping_add(1);
+                let v = self.catalog_ring.value01();
+                self.catalog_ring
+                    .set_value(if v >= 1.0 { 0.0 } else { v + 0.25 });
+            }
+            "bar:close" => self.catalog_bar.close(),
+            // 进度条本体可点：每次点推进 10%（便于在演示页直接看到变化）。
+            "catalog:progress" => {
+                self.catalog_progress_taps = self.catalog_progress_taps.wrapping_add(1);
+                let v = self.catalog_progress.value01();
+                self.catalog_progress
+                    .set_value(if v >= 1.0 { 0.0 } else { v + 0.1 });
+            }
+            _ if key.starts_with("swatch:") => {
+                if let Ok(i) = key["swatch:".len()..].parse::<usize>() {
+                    self.catalog_color.select(i);
+                    self.catalog_color_taps = self.catalog_color_taps.wrapping_add(1);
+                }
+            }
+            "spin:up" => {
+                self.catalog_spin.increment();
+                self.catalog_spin_text =
+                    Box::leak(self.catalog_spin.value().to_string().into_boxed_str());
+            }
+            "spin:down" => {
+                self.catalog_spin.decrement();
+                self.catalog_spin_text =
+                    Box::leak(self.catalog_spin.value().to_string().into_boxed_str());
+            }
+            // 数字框本体可点：等价于 +1。
+            "catalog:spin" => {
+                self.catalog_spin.increment();
+                self.catalog_spin_text =
+                    Box::leak(self.catalog_spin.value().to_string().into_boxed_str());
+            }
+            "catalog:expander" => self.catalog_expander.toggle(),
+            _ if key.starts_with("sel:") => {
+                if let Ok(i) = key["sel:".len()..].parse::<usize>() {
+                    self.catalog_selector.select(i);
+                    self.catalog_selector_taps = self.catalog_selector_taps.wrapping_add(1);
+                    self.catalog_selector_text =
+                        Box::leak(self.catalog_selector.selected_id().into_boxed_str());
+                }
             }
             _ if key.starts_with("radio:") => {
                 self.radio_group.select(key);
@@ -2014,6 +2469,58 @@ impl View for Gallery {
             }
         }
 
+        // ---- 文本框指针交互：单击定位光标 / 拖动选区 / 双击选词 / 三击全选 ----
+        // 照 Chromium `SelectionController`：`Down` 定锚点，`Move` 把选区扩到当前
+        // 字节位置，`Up` 结束；连击计数走 dt_ms 累加（PointerInput 没有时间戳）。
+        let tf_key = zephyra_core::id::ElementKey::Name("text:field");
+        let tf_rect = state.rect_of(&tf_key);
+        self.text_click_clock_ms += state.dt_ms;
+        for ev in &state.pointer_events {
+            // pointer_events 与 rects 同为物理像素绝对坐标，无需再除 scale。
+            let inside = tf_rect.is_some_and(|r| {
+                ev.x >= r.x && ev.x <= r.x + r.width && ev.y >= r.y && ev.y <= r.y + r.height
+            });
+            // 内容局部 x = 指针 − 框左上 − padding(10) + 滚动量。
+            let local_x = tf_rect.map(|r| ev.x - r.x - 10.0 + self.text_scroll_x.get());
+            match ev.phase {
+                PointerInputPhase::Down if inside => {
+                    let lx = local_x.unwrap();
+                    let byte = self.text_byte_at_px(lx);
+                    // 连击判据：500ms 内、落点相差 < 24px（同 Chromium slop）。
+                    if self.text_click_clock_ms <= 500.0
+                        && (lx - self.text_last_down_x).abs() < 24.0
+                    {
+                        self.text_click_count = self.text_click_count.saturating_add(1);
+                    } else {
+                        self.text_click_count = 1;
+                    }
+                    self.text_click_clock_ms = 0.0;
+                    self.text_last_down_x = lx;
+                    self.text_drag_anchor = Some(byte);
+                    match self.text_click_count {
+                        2 => {
+                            self.text_field.set_cursor(byte);
+                            self.text_select_word();
+                        }
+                        n if n >= 3 => self.text_field.select_all(),
+                        _ => self.text_field.set_cursor(byte), // 单击：清选区、光标就位
+                    }
+                }
+                PointerInputPhase::Move => {
+                    if let (Some(anchor), Some(lx)) = (self.text_drag_anchor, local_x) {
+                        if self.text_click_count < 2 {
+                            let byte = self.text_byte_at_px(lx);
+                            self.text_field.set_selection(anchor..byte);
+                        }
+                    }
+                }
+                PointerInputPhase::Up | PointerInputPhase::Cancel => {
+                    self.text_drag_anchor = None;
+                }
+                _ => {}
+            }
+        }
+
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         // 在模型处理 Up 之后再判，拖拽提交才能走 `take_drag_completed_target_checked()`。
         //
@@ -2044,12 +2551,12 @@ impl View for Gallery {
 
         // ---- 文本输入事件（Key / Char / IME）分发给当前有焦点的文本控件 ----
         //
-        // 焦点由 core 的 FocusState 维护，宿主在 on_input 开头同步过来。
-        // 只有焦点落在 TextField / TextArea 上时，才把文本事件送给对应控件。
-        // IME 组字期间（is_composing()）打开候选窗；Commit / Cancel 后关闭。
+        // ⚠ 用 `active_focus`（行为焦点）而不是 `focused`（焦点环可见性）：
+        // 鼠标点进文本框设的焦点不在 `focused` 里（focus-visible 语义），
+        // 只用后者会让「点一下再打字」完全没有反应。
         if !state.text_events.is_empty() {
-            let focused_name = self
-                .focused
+            let focused_name = state
+                .active_focus
                 .as_ref()
                 .and_then(|k| k.as_name())
                 .map(|s| s.to_string());
@@ -2156,6 +2663,25 @@ impl View for Gallery {
         // 而一个跑了几小时的窗口正是最可能暴露这件事的场景）。
         if self.enter_ms > zephyra_style::anim::ENTER_MS {
             self.enter_ms = zephyra_style::anim::ENTER_MS;
+        }
+        // 补充控件的逐帧推进：忙碌指示器走帧序号；数字框 / 进度环的文本
+        // 缓存只在值变化时更新（Val::S 要 &'static str，不能每帧 leak）。
+        self.catalog_busy.advance(dt);
+        let spin = self.catalog_spin.value();
+        if self.catalog_spin_text.parse::<i32>().ok() != Some(spin) {
+            self.catalog_spin_text = Box::leak(spin.to_string().into_boxed_str());
+        }
+        let ring = format!("{}%", self.catalog_ring.percent());
+        if self.catalog_ring_text != ring {
+            self.catalog_ring_text = Box::leak(ring.into_boxed_str());
+        }
+        let sel = self.catalog_selector.selected_id();
+        if self.catalog_selector_text != sel {
+            self.catalog_selector_text = Box::leak(sel.into_boxed_str());
+        }
+        let busy_icon = self.catalog_busy.icon_name();
+        if self.catalog_busy_icon != busy_icon {
+            self.catalog_busy_icon = Box::leak(busy_icon.into_boxed_str());
         }
         // 视口与缩放比：断点判据的唯一来源。宿主每帧开头推一次，于是 resize 之后
         // **下一帧**的树就按新断点造 —— 这正是 WinUI AdaptiveTrigger 的节奏
@@ -2264,8 +2790,14 @@ impl View for Gallery {
     ///
     /// ⚠ 不能用「`render` 统计变了没有」代替：动画收敛到端点后属性 diff 确实
     /// 恒为零，但那要到**下一帧**才看得见 —— 那时循环已经睡了。
+    fn take_pending_url(&mut self) -> Option<&'static str> {
+        self.pending_url.take()
+    }
+
     fn wants_frames(&self) -> bool {
-        self.enter_ms < zephyra_style::anim::ENTER_MS
+        // 忙碌指示器只在它自己那页泵帧 —— 别的路由上它根本没画，不能让全局空转。
+        (self.route == "catalog" && self.catalog_busy.is_animating())
+            || self.enter_ms < zephyra_style::anim::ENTER_MS
             || self.switch_demo.is_animating()
             || self.glass_decor.is_animating()
             || self.switch_solid.is_animating()
@@ -2282,7 +2814,55 @@ impl View for Gallery {
             || self.liquid_dd_glass_motion.is_animating()
     }
 
-    fn view(&self, _ctx: &Context<'_>) -> Element {
+    fn view(&self, ctx: &Context<'_>) -> Element {
+        // 建立字符边界 → 累计像素宽度的表（on_input 的反查数据源）并把
+        // 光标 / 选区端点的字节下标换算成像素。字号与 `.zstyle` 的 field-text 一致。
+        let text = self.text_field.text();
+        let cursor = self.text_field.cursor().min(text.len());
+        let (begin, end) = self.text_field.selection().unwrap_or((cursor, cursor));
+        let style = zephyra_core::text::TextStyle {
+            size: 15.0,
+            ..Default::default()
+        };
+        let mut advances: Vec<(usize, f32)> = Vec::with_capacity(text.len() + 1);
+        advances.push((0, 0.0));
+        if let Some(engine) = ctx.engine.as_ref() {
+            let mut engine = engine.borrow_mut();
+            let mut x = 0.0;
+            for (i, ch) in text.char_indices() {
+                x += engine.advance(ch, &style);
+                advances.push((i + ch.len_utf8(), x));
+            }
+        } else {
+            // 没有文本能力：退回每字节 1px（离线/单测路径）。
+            for (i, _) in text.char_indices() {
+                advances.push((i + 1, (i + 1) as f32));
+            }
+        }
+        let px_at = |byte: usize| -> f32 {
+            advances
+                .iter()
+                .find(|(b, _)| *b >= byte)
+                .map(|(_, p)| *p)
+                .unwrap_or_else(|| advances.last().map(|(_, p)| *p).unwrap_or(0.0))
+        };
+        let caret_px = px_at(cursor);
+        // 内容可视宽度 = 控件宽 240 − 左右 padding 20 − 清空按钮预留 28。
+        let content_w = if text.is_empty() { 220.0 } else { 192.0 };
+        let mut scroll = self.text_scroll_x.get();
+        if caret_px - scroll > content_w {
+            scroll = caret_px - content_w;
+        }
+        if caret_px < scroll {
+            scroll = caret_px;
+        }
+        scroll = scroll.max(0.0);
+        self.text_scroll_x.set(scroll);
+        // 绑定值已扣掉滚动：模板的 translate-x 直接用。
+        self.text_field_cursor_px.set(caret_px - scroll);
+        self.text_field_sel_begin_px.set(px_at(begin) - scroll);
+        self.text_field_sel_end_px.set(px_at(end) - scroll);
+        *self.text_advances.borrow_mut() = advances;
         crate::ui::window(self)
     }
 }
@@ -2430,7 +3010,10 @@ impl zypui::Host for Gallery {
             "glass_params" => {
                 use crate::app::glass::GlassMode;
                 let rows: Vec<(crate::app::glass::Param, &'static str)> = match g.glass.mode {
-                    GlassMode::Cheap => {
+                    // 原版透镜与廉价路都只有两个物理量（位移 / 倒角带），色散在
+                    // 透镜里是 shader 按 `(cx·cy)/(hx·hy)` 写死的 7 通道分色，
+                    // 没有面板旋钮 —— 不摆「点了不动」的旋钮。
+                    GlassMode::Cheap | GlassMode::Original => {
                         let (a, b) = g.glass.cheap_texts();
                         vec![
                             (crate::app::glass::Param::Thickness, a),
@@ -2462,9 +3045,10 @@ impl zypui::Host for Gallery {
             // 算法切换按钮：标签是**当前**算法（按钮的 `checked` 表示「现在贵」）。
             "glass_mode_label_key" => S(match g.glass.mode {
                 crate::app::glass::GlassMode::Cheap => "ui.glass.pixel-offset",
+                crate::app::glass::GlassMode::Original => "ui.glass.original",
                 crate::app::glass::GlassMode::Physical => "ui.glass.physical-refraction",
             }),
-            "glass_mode_checked" => B(g.glass.mode == crate::app::glass::GlassMode::Physical),
+            "glass_mode_checked" => B(!matches!(g.glass.mode, crate::app::glass::GlassMode::Cheap)),
             "glass_filter_0" => zypui::Val::Raw(glass_filter_value(g, 0)),
             "glass_filter_1" => zypui::Val::Raw(glass_filter_value(g, 1)),
             "glass_filter_2" => zypui::Val::Raw(glass_filter_value(g, 2)),
@@ -2617,21 +3201,78 @@ impl zypui::Host for Gallery {
             ),
             // ---- 文本输入（TextField / TextArea） ----
             //
-            // 光标/选区按字节下标绑定，模板里按 translate-x 直接使用。
-            // 真实产品中应按字符宽度换算成 DIP，这里先按字节数给出位置，
-            // 足以验证「光标随输入移动、选区随选择扩展」的交互。
+            // 光标/选区端点由 `view()` 用文本引擎把字节下标换算成像素步进宽度，
+            // 模板的 translate-x 直接用像素 —— ASCII / CJK / IME 都对齐字形。
+            // ---- RinUI 目录补充控件（8 个） ----
+            "catalog_progress" => F(g.catalog_progress.value01()),
+            "catalog_progress_state" => S(if g.catalog_progress_taps.is_multiple_of(2) {
+                ""
+            } else {
+                "paused"
+            }),
+            "catalog_ring_text" => S(g.catalog_ring_text),
+            "catalog_ring_state" => S(match g.catalog_ring_taps % 3 {
+                0 => "running",
+                1 => "paused",
+                _ => "error",
+            }),
+            "catalog_bar_open" => B(g.catalog_bar.is_open()),
+            "catalog_color_sel" => F(g.catalog_color.selected() as f32),
+            "catalog_color_state" => S(if g.catalog_color_taps.is_multiple_of(2) {
+                ""
+            } else {
+                "tapped"
+            }),
+            "catalog_color_preview" => S(CATALOG_SWATCH_CLASSES[g.catalog_color.selected()]),
+            "catalog_spin_text" => S(g.catalog_spin_text),
+            "catalog_busy_icon" => S(g.catalog_busy_icon),
+            "catalog_busy_path" => g.catalog_busy_path(),
+            // ---- RinUI 目录第二批 10 个控件 ----
+            "c2_toggle" => B(g.c2_toggle.is_checked()),
+            "c2_pill" => B(g.c2_pill.is_checked()),
+            "c2_tool_highlight" => B(g.c2_tool.is_highlighted()),
+            "c2_link_visited" => B(g.c2_link.is_visited()),
+            "c2_badge_text" => S(g.c2_badge_text),
+            "c2_pages_count" => F(g.c2_pages.count() as f32),
+            "c2_pages_current" => F(g.c2_pages.current() as f32),
+            "c2_setexp_open" => B(g.c2_setexp.is_expanded()),
+            "c2_card_state" => S(if g.c2_card.is_selected() {
+                "selected"
+            } else {
+                ""
+            }),
+            "c2_badge_btn" => B(g.c2_badge_btn),
+            "c2_tip_btn" => B(g.c2_tip_btn),
+            // ToolTip 的真功能：hover 目标即显；点一下则固定显示。
+            "c2_tip_visible" => B(g.hovers("c2:tip-target") || g.c2_tip_btn),
+            "c2_pages_btn" => B(g.c2_pages_btn),
+            "c2_setting_btn" => B(g.c2_setting_btn),
+            "c2_setting_clickable" => B(g.c2_setting.is_clickable()),
+            "c2_card_btn" => B(g.c2_card_btn),
+            "catalog_expanded" => B(g.catalog_expander.is_expanded()),
+            "catalog_selector_sel" => S(g.catalog_selector_text),
+            "catalog_selector_state" => S(if g.catalog_selector_taps.is_multiple_of(2) {
+                ""
+            } else {
+                "tapped"
+            }),
+            "catalog_selector_items" => L(CATALOG_SELECTOR_KEYS
+                .iter()
+                .enumerate()
+                .map(|(i, key)| {
+                    rec(vec![
+                        ("id", S(Box::leak(format!("sel:{i}").into_boxed_str()))),
+                        ("label", S(g.tr(key))),
+                    ])
+                })
+                .collect()),
+            "catalog_avatar_initials" => S(g.catalog_avatar.initials()),
             "text_field_value" => S(g.text_field_text),
-            "text_field_cursor" => F(g.text_field.cursor() as f32),
-            "text_field_sel_begin" => F(g
-                .text_field
-                .selection()
-                .map(|(b, _)| b as f32)
-                .unwrap_or(0.0)),
-            "text_field_sel_end" => F(g
-                .text_field
-                .selection()
-                .map(|(_, e)| e as f32)
-                .unwrap_or(0.0)),
+            // 文本节点向左平移 scroll（内容滚动），光标/选区已扣掉 scroll 故用原值。
+            "text_field_scroll" => F(-g.text_scroll_x.get()),
+            "text_field_cursor" => F(g.text_field_cursor_px.get()),
+            "text_field_sel_begin" => F(g.text_field_sel_begin_px.get()),
+            "text_field_sel_end" => F(g.text_field_sel_end_px.get()),
             "text_field_has_sel" => B(g.text_field.selection().is_some()),
             "text_field_composing" => B(g.text_field.is_composing()),
             "ime_popup_open" => B(g.ime_popup_open),

@@ -308,20 +308,20 @@ float4 ShadeSource(VSOut i) {
         float a_body = a_fill + a_tint * (1.0 - a_fill);
         float3 rgb_body = rgb_fill + float3(a_tint, a_tint, a_tint) * (1.0 - a_fill);
 
-        // ---- ② 内侧白辉光：SVG `inset 0 0 20px -5px rgba(255,255,255,.45)`----
+        // ---- ② 内侧白辉光：贴边的一条**薄**高光，不是一整圈奶白 ----
         //
-        // CSS 那条是**绝对 20px** 的模糊内阴影：峰值 0.45 摊在 ~20px 宽的带上。
-        // ⚠ 照搬到 34px 高的按钮上会把整颗按钮刷白（实测：白块）——
-        //   CSS 的模糊半径是**绝对像素**，而那个 20px 是给 300×200 的演示面板的。
-        // ⇒ 宽度随元素缩放：短边的 10% + 位移幅度的一部分（玻璃越厚，倒角带越宽，
-        //   这与 SVG 里 `bezelWidth` 决定光学带宽是一回事），封顶 24px。
-        float gw = clamp(short_half * 2.0 * 0.10 + amt * 0.8, 2.0, 24.0);
-        // 模糊内阴影的剖面：未模糊的矩形往里缩 `spread`（CSS 的 `-5px` = 带宽的
-        // 25%），再叠一个 σ = 半径/2 的高斯 ⇒ 峰值在边内侧、向外沿也淡出。
-        float gsigma = gw * 0.5;
-        float gpos = gw * 0.25;
+        // ⚠ 旧值（带宽 24px、峰值 0.42）在 220×120 的玻璃块上是一圈 ~22px 宽、
+        //   42% 白的**奶白带** —— 看起来像磨砂瓷砖，而不是原版液态玻璃那种
+        //   「背景直直透过来、边缘一条亮线」的清玻璃。原版 `lens()` 根本没有这层
+        //   大面积内辉光，光学带宽只有倒角那几像素。
+        //
+        // ⇒ 带宽随短边缩放但**封顶 10px**，峰值降到 0.16，峰值贴着轮廓线：
+        //   只补一点内侧的亮度过渡，让亮线不显得是硬贴上去的描边。
+        float gw = clamp(short_half * 2.0 * 0.05 + amt * 0.3, 2.0, 10.0);
+        float gsigma = gw * 0.4;
+        float gpos = gw * 0.15;
         float gg = (depth - gpos) / gsigma;
-        float a_glow = exp(-gg * gg) * 0.42 * alpha;
+        float a_glow = exp(-gg * gg) * 0.16 * alpha;
 
         // ---- ③ 高光：SVG `spec_layer`（`generateSpecularMap`）----
         //

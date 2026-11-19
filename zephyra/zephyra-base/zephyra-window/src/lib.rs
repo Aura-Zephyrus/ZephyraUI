@@ -37,12 +37,14 @@ mod handle;
 mod host;
 mod set;
 mod spec;
+mod waker;
 
 pub use backend::Backend;
 pub use handle::{WindowCommand, WindowHandle};
 pub use host::{HostEventOutcome, HostTick, WindowHost};
 pub use set::{ShutdownMode, WindowSet};
 pub use spec::{WindowKey, WindowSpec};
+pub use waker::{AppWaker, Drained};
 
 /// 重新导出，方便后端 crate 实现 [`Backend`] 时不必各自依赖配置 crate。
 pub use zephyra_app_config::{AppConfig, WindowOpts};
@@ -50,3 +52,7 @@ pub use zephyra_app_config::{AppConfig, WindowOpts};
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "waker_tests.rs"]
+mod waker_tests;

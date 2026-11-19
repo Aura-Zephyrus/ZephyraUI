@@ -36,6 +36,7 @@
 //! 控件**自身语义**的文案（复选框组组头的「全选」）归 [`i18n`]，自带三语言
 //! 默认译文，应用可覆盖。
 
+pub mod catalog;
 pub mod checkbox;
 pub mod i18n;
 pub mod liquid_button;
@@ -50,6 +51,12 @@ pub mod text_field;
 pub mod toggle;
 pub mod tokens;
 
+pub use catalog::{
+    AvatarState, BusyIndicatorState, CardState, ColorPickerState, ExpanderState, HyperlinkState,
+    InfoBadgeState, InfoBarState, PageIndicatorState, Progress, SelectorBarState,
+    SettingExpanderState, SettingItemState, SpinBoxState, ToggleState, ToolButtonState,
+    ToolTipState,
+};
 pub use checkbox::{CheckState, Checkbox, CheckboxGroup};
 pub use i18n::{
     builtin_messages, is_key_param, merge_builtin, resolve, BUILTIN_KEYS, CHECKBOX_SELECT_ALL,

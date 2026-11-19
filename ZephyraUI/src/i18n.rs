@@ -78,6 +78,7 @@ pub const BUILTIN_KEYS: &[&str] = &[CHECKBOX_SELECT_ALL];
 pub const KEY_PARAMS: &[(&str, &str)] = &[
     ("Button", "label_key"),
     ("PillButton", "label_key"),
+    ("ToggleButton", "label_key"),
     ("RoundButton", "label_key"),
     ("CheckBox", "label_key"),
     ("CheckBoxGroup", "label_key"),

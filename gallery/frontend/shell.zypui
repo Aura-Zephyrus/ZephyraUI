@@ -280,8 +280,9 @@
 <component name="GlassDecor" params="">
   <PageRoot key="glass-decor" cls="glass-decor-row">
     <ToggleSwitch key="glass:decor" label_key="ui.decorations" material="glass" checked="{@glass_decor_on}" knob_x="{@glass_decor_knob_x}" knob_scale_x="{@glass_decor_knob_scale_x}" knob_scale_y="{@glass_decor_knob_scale_y}" knob_bg="{@glass_decor_knob_bg}" knob_filter="{@glass_decor_knob_filter}" knob_decoration="{@glass_decor_knob_decoration}" animated="animated"/>
-    <!-- 算法切换：默认 SVG 式像素偏移（不采样背景 ⇒ 不拷全屏副本），
-         一键切到物理折射（斯涅尔）看那条**完整保留**的旧路径。 -->
+    <!-- 算法切换：默认原版液态玻璃（`lens()` 逐字转译，背景被掰弯），
+         一键切到廉价像素偏移（不采样背景 ⇒ 不拷全屏副本）。斯涅尔四参数
+         那条路仍完整保留在 `GlassMode::Physical`。 -->
     <RoundButton key="glass:mode" label_key="{@glass_mode_label_key}" checked="{@glass_mode_checked}"/>
   </PageRoot>
 </component>
@@ -351,7 +352,7 @@
     <TextLabel key="textinput-blurb" text="{tr('ui.textinput.blurb')}" level="text-body"/>
     <Section key="sec-textfield" title="{tr('ui.textfield')}">
       <DemoRow label="{tr('ui.single-line')}">
-        <TextField key="text:field" value="{@text_field_value}" placeholder="{tr('ui.textinput.placeholder')}" cursor="{@text_field_cursor}" selection_begin="{@text_field_sel_begin}" selection_end="{@text_field_sel_end}"/>
+        <TextField key="text:field" value="{@text_field_value}" placeholder="{tr('ui.textinput.placeholder')}" cursor="{@text_field_cursor}" selection_begin="{@text_field_sel_begin}" selection_end="{@text_field_sel_end}" scroll_x="{@text_field_scroll}"/>
       </DemoRow>
       <DemoRow label="{tr('ui.actions')}">
         <RoundButton key="text:select-all" label_key="ui.select-all"/>
@@ -382,6 +383,89 @@
           </ScrollView>
           <ScrollBar key="scroll:bar" thumb_len="{@scroll_thumb_len}" thumb_pos="{@scroll_thumb_pos}"/>
         </box>
+      </DemoRow>
+    </Section>
+  </PageRoot>
+</component>
+<!-- RinUI 目录补充控件页：每个 DemoRow 对应一个已存在模板 + 本轮新增的 Rust 状态模型。 -->
+<component name="PageCatalog" params="">
+  <PageRoot key="catalog" cls="page-catalog">
+    <TextLabel key="catalog-blurb" text="{tr('ui.catalog.blurb')}" level="text-body"/>
+    <Section key="sec-catalog" title="{tr('ui.catalog.title')}">
+      <DemoRow label="{tr('ui.catalog.progress')}">
+        <ProgressBar key="catalog:progress" value01="{@catalog_progress}" state="{@catalog_progress_state}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.ring')}">
+        <ProgressRing key="catalog:ring" value="{@catalog_ring_text}" state="{@catalog_ring_state}" show_value="{false}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.infobar')}">
+        <InfoBar key="catalog:bar" title="{tr('ui.catalog.bar-title')}" text="{tr('ui.catalog.bar-text')}" severity="info" closable="{@catalog_bar_open}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.color')}">
+        <box key="catalog:color-row" class="color-row">
+          <ColorPicker key="catalog:color" sel="{@catalog_color_sel}" state="{@catalog_color_state}"/>
+          <box key="catalog:color-preview" class="color-preview {@catalog_color_preview}"/>
+        </box>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.spin')}">
+        <SpinBox key="catalog:spin" value="{@catalog_spin_text}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.busy')}">
+        <BusyIndicator key="catalog:busy" path="{@catalog_busy_path}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.expander')}">
+        <Expander key="catalog:expander" title="{tr('ui.catalog.expander-title')}" expanded="{@catalog_expanded}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.selector')}">
+        <SelectorBar key="catalog:selector" items="{@catalog_selector_items}" sel="{@catalog_selector_sel}" state="{@catalog_selector_state}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.catalog.avatar')}">
+        <Avatar key="catalog:avatar" initials="{@catalog_avatar_initials}" accent="{true}"/>
+      </DemoRow>
+    </Section>
+  </PageRoot>
+</component>
+
+<!-- RinUI 目录第二批 10 个控件。每个控件的状态流转住在 zephyra_ui::catalog。 -->
+<component name="PageCatalog2" params="">
+  <PageRoot key="catalog2" cls="page-catalog2">
+    <TextLabel key="catalog2-blurb" text="{tr('ui.c2.blurb')}" level="text-body"/>
+    <Section key="sec-catalog2" title="{tr('ui.c2.title')}">
+      <DemoRow label="{tr('ui.c2.toggle')}">
+        <ToggleButton key="c2:toggle" label_key="ui.c2.toggle-label" checked="{@c2_toggle}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.pill')}">
+        <PillButton key="c2:pill" label_key="ui.c2.pill-label" icon="star" checked="{@c2_pill}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.tool')}">
+        <ToolButton key="c2:tool" icon="gear" highlighted="{@c2_tool_highlight}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.link')}">
+        <Hyperlink key="c2:link" text="{tr('ui.c2.link-label')}" url="https://ui.rinlit.cn/zh/" visited="{@c2_link_visited}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.badge')}">
+        <InfoBadge key="c2:badge" text="{@c2_badge_text}" severity="success" solid="{true}"/>
+        <RoundButton key="c2:badge-inc" label_key="ui.c2.inc" checked="{@c2_badge_btn}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.tip')}">
+        <RoundButton key="c2:tip-target" label_key="ui.c2.tip-target" icon="bell" checked="{@c2_tip_btn}"/>
+        <ToolTip key="c2:tip" text="{tr('ui.c2.tip-text')}" visible="{@c2_tip_visible}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.pages')}">
+        <PageIndicator key="c2:pages" count="{@c2_pages_count}" current="{@c2_pages_current}"/>
+        <RoundButton key="c2:pages-next" label_key="ui.c2.next" checked="{@c2_pages_btn}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.setting')}">
+        <SettingItem key="c2:setting" icon="settings" title="{tr('ui.c2.setting-title')}" desc="{tr('ui.c2.setting-desc')}" clickable="{@c2_setting_clickable}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.setexp')}">
+        <SettingExpander key="c2:setexp" title="{tr('ui.c2.setexp-title')}" desc="{tr('ui.c2.setexp-desc')}" expanded="{@c2_setexp_open}"/>
+      </DemoRow>
+      <DemoRow label="{tr('ui.c2.card')}">
+        <Card key="c2:card" extra="{@c2_card_state}">
+          <TextLabel key="c2:card-label" text="{tr('ui.c2.card-label')}" level="text-body"/>
+        </Card>
+        <RoundButton key="c2:card-toggle" label_key="ui.c2.toggle-label" checked="{@c2_card_btn}"/>
       </DemoRow>
     </Section>
   </PageRoot>
@@ -454,6 +538,12 @@
           </if>
           <if cond="(@route == 'scroll')">
             <PageScroll/>
+          </if>
+          <if cond="(@route == 'catalog')">
+            <PageCatalog/>
+          </if>
+          <if cond="(@route == 'catalog2')">
+            <PageCatalog2/>
           </if>
         </box>
       </box>

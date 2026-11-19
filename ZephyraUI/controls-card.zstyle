@@ -21,6 +21,11 @@ box.card {
     border-color: @card_border;
 }
 
+/* 选中态：强调色描边（RinUI Card 的可点状态）。 */
+box.card.selected {
+    border-color: @accent_fill;
+}
+
 box.setting-card {
     background: @card;
     corner-radius: 16px;
