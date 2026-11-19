@@ -160,9 +160,9 @@ MCP host 以 stdio 启动 CLI：
 
 以下路径均**相对仓库根**：
 
-- `ZephyraCLI/README.md` —— CLI 命令表与 `mcp` 子命令说明
+- `E:\ZephyraCLI\zephyra-cli\README.md` —— CLI 命令表与 `mcp` 子命令说明
 - `zephyra/zephyra-fx/src/bridge.rs` —— 桥协议、行解析、树/属性 dump、采集器
-- `ZephyraCLI/src/commands/mcp.rs` —— MCP 工具表、schema、并发模型、重连与取消
+- `E:\ZephyraCLI\zephyra-cli\src\commands\mcp.rs` —— MCP 工具表、schema、并发模型、重连与取消
 - `docs/dev-log/2026-10-25-mcp-debug-bridge.md` —— 调试桥的引入与协议分层
 - `docs/dev-log/2026-10-26-mcp-input-layout-d3d12-capture.md` —— 输入注入、文本布局、D3D12 读回截图
 - `docs/dev-log/2026-10-26-mcp-clicks-resources.md` —— 拖动、逐帧性能、资源遥测

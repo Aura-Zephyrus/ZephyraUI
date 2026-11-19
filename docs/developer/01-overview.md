@@ -73,8 +73,8 @@ zephyra/
   zephyra-core/extra/   同上，但零依赖 + 无 GPU 可单测的纯逻辑
     zephyra-bezier/      可配置三次方贝塞尔缓动
 zstylec/             .zstyle 编译器（解析 + 检查）
-ZephyraCLI/          命令行：new / check / dev / run / build / info / props
-                     （+ mcp / bridge / perf / debug：直连运行中应用的调试设施）
+ZephyraCLI/            已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraCLI
+                       （zstylec / zypuic 的 lib 仍在本仓，供 build.rs 使用）
 ZephyraUI/           控件层 + RinUI 风格 gallery
 ```
 

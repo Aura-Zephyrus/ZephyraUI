@@ -26,9 +26,6 @@ members = [
     # 是命门」结论在这里同样成立，dev/release 漂移在结构上不可能。
     "zypui",
     "zypuic",
-    # 命令行前端。与 zstylec 同一个 workspace —— 而不只是路径依赖邻居 ——
-    # 所以「CLI 看到的属性表」与「编译器看到的属性表」不可能是两份。
-    "ZephyraCLI",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
     # winit → core 的输入翻译，三个后端共用一份（winit 类型住这里，core 装不下）。

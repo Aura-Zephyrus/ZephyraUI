@@ -26,7 +26,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1568 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码已独立成仓，不再计入） |
+| 测试 | `cargo test --workspace` —— 1491 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码与 CLI 已独立成仓，不再计入） |
 | 隔离门禁 | `cargo tree -p zephyra-vector --depth 1` —— 只出现 `ab_glyph` / `bytemuck`；出现任何 workspace crate 即为破坏隔离 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
@@ -35,14 +35,15 @@
 ```text
 cargo test -p zephyra-core <filter>          # 单 crate / 单条用例
 cargo test -p zephyra-vector                 # 矢量绘制库：几何 / 图标 / 文本 / 顶点展开 / 光栅（294 条）
-cargo test -p zephyra-cli                    # 21 条，每条都是实测踩过的坑
 cargo test -p zephyra-dcomp --lib            # 纯逻辑断言，不要窗口
 cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
 cargo run -p zephyra-gallery --bin gallery -- --list-routes --dump-cpu --route <id>
 cargo run -p zephyra-gallery --bin gallery -- --dump-cpu --bench --alloc-probe
-cargo run -p zstylec -- check <file.zstyle>  # 也可用 zephyra check（同一份编译器）
-cargo run -p zstylec -- fmt [--check] <file.zstyle>   # 排版：只动空白，不改值（判据在 zstylec/src/fmt.rs）
-cargo run -p zypuic -- fmt [--check] <file.zypui>    # 排版：只动位置，不改内容（判据在 zypuic/src/fmt.rs）
+# CLI 与编译器前端已迁至独立仓 E:\ZephyraCLI（https://github.com/Aura-Zephyrus/ZephyraCLI）
+# 主仓保留 zstylec / zypuic 的**库**（gallery build.rs 用 zypuic::compile）
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zephyra-cli -- <子命令>
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec-bin -- fmt [--check] <file.zstyle>
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zypuic-bin -- fmt [--check] <file.zypui>
 ```
 
 ### `--workspace` 不是可选项
@@ -51,7 +52,7 @@ cargo run -p zypuic -- fmt [--check] <file.zypui>    # 排版：只动位置，�
 只跑 **754 条**（本机 2026-11-12 实测）。另外这些 crate 在 `members` 里但**不在**
 `default-members`，
 无差别的 `cargo build` / `cargo test` 连编都不编（这是有意的：默认构建不该编译
-unsafe 与设备代码）：`zstylec`、`zephyra-style`、`zephyra-cli`、
+unsafe 与设备代码）：`zstylec`、`zephyra-style`、
 `zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
 `zephyra-platform-win`、`zephyra-platform-linux`、`zephyra-winit-d3d12`、
 `zephyra-vulkan`、`zephyra-winit-input`、`zephyra-ui`，以及两个 `extra/` 下的全部包
@@ -248,9 +249,10 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 6. **命名规范就是「通过 clippy 的 `upper_case_acronyms` 且 clippy 零警告」**：
    `SRV` / `PSO` / `ID` 全大写。不要另立「缩写要不要展开」「变量该多长」这类规矩——
    机器查不了、也没有共识，写进规范只会变成口水仗。
-7. **workspace 内依赖一律路径依赖，且必须同属一个 workspace**：`ZephyraCLI` 与
-   `zstylec` 同 workspace，所以「CLI 看到的属性表」与「编译器看到的属性表」
-   在结构上不可能是两份——否则会出现「CLI 说没错、编译器说有错」。
+7. **编译库与命令行前端分离**：`zstylec` / `zypuic` 的 lib 留在本 workspace
+   （gallery 的 `build.rs` 要用 `zypuic::compile()`）；CLI 与两个 bin 迁到独立仓
+   `E:\ZephyraCLI`，通过路径依赖本仓的编译库。依赖严格单向（CLI 仓 → 本仓），
+   且「CLI 看到的属性表」与「编译器看到的属性表」仍是同一份 lib。
 8. **不加「注释必须少」这类 lint**：它会逼出废话注释凑数，与第 1 条正着来。
    注释长度只能靠评审 + 下面那些间接门禁约束。
 

@@ -15,10 +15,6 @@ description = "zstyle compiler (dev tool): compiles .zstyle text into a binary. 
 # 于是「CSS 的词法/语法」整块不进产品，而「CSS 的写法 + 我们的语义」这个边界
 # 由代码结构本身保证——不是靠文档约定。
 
-[[bin]]
-name = "zstylec"
-path = "src/main.rs"
-
 [lib]
 name = "zstylec"
 path = "src/lib.rs"

@@ -33,9 +33,5 @@ zephyra-core = { path = "../zephyra/zephyra-core" }
 name = "zypuic"
 path = "src/lib.rs"
 
-[[bin]]
-name = "zypuic"
-path = "src/main.rs"
-
 [lints.rust]
 unsafe_code = "forbid"
