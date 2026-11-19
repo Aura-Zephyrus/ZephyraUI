@@ -63,7 +63,7 @@
 - [ ] `gallery/src/bin/main.rs` **没有 D3D11 分支**（`Cargo.toml` 有 `d3d11`
       feature，但 bin 里只有 d3d12 / linux-vk 两个 cfg）⇒
       `--no-default-features --features d3d11` 只会打印「需要一个后端特性才能
-      开窗口」，与 `skills/zephyra-mcp/SKILL.md` 写的不一致。
+      开窗口」，与 ZephyraCLI 仓的 `skills/zephyra-mcp/SKILL.md` 写的不一致。
 - [ ] 桥的 `hit` 命令是**布局矩形探针**（`zephyra-fx/src/bridge.rs::hit_at`
       直接用 `arranged_rect()`），**不算滚动偏移也不算裁剪** ⇒ 拿它判断
       「点到的是哪个条目」会与真实命中不同。
