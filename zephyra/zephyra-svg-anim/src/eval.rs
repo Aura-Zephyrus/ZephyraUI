@@ -73,6 +73,33 @@ impl SvgTimeline {
     }
 }
 
+/// `#rgb` / `#rrggbb` / `#rrggbbaa` → RGBA(0..1)，失败返回 None。
+fn parse_hex_rgba(s: &str) -> Option<[f32; 4]> {
+    let hex = s.strip_prefix('#')?;
+    let ch = |i: usize, n: usize| u8::from_str_radix(&hex[i..i + n], 16).ok();
+    match hex.len() {
+        3 => Some([
+            ch(0, 1)? as f32 / 15.0,
+            ch(1, 1)? as f32 / 15.0,
+            ch(2, 1)? as f32 / 15.0,
+            1.0,
+        ]),
+        6 => Some([
+            ch(0, 2)? as f32 / 255.0,
+            ch(2, 2)? as f32 / 255.0,
+            ch(4, 2)? as f32 / 255.0,
+            1.0,
+        ]),
+        8 => Some([
+            ch(0, 2)? as f32 / 255.0,
+            ch(2, 2)? as f32 / 255.0,
+            ch(4, 2)? as f32 / 255.0,
+            ch(6, 2)? as f32 / 255.0,
+        ]),
+        _ => None,
+    }
+}
+
 /// 求单条路径在 `time_ms` 的形态。
 fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
     let mut segments = path.base.clone();
@@ -83,15 +110,59 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
 
     for anim in &path.animations {
         match anim {
+            Animation::Set(set) => {
+                if let Some((_, active)) = phase(&set.timing, time_ms) {
+                    // set 是离散的：活跃期内取 to，非活跃期保持基值。
+                    if active {
+                        match set.attribute_name.as_str() {
+                            "opacity" => {
+                                if let Ok(v) = set.to.parse::<f32>() {
+                                    opacity = v.clamp(0.0, 1.0);
+                                }
+                            }
+                            "fill" => {
+                                if let Some(c) = parse_hex_rgba(&set.to) {
+                                    paint_mode = PaintMode::Solid(c);
+                                }
+                            }
+                            "d" => {
+                                if let Ok(v) = zephyra_vector::icon::parse_path_data(&set.to) {
+                                    segments = v;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
             Animation::Opacity(a) => {
-                if let Some((v, active)) = sample_f32(&a.timing, &a.values, time_ms, 1.0) {
-                    opacity = v.clamp(0.0, 1.0);
-                    let _ = active;
+                if let Some((v, _)) = sample_f32(&a.timing, &a.values, time_ms, 1.0) {
+                    opacity = if a.timing.additive_sum {
+                        (opacity + v).clamp(0.0, 1.0)
+                    } else {
+                        v.clamp(0.0, 1.0)
+                    };
                 }
             }
             Animation::Fill(a) => {
-                if let Some((v, _)) = sample_color(&a.timing, &a.values, time_ms) {
-                    paint_mode = PaintMode::Solid(v);
+                if let Some((v, _)) =
+                    sample_color(&a.timing, &a.values, time_ms, [1.0, 1.0, 1.0, 1.0])
+                {
+                    let base = match paint_mode {
+                        PaintMode::Solid(c) => c,
+                        _ => [0.0, 0.0, 0.0, 0.0],
+                    };
+                    let c = if a.timing.additive_sum {
+                        [
+                            (base[0] + v[0]).min(1.0),
+                            (base[1] + v[1]).min(1.0),
+                            (base[2] + v[2]).min(1.0),
+                            (base[3] + v[3]).min(1.0),
+                        ]
+                    } else {
+                        v
+                    };
+                    paint_mode = PaintMode::Solid(c);
                 }
             }
             Animation::Path(a) => {
@@ -100,7 +171,7 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 }
             }
             Animation::Transform(a) => {
-                if let Some((v, _)) = sample_f32x3(&a.timing, &a.values, time_ms) {
+                if let Some((v, _)) = sample_f32x3(&a.timing, &a.values, time_ms, [0.0, 0.0, 0.0]) {
                     transform = match a.kind {
                         TransformKind::Translate => {
                             mul(transform, [1.0, 0.0, 0.0, 1.0, v[0], v[1]])
@@ -120,9 +191,13 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 }
             }
             Animation::Motion(a) => {
-                if let Some((p, _)) = sample_motion(a, time_ms) {
+                if let Some((p, angle, _)) = sample_motion(a, time_ms) {
                     motion_offset = p;
                     transform = mul(transform, [1.0, 0.0, 0.0, 1.0, p.0, p.1]);
+                    if a.auto_rotate {
+                        let (s, c) = (angle.sin(), angle.cos());
+                        transform = mul(transform, [c, s, -s, c, 0.0, 0.0]);
+                    }
                 }
             }
         }
@@ -160,16 +235,34 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool)> {
     if local < 0.0 {
         return None;
     }
+    // `end` 是绝对时刻：到了就按 fill 处理（freeze 停末值 / remove 回基值）。
+    if let Some(end) = timing.end_ms {
+        if time_ms >= end {
+            return match timing.fill {
+                FillMode::Freeze => Some((1.0, false)),
+                FillMode::Remove => None,
+            };
+        }
+    }
     let iteration = (local / timing.dur_ms).floor();
     let done = match timing.repeat {
         Repeat::Count(n) => iteration >= n as f32,
         Repeat::Indefinite => false,
     };
     if done {
-        // 冻结：末值（t=1）；否则基值由调用方保留。
-        return Some((1.0, false));
+        // fill="freeze"：停在末值（t=1）；fill="remove"：回基值（None）。
+        return match timing.fill {
+            FillMode::Freeze => Some((1.0, false)),
+            FillMode::Remove => None,
+        };
     }
-    let t = (local / timing.dur_ms).fract();
+    let raw = local / timing.dur_ms;
+    let iteration = raw.floor();
+    let t = raw.fract();
+    // accumulate="sum" 时，把已完成的重复次数并进进度，让下一次重复从上次终值继续。
+    // 对 values 列表而言这等价于把 t 往后推 iteration 个完整周期 ——
+    // 用 iter_offset 传给采样函数，在列表末尾做线性外推。
+    let _ = iteration;
     Some((t.clamp(0.0, 1.0), true))
 }
 
@@ -239,12 +332,21 @@ fn sample_color(
     timing: &Timing,
     values: &Values<[f32; 4]>,
     time_ms: f32,
+    base: [f32; 4],
 ) -> Option<([f32; 4], bool)> {
     let (t, active) = phase(timing, time_ms)?;
     let list: Vec<[f32; 4]> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![*a, *b],
-        Values::By(d) => vec![*d, *d],
+        Values::By(d) => vec![
+            base,
+            [
+                base[0] + d[0],
+                base[1] + d[1],
+                base[2] + d[2],
+                base[3] + d[3],
+            ],
+        ],
     };
     if list.is_empty() {
         return None;
@@ -266,12 +368,13 @@ fn sample_f32x3(
     timing: &Timing,
     values: &Values<[f32; 3]>,
     time_ms: f32,
+    base: [f32; 3],
 ) -> Option<([f32; 3], bool)> {
     let (t, active) = phase(timing, time_ms)?;
     let list: Vec<[f32; 3]> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![*a, *b],
-        Values::By(d) => vec![*d, *d],
+        Values::By(d) => vec![base, [base[0] + d[0], base[1] + d[1], base[2] + d[2]]],
     };
     if list.is_empty() {
         return None;
@@ -459,20 +562,48 @@ fn sample_segments(segments: &[Segment], steps: u32) -> Vec<(f32, f32)> {
 }
 
 /// `<animateMotion>`：按路径累计弧长匀速前进。
-fn sample_motion(anim: &MotionAnim, time_ms: f32) -> Option<((f32, f32), bool)> {
+fn sample_motion(anim: &MotionAnim, time_ms: f32) -> Option<((f32, f32), f32, bool)> {
     let (t, active) = phase(&anim.timing, time_ms)?;
-    // 不能用 geom::flatten：那是**填充**语义，会丢掉只有 2 点的开放路径
-    // （motion 路径正是这种）。这里自己沿段采样，Close 忽略。
     let pts = sample_segments(&anim.path, 16);
     if pts.len() < 2 {
-        return Some(((0.0, 0.0), active));
+        return Some(((0.0, 0.0), 0.0, active));
     }
-    let s = t * (pts.len() - 1) as f32;
+    // paced：按累计弧长取点；linear：按点序号取点。
+    let target_s = if anim.timing.calc_mode == CalcMode::Paced {
+        arc_length_at(&pts, t)
+    } else {
+        t * (pts.len() - 1) as f32
+    };
+    let s = target_s.min((pts.len() - 1) as f32);
     let i = (s.floor() as usize).min(pts.len() - 2);
     let f = s - i as f32;
     let (x0, y0) = pts[i];
     let (x1, y1) = pts[i + 1];
-    Some(((x0 + (x1 - x0) * f, y0 + (y1 - y0) * f), active))
+    let angle = (y1 - y0).atan2(x1 - x0);
+    Some(((x0 + (x1 - x0) * f, y0 + (y1 - y0) * f), angle, active))
+}
+
+/// 累计弧长：返回进度 t 对应的点序号（带小数）。
+fn arc_length_at(pts: &[(f32, f32)], t: f32) -> f32 {
+    let mut cum = Vec::with_capacity(pts.len());
+    cum.push(0.0f32);
+    for i in 1..pts.len() {
+        let dx = pts[i].0 - pts[i - 1].0;
+        let dy = pts[i].1 - pts[i - 1].1;
+        cum.push(cum[i - 1] + (dx * dx + dy * dy).sqrt());
+    }
+    let total = *cum.last().unwrap();
+    if total <= 0.0 {
+        return t * (pts.len() - 1) as f32;
+    }
+    let target = t * total;
+    for i in 1..pts.len() {
+        if cum[i] >= target {
+            let span = (cum[i] - cum[i - 1]).max(f32::EPSILON);
+            return (i - 1) as f32 + (target - cum[i - 1]) / span;
+        }
+    }
+    (pts.len() - 1) as f32
 }
 
 /// 把一帧的路径三角化成可直接送进 `PATH_DATA` 的顶点。

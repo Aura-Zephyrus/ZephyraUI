@@ -87,6 +87,12 @@ pub struct Timing {
     pub key_times: Vec<f32>,
     /// `keySplines`：每段的贝塞尔控制点（4 个数一段）。
     pub key_splines: Vec<Bezier>,
+    /// `end`：绝对结束时刻（毫秒）。`None` = 不提前结束。
+    pub end_ms: Option<f32>,
+    /// `additive="sum"`：动画值叠加到基值之上，而不是替换。
+    pub additive_sum: bool,
+    /// `accumulate="sum"`：每次重复把上一次的终值作为下一次的起点。
+    pub accumulate_sum: bool,
 }
 
 impl Default for Timing {
@@ -99,6 +105,9 @@ impl Default for Timing {
             calc_mode: CalcMode::Linear,
             key_times: Vec::new(),
             key_splines: Vec::new(),
+            end_ms: None,
+            additive_sum: false,
+            accumulate_sum: false,
         }
     }
 }
@@ -160,9 +169,21 @@ pub struct MotionAnim {
     pub auto_rotate: bool,
 }
 
+/// `<set>`：在一段时间内把属性设成固定值（离散，无插值）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetAnim {
+    pub timing: Timing,
+    /// 属性名（目前支持 opacity / fill / d）。
+    pub attribute_name: String,
+    /// 目标值（按属性名解释）。
+    pub to: String,
+}
+
 /// 一个元素上挂的全部动画。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Animation {
+    /// `<set>` 离散赋值。
+    Set(SetAnim),
     Opacity(OpacityAnim),
     Fill(FillAnim),
     Path(PathAnim),

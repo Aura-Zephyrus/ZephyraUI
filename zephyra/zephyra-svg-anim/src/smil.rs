@@ -23,6 +23,33 @@ use zephyra_vector::icon::{parse_path_data, parse_svg, FillRule, PaintMode};
 
 use crate::types::*;
 
+/// `#rgb` / `#rrggbb` / `#rrggbbaa` → RGBA(0..1)。
+fn parse_hex_rgba(s: &str) -> Option<[f32; 4]> {
+    let hex = s.strip_prefix('#')?;
+    let ch = |i: usize, n: usize| u8::from_str_radix(&hex[i..i + n], 16).ok();
+    match hex.len() {
+        3 => Some([
+            ch(0, 1)? as f32 / 15.0,
+            ch(1, 1)? as f32 / 15.0,
+            ch(2, 1)? as f32 / 15.0,
+            1.0,
+        ]),
+        6 => Some([
+            ch(0, 2)? as f32 / 255.0,
+            ch(2, 2)? as f32 / 255.0,
+            ch(4, 2)? as f32 / 255.0,
+            1.0,
+        ]),
+        8 => Some([
+            ch(0, 2)? as f32 / 255.0,
+            ch(2, 2)? as f32 / 255.0,
+            ch(4, 2)? as f32 / 255.0,
+            ch(6, 2)? as f32 / 255.0,
+        ]),
+        _ => None,
+    }
+}
+
 /// 解析带 SMIL 动画的 SVG 文本。
 pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
     let icon = parse_svg(text).map_err(|e| match e {
@@ -48,7 +75,11 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
         let paint_mode = if path_attrs.contains("fill=\"none\"") {
             PaintMode::None
         } else {
-            PaintMode::CurrentColor
+            // 解析 path 上的具体 fill 颜色（如 <set> 的基值来源）。
+            attr(path_attrs, "fill")
+                .and_then(parse_hex_rgba)
+                .map(PaintMode::Solid)
+                .unwrap_or(PaintMode::CurrentColor)
         };
         let fill_rule = if path_attrs.contains("fill-rule=\"evenodd\"")
             || path_attrs.contains("fill-rule='evenodd'")
@@ -66,7 +97,7 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
         let mut anim_rest = rest;
         loop {
             let mut found: Option<(&str, &str, &str)> = None; // (tag, attrs, after)
-            for tag in ["<animateMotion", "<animateTransform", "<animate"] {
+            for tag in ["<animateMotion", "<animateTransform", "<set", "<animate"] {
                 if let Some((attrs, after)) = next_tag(anim_rest, tag) {
                     // <animate> 是 <animateTransform> / <animateMotion> 的前缀：
                     // 若更长的标签在同一位置命中，就跳过短的那个。
@@ -113,6 +144,17 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
 }
 
 fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation> {
+    // <set> 用 dur 但不一定有 values，单独解析时间。
+    if tag == "<set" {
+        let timing = parse_timing(attrs)?;
+        let attribute_name = attr(attrs, "attributeName")?.to_string();
+        let to = attr(attrs, "to")?.to_string();
+        return Some(Animation::Set(SetAnim {
+            timing,
+            attribute_name,
+            to,
+        }));
+    }
     let timing = parse_timing(attrs)?;
     match tag {
         "<animateMotion" => {
@@ -196,6 +238,9 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
     let key_splines = attr(attrs, "keySplines")
         .map(parse_splines)
         .unwrap_or_default();
+    let end_ms = attr(attrs, "end").and_then(parse_time);
+    let additive_sum = attr(attrs, "additive") == Some("sum");
+    let accumulate_sum = attr(attrs, "accumulate") == Some("sum");
     Some(Timing {
         begin_ms,
         dur_ms,
@@ -204,6 +249,9 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         calc_mode,
         key_times,
         key_splines,
+        end_ms,
+        additive_sum,
+        accumulate_sum,
     })
 }
 
