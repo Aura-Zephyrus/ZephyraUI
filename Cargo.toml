@@ -16,6 +16,8 @@ members = [
     "zephyra/zephyra-core",
     # 后端无关的矢量绘制库：core 与 fx 都依赖它；它自己不依赖任何 workspace crate。
     "zephyra/zephyra-vector",
+    # SVG SMIL 动画引擎：解析 + 时间线 + 插值，只依赖 vector 与零依赖 bezier。
+    "zephyra/zephyra-svg-anim",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-style",
     "zstyle-compile",

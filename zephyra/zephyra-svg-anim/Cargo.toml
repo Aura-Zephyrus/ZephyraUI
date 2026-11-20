@@ -1,0 +1,22 @@
+[package]
+name = "zephyra-svg-anim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "SVG SMIL animation engine: parses <animate>/<animateTransform>/<animateMotion> and evaluates a timeline into renderable frames"
+publish = false
+
+# 分层：本 crate 只依赖绘制库（解析 / 几何 / 三角化）与零依赖的贝塞尔求值，
+# **不依赖 zephyra-core** —— 于是时间线与插值能在无 GPU、无窗口的 CI 里逐点断言。
+# 产物是路径段 / 变换 / 颜色，应用层自己决定怎么送进 DisplayList。
+[dependencies]
+zephyra-vector = { path = "../zephyra-vector", version = "0.1.0" }
+zephyra-bezier = { path = "../zephyra-core/extra/zephyra-bezier" }
+
+[lib]
+name = "zephyra_svg_anim"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "forbid"

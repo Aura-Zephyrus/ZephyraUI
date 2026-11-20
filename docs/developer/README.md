@@ -33,6 +33,8 @@
 | [design-tokens.md](design-tokens.md) | 设计令牌规范 |
 | [responsive-and-touch.md](responsive-and-touch.md) | 响应式断点与触控目标 |
 | [animation.md](animation.md) / [animation-result.md](animation-result.md) | 动画规范与实测结果 |
+| SVG SMIL 动画引擎 | `zephyra-svg-anim`：解析 animate/animateTransform/animateMotion，
+  时间线求值成帧，`to_dynamic_path` 三角化送 `PATH_DATA`（只做 SMIL，不做 CSS） |
 | [i18n.md](i18n.md) | 国际化实现与词汇表 |
 
 ## 现状类

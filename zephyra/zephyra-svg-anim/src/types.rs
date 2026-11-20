@@ -1,0 +1,213 @@
+//! SVG 动画引擎的数据类型。
+//!
+//! 设计取舍见 crate 根文档。这里只放数据结构，不掺解析/求值逻辑。
+
+use zephyra_bezier::Bezier;
+pub use zephyra_vector::icon::{FillRule, PaintMode, Segment};
+
+/// SMIL 动画元素解析错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SvgAnimError {
+    /// 文本里找不到 `<svg` 根。
+    NoSvgRoot,
+    /// 根元素缺 `viewBox`。
+    NoViewBox,
+    /// `viewBox` 不是四个数。
+    BadViewBox,
+    /// 没有可动画的 `<path>`。
+    NoPath,
+    /// `<animate>` 缺 `attributeName`。
+    MissingAttributeName,
+    /// `dur` / `begin` 等时间值非法。
+    BadTiming,
+    /// `values` / `from` / `to` 内容非法。
+    BadValues,
+}
+
+impl core::fmt::Display for SvgAnimError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = match self {
+            Self::NoSvgRoot => "找不到 <svg> 根元素",
+            Self::NoViewBox => "缺少 viewBox",
+            Self::BadViewBox => "viewBox 必须是 4 个数",
+            Self::NoPath => "没有可动画的 <path>",
+            Self::MissingAttributeName => "<animate> 缺少 attributeName",
+            Self::BadTiming => "时间属性非法",
+            Self::BadValues => "values/from/to 非法",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// 重复次数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Repeat {
+    /// 固定次数（0 = 不播，1 = 播一次）。
+    Count(u32),
+    /// `repeatCount="indefinite"` / `repeatDur="indefinite"`。
+    Indefinite,
+}
+
+/// `fill` 属性：动画结束后停在终值还是回到基值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillMode {
+    /// 回到动画前的基值（默认）。
+    Remove,
+    /// 冻结在最后一次求值的结果。
+    Freeze,
+}
+
+/// `calcMode` 属性：关键帧之间的插值方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalcMode {
+    /// 线性插值（默认）。
+    Linear,
+    /// 阶跃：在 keyTimes 边界才跳到下一值。
+    Discrete,
+    /// 按路径长度匀速（用于 `animateMotion`）。
+    Paced,
+    /// `keySplines` 指定的三次贝塞尔缓动。
+    Spline,
+}
+
+/// 一个动画的时间参数（SMIL 共通属性）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Timing {
+    /// `begin`：相对文档开始的延迟（毫秒）。
+    pub begin_ms: f32,
+    /// `dur`：单次时长（毫秒）。
+    pub dur_ms: f32,
+    /// 重复策略。
+    pub repeat: Repeat,
+    /// 结束后是否冻结。
+    pub fill: FillMode,
+    /// 插值方式。
+    pub calc_mode: CalcMode,
+    /// `keyTimes`：每个值的时间比例（0..1，升序，与 values 等长）。
+    pub key_times: Vec<f32>,
+    /// `keySplines`：每段的贝塞尔控制点（4 个数一段）。
+    pub key_splines: Vec<Bezier>,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            begin_ms: 0.0,
+            dur_ms: 0.0,
+            repeat: Repeat::Count(1),
+            fill: FillMode::Remove,
+            calc_mode: CalcMode::Linear,
+            key_times: Vec::new(),
+            key_splines: Vec::new(),
+        }
+    }
+}
+
+/// 动画目标值序列。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Values<T> {
+    /// `from="a" to="b"`：两端。
+    FromTo(T, T),
+    /// `by="d"`：从基值加增量。
+    By(T),
+    /// `values="a;b;c"`：多关键帧。
+    List(Vec<T>),
+}
+
+/// `opacity` 动画（0..1）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpacityAnim {
+    pub timing: Timing,
+    pub values: Values<f32>,
+}
+
+/// `fill` 动画（RGBA，0..1）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillAnim {
+    pub timing: Timing,
+    pub values: Values<[f32; 4]>,
+}
+
+/// `d` 动画（路径形变）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathAnim {
+    pub timing: Timing,
+    pub values: Values<Vec<Segment>>,
+}
+
+/// `<animateTransform>` 的变换种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformKind {
+    Translate,
+    Scale,
+    Rotate,
+}
+
+/// `<animateTransform>`：三个分量（平移 x/y、缩放 x/y、旋转 angle/cx/cy）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransformAnim {
+    pub timing: Timing,
+    pub kind: TransformKind,
+    pub values: Values<[f32; 3]>,
+}
+
+/// `<animateMotion>`：沿路径运动。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MotionAnim {
+    pub timing: Timing,
+    pub path: Vec<Segment>,
+    /// 是否让元素朝向运动方向（SMIL `rotate="auto"`）。
+    pub auto_rotate: bool,
+}
+
+/// 一个元素上挂的全部动画。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Animation {
+    Opacity(OpacityAnim),
+    Fill(FillAnim),
+    Path(PathAnim),
+    Transform(TransformAnim),
+    Motion(MotionAnim),
+}
+
+/// 解析后的可动画 SVG（图标级子集 + SMIL 动画）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimatedSvg {
+    /// (min_x, min_y, width, height)
+    pub view_box: (f32, f32, f32, f32),
+    pub paths: Vec<AnimatedPath>,
+}
+
+/// 一条带动画的 `<path>`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimatedPath {
+    /// 基础路径段（无动画时的形态）。
+    pub base: Vec<Segment>,
+    /// 基础填充：模式 + 规则。
+    pub paint_mode: PaintMode,
+    pub fill_rule: FillRule,
+    pub animations: Vec<Animation>,
+}
+
+/// 一帧的求值结果：一条路径的当前形态与外观。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedPath {
+    pub segments: Vec<Segment>,
+    pub paint_mode: PaintMode,
+    pub fill_rule: FillRule,
+    /// 最终不透明度（基值 1.0 × opacity 动画）。
+    pub opacity: f32,
+    /// 累积的 2D 仿射变换：[a, b, c, d, e, f]
+    /// （x' = a·x + c·y + e；y' = b·x + d·y + f）。
+    pub transform: [f32; 6],
+    /// 运动路径带来的偏移（已并进 transform 的 e/f，单独留一份便于调试/HUD）。
+    pub motion_offset: (f32, f32),
+}
+
+/// 一帧的完整结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvgFrame {
+    pub paths: Vec<RenderedPath>,
+    /// 当前时间（毫秒）。
+    pub time_ms: f32,
+}

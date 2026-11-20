@@ -2995,6 +2995,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-svg-anim"
+version = "0.1.0"
+dependencies = [
+ "zephyra-bezier",
+ "zephyra-vector",
+]
+
+[[package]]
 name = "zephyra-ui"
 version = "0.1.0"
 dependencies = [
