@@ -231,7 +231,13 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                 rotate_mode: match attr(attrs, "rotate") {
                     Some("auto") => MotionRotate::Auto,
                     Some("auto-reverse") => MotionRotate::AutoReverse,
-                    _ => MotionRotate::None,
+                    Some(v) => v
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .map(MotionRotate::FixedAngle)
+                        .unwrap_or(MotionRotate::None),
+                    None => MotionRotate::None,
                 },
                 mpath_href: attr(attrs, "mpath")
                     .or_else(|| attr(attrs, "href"))
@@ -362,6 +368,9 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         Some("never") => Restart::Never,
         _ => Restart::Always,
     };
+    let min_ms = attr(attrs, "min").and_then(parse_time).unwrap_or(0.0);
+    let max_ms = attr(attrs, "max").and_then(parse_time);
+    let access_key = attr(attrs, "accessKey").and_then(|s| s.trim().chars().next());
     Some(Timing {
         begin,
         dur_ms,
@@ -374,6 +383,9 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         additive_sum,
         accumulate_sum,
         restart,
+        min_ms,
+        max_ms,
+        access_key,
     })
 }
 
@@ -382,6 +394,15 @@ fn parse_begin(s: &str) -> Begin {
     let s = s.trim();
     if s == "indefinite" {
         return Begin::Indefinite;
+    }
+    // accessKey 通常单独给；begin 里也可能写成 "accessKey(k)"（非标准但兼容）。
+    if let Some(inner) = s
+        .strip_prefix("accessKey(")
+        .and_then(|x| x.strip_suffix(')'))
+    {
+        if let Some(c) = inner.trim().chars().next() {
+            return Begin::AccessKey(c);
+        }
     }
     // syncbase: "other.end+500ms" / "other.begin-1s"
     if let Some(at) = s.find('.') {

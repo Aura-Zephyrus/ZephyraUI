@@ -92,6 +92,8 @@ pub enum Begin {
         event: String,
         offset_ms: f32,
     },
+    /// `accessKey="k"`：按键触发。
+    AccessKey(char),
 }
 
 /// `restart` 属性。
@@ -144,6 +146,12 @@ pub struct Timing {
     pub accumulate_sum: bool,
     /// `restart` 策略。
     pub restart: Restart,
+    /// `min`：活跃期最短时长（毫秒）。
+    pub min_ms: f32,
+    /// `max`：活跃期最长时长（毫秒）。
+    pub max_ms: Option<f32>,
+    /// `accessKey`：按键触发。
+    pub access_key: Option<char>,
 }
 
 impl Default for Timing {
@@ -160,6 +168,9 @@ impl Default for Timing {
             additive_sum: false,
             accumulate_sum: false,
             restart: Restart::Always,
+            min_ms: 0.0,
+            max_ms: None,
+            access_key: None,
         }
     }
 }
@@ -230,7 +241,7 @@ pub struct MotionAnim {
 }
 
 /// `<animateMotion rotate="...">` 的模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MotionRotate {
     /// 不旋转（默认）。
     None,
@@ -238,6 +249,8 @@ pub enum MotionRotate {
     Auto,
     /// 朝向运动方向 + 180°（反向）。
     AutoReverse,
+    /// 固定角度（度）。
+    FixedAngle(f32),
 }
 
 /// 几何属性动画：x / y / width / height / r / cx / cy。

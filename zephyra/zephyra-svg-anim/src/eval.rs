@@ -128,6 +128,7 @@ impl SvgTimeline {
                             }
                     }
                     Begin::Syncbase { event: e, .. } => e == event,
+                    Begin::AccessKey(_) => event == "keypress" || event == "accessKey",
                     _ => false,
                 };
                 if matches {
@@ -399,10 +400,11 @@ fn eval_path(
                     motion_offset = p;
                     transform = mul(transform, [1.0, 0.0, 0.0, 1.0, p.0, p.1]);
                     if a.rotate_mode != MotionRotate::None {
-                        let angle = if a.rotate_mode == MotionRotate::AutoReverse {
-                            angle + std::f32::consts::PI
-                        } else {
-                            angle
+                        let angle = match a.rotate_mode {
+                            MotionRotate::Auto => angle,
+                            MotionRotate::AutoReverse => angle + std::f32::consts::PI,
+                            MotionRotate::FixedAngle(deg) => deg.to_radians(),
+                            MotionRotate::None => angle,
                         };
                         let (s, c) = (angle.sin(), angle.cos());
                         transform = mul(transform, [c, s, -s, c, 0.0, 0.0]);
@@ -487,16 +489,32 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
     let raw = local / dur;
     let iteration = raw.floor() as u32;
     let done = match timing.repeat {
+        Repeat::Count(0) => true, // 永不播放；freeze 也不该停在终值
         Repeat::Count(n) => iteration >= n,
         Repeat::Indefinite => false,
         Repeat::Duration(total) => local >= total,
         Repeat::Bounded { count, total_ms } => iteration >= count || local >= total_ms,
     };
     if done {
-        return match timing.fill {
-            FillMode::Freeze => Some((1.0, false, 0)),
-            FillMode::Remove => None,
+        return if timing.repeat == Repeat::Count(0) {
+            None
+        } else {
+            match timing.fill {
+                FillMode::Freeze => Some((1.0, false, 0)),
+                FillMode::Remove => None,
+            }
         };
+    }
+    // `max`：活跃期硬上限。
+    if let Some(max) = timing.max_ms {
+        if local >= max {
+            // freeze 停在 max 那一刻的实际进度，不是 t=1。
+            let t = (max / dur).fract().clamp(0.0, 1.0);
+            return match timing.fill {
+                FillMode::Freeze => Some((t, false, (max / dur).floor() as u32)),
+                FillMode::Remove => None,
+            };
+        }
     }
     let t = raw.fract().clamp(0.0, 1.0);
     Some((t, true, iteration))
@@ -728,7 +746,7 @@ fn morph(a: &[Segment], b: &[Segment], p: f32, base: &[Segment]) -> Vec<Segment>
     }
     let pa = flatten_points(&fa);
     let pb = flatten_points(&fb);
-    let n = pa.len().min(pb.len()).max(2);
+    let n = pa.len().max(pb.len()).max(2);
     let a_res = resample(&pa, n);
     let b_res = resample(&pb, n);
     let mut out = Vec::with_capacity(n + 1);

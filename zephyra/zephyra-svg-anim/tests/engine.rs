@@ -685,3 +685,81 @@ fn motion_origin_offsets_path() {
     assert!((t[4] - 10.0).abs() < 0.5, "tx={}", t[4]);
     assert!((t[5] - 7.0).abs() < 0.5, "ty={}", t[5]);
 }
+
+/// max：活跃期硬上限。
+const MAX_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="5000ms" max="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// 固定角度旋转的 motion。
+const FIXED_ROTATE_SVG: &str = r#"<svg viewBox="0 0 100 100">
+  <path d="M0 0L4 4L8 0Z">
+    <animateMotion path="M0 0L100 0" rotate="90" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// repeatCount=0 配合 freeze 不应停在终值。
+const REPEAT_ZERO_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="1000ms" repeatCount="0" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// accessKey 触发。
+const ACCESSKEY_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" begin="accessKey(k)" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn max_caps_active_duration() {
+    let svg = parse_animated_svg(MAX_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // max=1000ms ⇒ 1000ms 时已结束（freeze 停 t=0.2，因为 dur=5000）。
+    let f = tl.seek(1000.0);
+    assert!(
+        (f.paths[0].opacity - 0.2).abs() < 0.02,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn fixed_angle_rotation_applies() {
+    let svg = parse_animated_svg(FIXED_ROTATE_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let f = tl.seek(500.0);
+    let t = f.paths[0].transform;
+    // rotate=90° ⇒ cos=0, sin=1（矩阵 b 位）。
+    assert!(t[1].abs() < 0.01 || (t[1] - 1.0).abs() < 0.01, "b={}", t[1]);
+}
+
+#[test]
+fn repeat_zero_never_animates_even_with_freeze() {
+    let svg = parse_animated_svg(REPEAT_ZERO_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let f = tl.seek(500.0);
+    assert!(
+        (f.paths[0].opacity - 1.0).abs() < 1e-4,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn access_key_event_triggers() {
+    let svg = parse_animated_svg(ACCESSKEY_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let before = tl.seek(100.0);
+    assert!(before.paths[0].opacity > 0.99, "未触发保持基值");
+    assert_eq!(tl.fire_event(None, "accessKey"), 1);
+    let mid = tl.seek(600.0);
+    assert!(
+        (mid.paths[0].opacity - 0.5).abs() < 0.02,
+        "op={}",
+        mid.paths[0].opacity
+    );
+}
