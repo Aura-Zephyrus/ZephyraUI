@@ -1345,3 +1345,101 @@ fn bridge_state_distinguishes_outbound_phases() {
     assert!(!bridge.is_connected());
     assert!(!bridge.is_connecting());
 }
+
+/// P2-5：显式配置能在没有环境变量的情况下声明连入 MCP，
+/// 并让 hello 帧报应用自己的身份（不是框架默认值）。
+#[test]
+fn with_config_declares_outbound_and_app_identity() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mcp = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = [0u8; 256];
+        let n = stream.read(&mut line).unwrap();
+        tx.send(String::from_utf8_lossy(&line[..n]).into_owned())
+            .unwrap();
+    });
+
+    let config = super::BridgeConfig {
+        connect_to: Some(addr),
+        app_name: Some("my-app".into()),
+        app_version: Some("9.9.9".into()),
+        ..Default::default()
+    };
+    let mut bridge = DebugBridge::with_config(config).unwrap();
+    let mut host = MockHost::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !bridge.is_connected() && std::time::Instant::now() < deadline {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    // 让身份帧真的被 flush 出去（poll_connection 先 flush 再读命令）。
+    for _ in 0..10 {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    mcp.join().unwrap();
+    let hello = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(hello.trim(), "hello my-app 9.9.9");
+}
+
+/// 没声明任何拓扑 ⇒ 默认关闭，与「不设环境变量」同款零开销。
+#[test]
+fn with_empty_config_stays_disabled() {
+    assert!(DebugBridge::with_config(super::BridgeConfig::default()).is_none());
+}
+
+/// 槽位被旧模式连接占满时，连出的流会被静默丢弃 —— 这时必须退避，
+/// 否则 connecting 清空 + next_try 还是过去时刻 ⇒ 每帧 spawn 一个 connect 线程。
+#[test]
+fn full_slot_outbound_backs_off_instead_of_spamming_threads() {
+    // 用 8 条真 TCP 连接占满 conns（MAX_CLIENTS）。
+    let fill = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let fill_port = fill.local_addr().unwrap().port();
+    let mut peers = Vec::new();
+    let mut conns = Vec::new();
+    for _ in 0..8 {
+        let stream = TcpStream::connect(("127.0.0.1", fill_port)).unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let (peer, _) = fill.accept().unwrap();
+        peers.push(peer); // 保活对端，免得连接被判定为已死
+        conns.push(super::Connection {
+            stream,
+            buf: Vec::new(),
+            write_buf: Vec::new(),
+            write_offset: 0,
+            pending_wait: None,
+        });
+    }
+
+    // 假 MCP：接受应用连入（这条流随后会被 push_connection 因满额丢弃）。
+    let mcp = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let addr = mcp.local_addr().unwrap();
+    let acceptor = std::thread::spawn(move || mcp.accept());
+
+    let mut bridge = DebugBridge {
+        listener: None,
+        link: Some(super::OutboundLink::new(addr)),
+        conns,
+    };
+    let mut host = MockHost::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while bridge.link.as_ref().unwrap().connecting && std::time::Instant::now() < deadline {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let _ = acceptor.join().unwrap();
+
+    let link = bridge.link.as_ref().unwrap();
+    assert!(!link.connecting, "连接结果应当已回收");
+    assert_eq!(bridge.conns.len(), 8, "连出的流因满额被丢弃");
+    assert!(
+        link.next_try > std::time::Instant::now(),
+        "满额必须退避；否则下一帧立刻重连，形成每帧建线程的风暴"
+    );
+    // state() 看的是「有没有任意客户端」，8 条旧模式连接会让它报 Connected；
+    // 这里钉住的是连出侧确实退避了，而不是每帧重建线程。
+    assert!(!bridge.is_connecting());
+    drop(peers);
+}

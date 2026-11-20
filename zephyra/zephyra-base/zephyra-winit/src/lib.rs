@@ -472,6 +472,14 @@ impl<V: View> HostWindow<V> {
         }
     }
 
+    /// 替换调试桥（P2-5：IDE 直接启动 / 嵌入式宿主也能声明连入 MCP）。
+    ///
+    /// 默认构造仍走 `from_env()`；不依赖环境变量时用
+    /// `DebugBridge::with_config(BridgeConfig { connect_to: Some(addr), .. })` 构造后传入。
+    pub fn set_bridge(&mut self, bridge: Option<zephyra_fx::bridge::DebugBridge>) {
+        self.bridge = bridge;
+    }
+
     /// 装一个样式注入点（每帧 diff 之后、布局之前调用）。
     ///
     /// 转发给 [`FrameCache::set_styler`]。分离在这里而不是塞进 `new` 的签名：

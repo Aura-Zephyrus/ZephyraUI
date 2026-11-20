@@ -857,6 +857,55 @@ pub trait BridgeHost {
     fn on_bridge_disconnect(&mut self) {}
 }
 
+/// 调试桥的显式配置（不依赖环境变量）。
+///
+/// `from_env()` 只是「从环境变量造一份配置」的快捷方式；IDE 直接启动、
+/// 嵌入式宿主等场景可以用 [`DebugBridge::with_config`] 直接声明连入 MCP，
+/// 包括 `hello` 帧里的应用身份。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BridgeConfig {
+    /// 监听端口（旧模式：客户端连进来）。`None` = 不监听。
+    pub listen_port: Option<u16>,
+    /// 连入 MCP 的地址（连出模式：应用连过去）。`None` = 不连出。
+    pub connect_to: Option<SocketAddr>,
+    /// 应用名（hello 帧）。`None` = 取可执行文件名。
+    pub app_name: Option<String>,
+    /// 应用版本（hello 帧）。`None` = 取框架版本。
+    pub app_version: Option<String>,
+}
+
+impl BridgeConfig {
+    /// 从环境变量读配置：与历史 `from_env()` 完全相同的两条拓扑。
+    pub fn from_env() -> Self {
+        fn parse_port(raw: Option<String>) -> Option<u16> {
+            raw.and_then(|s| {
+                if s.is_empty() {
+                    Some(DEFAULT_PORT)
+                } else {
+                    s.parse().ok()
+                }
+            })
+        }
+        let debug_raw = std::env::var(PORT_ENV).ok();
+        let mcp_raw = std::env::var(MCP_PORT_ENV).ok();
+        let listen_port = if debug_raw.is_some() || mcp_raw.is_some() {
+            parse_port(debug_raw)
+        } else {
+            None
+        };
+        let connect_to = mcp_raw
+            .as_ref()
+            .and_then(|_| parse_port(mcp_raw.clone()))
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)));
+        Self {
+            listen_port,
+            connect_to,
+            app_name: None,
+            app_version: None,
+        }
+    }
+}
+
 /// 调试桥的连接状态。
 ///
 /// 旧模式（只监听 `PORT_ENV`）恒为 [`BridgeState::Inactive`] —— 没有「连出去」
@@ -981,23 +1030,32 @@ const CONNECT_RETRY: Duration = Duration::from_millis(500);
 /// 格式 `hello <app-name> <version>\n`。app-name 取可执行文件名，version 取
 /// 框架自身版本 —— 无需应用额外配置就能区分「哪个应用 / 哪版框架」，也给
 /// P2 的显式 builder API 留了升级路径（那时改成应用自己声明）。
-fn hello_line() -> String {
-    let name = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "unknown".into());
-    format!("hello {name} {}\n", env!("CARGO_PKG_VERSION"))
+fn hello_line(name: Option<&str>, version: Option<&str>) -> String {
+    let name = name.map(str::to_string).unwrap_or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "unknown".into())
+    });
+    let version = version
+        .map(str::to_string)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into());
+    format!("hello {name} {version}\n")
 }
 
 impl OutboundLink {
     fn new(addr: SocketAddr) -> Self {
+        Self::with_hello(addr, hello_line(None, None))
+    }
+
+    fn with_hello(addr: SocketAddr, hello: String) -> Self {
         let mut this = Self {
             addr,
             // 立刻被 spawn 换掉；这里的 receiver 只为了满足字段初始化。
             rx: mpsc::channel::<std::io::Result<TcpStream>>().1,
             connecting: false,
             next_try: Instant::now(),
-            hello: hello_line(),
+            hello,
         };
         this.spawn();
         this
@@ -1027,14 +1085,20 @@ impl OutboundLink {
                 Ok(Ok(stream)) => {
                     let before = conns.len();
                     push_connection(conns, stream);
-                    // 身份必须赶在任何命令之前发出：MCP 侧在第一次 call 前先读掉它，
-                    // 否则下一句命令的响应会读到 hello，协议整体错位。
                     if conns.len() > before {
+                        // 真的挂上了：身份必须赶在任何命令之前发出，MCP 侧在
+                        // 第一次 call 前先读掉它，否则响应解析会错位。
                         if let Some(conn) = conns.last_mut() {
                             conn.write_buf.extend_from_slice(self.hello.as_bytes());
                         }
+                        self.connecting = false;
+                    } else {
+                        // 槽位满：push_connection 静默丢弃了这条流。不能当成连上 ——
+                        // 否则 connecting 清空、next_try 还是创建时的过去时刻，
+                        // 下一帧立刻再 spawn 一个 connect_timeout 线程，形成风暴。
+                        self.connecting = false;
+                        self.next_try = Instant::now() + CONNECT_RETRY;
                     }
-                    self.connecting = false;
                 }
                 Ok(Err(_)) | Err(TryRecvError::Disconnected) => {
                     self.connecting = false;
@@ -1082,7 +1146,49 @@ impl DebugBridge {
         })
     }
 
-    /// 按环境变量开启桥：
+    /// 按显式配置开启桥。
+    ///
+    /// 两种拓扑可并存（监听 + 连出）；都没有 ⇒ `None`（「调试桥默认关闭」）。
+    /// 端口绑定失败只报诊断，不让应用起不来 —— 与 `from_env()` 同款容错。
+    pub fn with_config(config: BridgeConfig) -> Option<Self> {
+        if config.listen_port.is_none() && config.connect_to.is_none() {
+            return None;
+        }
+
+        let listener =
+            config
+                .listen_port
+                .and_then(|port| match TcpListener::bind(("127.0.0.1", port)) {
+                    Ok(l) => {
+                        l.set_nonblocking(true).ok();
+                        eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}（显式配置）");
+                        Some(l)
+                    }
+                    Err(e) => {
+                        eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行");
+                        None
+                    }
+                });
+
+        let link = config.connect_to.map(|addr| {
+            eprintln!("[zephyra] 调试桥连入 MCP {addr}（显式配置）");
+            OutboundLink::with_hello(
+                addr,
+                hello_line(config.app_name.as_deref(), config.app_version.as_deref()),
+            )
+        });
+
+        if listener.is_none() && link.is_none() {
+            return None;
+        }
+        Some(Self {
+            listener,
+            link,
+            conns: Vec::new(),
+        })
+    }
+
+    /// 按环境变量开启桥（见 [`BridgeConfig::from_env`]）。
     ///
     /// - `ZEPHYRA_MCP_PORT`（CLI 注入）⇒ 应用**连入 MCP**，agent 只经 stdio 与 MCP 说话；
     /// - `ZEPHYRA_DEBUG_PORT` ⇒ 旧模式，监听端口等客户端连进来。
@@ -1090,48 +1196,7 @@ impl DebugBridge {
     /// 两者可以同时设置：MCP 通道 + 直连的 `bridge` / `perf` / `debug` 工具并存。
     /// 都没设置返回 `None` ——「调试桥默认关闭」的唯一入口，不存在隐式监听。
     pub fn from_env() -> Option<Self> {
-        let debug_raw = std::env::var(PORT_ENV).ok();
-        let mcp_raw = std::env::var(MCP_PORT_ENV).ok();
-        if debug_raw.is_none() && mcp_raw.is_none() {
-            return None;
-        }
-
-        let mut listener = None;
-        if let Some(raw) = &debug_raw {
-            let port = if raw.is_empty() {
-                DEFAULT_PORT
-            } else {
-                raw.parse().ok()?
-            };
-            match TcpListener::bind(("127.0.0.1", port)) {
-                Ok(l) => {
-                    l.set_nonblocking(true).ok();
-                    eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}（{PORT_ENV}={raw}）");
-                    listener = Some(l);
-                }
-                Err(e) => {
-                    eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行");
-                }
-            }
-        }
-
-        let mut link = None;
-        if let Some(raw) = &mcp_raw {
-            let port = if raw.is_empty() {
-                DEFAULT_PORT
-            } else {
-                raw.parse().ok()?
-            };
-            let addr = SocketAddr::from(([127, 0, 0, 1], port));
-            eprintln!("[zephyra] 调试桥连入 MCP {addr}（{MCP_PORT_ENV}={raw}）");
-            link = Some(OutboundLink::new(addr));
-        }
-
-        Some(Self {
-            listener,
-            link,
-            conns: Vec::new(),
-        })
+        Self::with_config(BridgeConfig::from_env())
     }
 
     /// 每帧一次：接受连接、读可用字节、把凑齐的行解析成命令并执行。

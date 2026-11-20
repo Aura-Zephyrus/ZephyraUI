@@ -701,6 +701,14 @@ impl<V: View> HostWindow<V> {
     /// while the window must exist at startup. Folding it into the constructor
     /// would make "start the window" depend on "the stylesheet parsed" -- one
     /// wrong property name and the app will not launch.
+    /// 替换调试桥（P2-5：IDE 直接启动 / 嵌入式宿主也能声明连入 MCP）。
+    ///
+    /// 默认构造仍走 `from_env()`；不依赖环境变量时用
+    /// `DebugBridge::with_config(BridgeConfig { connect_to: Some(addr), .. })` 构造后传入。
+    pub fn set_bridge(&mut self, bridge: Option<zephyra_fx::bridge::DebugBridge>) {
+        self.bridge = bridge;
+    }
+
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
         self.cache.set_styler(styler);
     }
