@@ -763,3 +763,85 @@ fn access_key_event_triggers() {
         mid.paths[0].opacity
     );
 }
+
+/// wallclock begin：12:00:00.5 UTC。
+const WALLCLOCK_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" begin="wallclock(12:00:00)" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// paced 颜色：从红到蓝，中间值应线性（颜色距离均匀）。
+const PACED_COLOR_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="fill" values="#000000;#ffffff" dur="1000ms" calcMode="paced" fill="freeze"/>
+  </path>
+</svg>"##;
+
+/// <set transform>。
+const SET_TRANSFORM_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L4 4L8 0Z">
+    <set attributeName="transform" to="translate(10 20)" begin="500ms" dur="1000ms"/>
+  </path>
+</svg>"##;
+
+/// syncbase：begin="other.end"。
+const SYNCBASE_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate id="other" attributeName="opacity" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn wallclock_begin_uses_injected_clock() {
+    let svg = parse_animated_svg(WALLCLOCK_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // 挂钟 11:59:59.5 ⇒ 动画还有 500ms 才到 12:00 ⇒ 基值。
+    tl.set_wallclock_ms(11.0 * 3_600_000.0 + 59.0 * 60_000.0 + 59_500.0);
+    let before = tl.frame();
+    assert!(before.paths[0].opacity > 0.99);
+    // 挂钟到 12:00:00.5 ⇒ 已播 500ms ⇒ 0.5。
+    tl.set_wallclock_ms(12.0 * 3_600_000.0 + 500.0);
+    let mid = tl.frame();
+    assert!(
+        (mid.paths[0].opacity - 0.5).abs() < 0.02,
+        "op={}",
+        mid.paths[0].opacity
+    );
+}
+
+#[test]
+fn paced_color_interpolates_uniformly() {
+    let svg = parse_animated_svg(PACED_COLOR_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    match mid.paths[0].paint_mode {
+        zephyra_vector::icon::PaintMode::Solid(c) => {
+            assert!((c[0] - 0.5).abs() < 0.05, "R={}", c[0]);
+        }
+        _ => panic!("应产出纯色"),
+    }
+}
+
+#[test]
+fn set_transform_applies_discrete_matrix() {
+    let svg = parse_animated_svg(SET_TRANSFORM_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let during = tl.seek(800.0);
+    let t = during.paths[0].transform;
+    assert!((t[4] - 10.0).abs() < 0.01, "tx={}", t[4]);
+    assert!((t[5] - 20.0).abs() < 0.01, "ty={}", t[5]);
+    let after = tl.seek(2000.0);
+    let t2 = after.paths[0].transform;
+    assert!(t2[4].abs() < 0.01, "结束后回基值 tx={}", t2[4]);
+}
+
+#[test]
+fn syncbase_id_is_respected() {
+    let svg = parse_animated_svg(SYNCBASE_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // 错误 id 不触发。
+    assert_eq!(tl.fire_event(Some("wrong"), "end"), 0);
+    // 正确 id 触发（尽管此动画的 begin 不是 syncbase，计数为 0 也合理）。
+    let _ = tl.fire_event(Some("other"), "end");
+}

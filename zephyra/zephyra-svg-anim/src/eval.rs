@@ -30,6 +30,8 @@ pub struct SvgTimeline {
     triggered: std::collections::HashMap<(usize, usize), f32>,
     /// endElement() 显式结束的时刻。
     ended: std::collections::HashMap<(usize, usize), f32>,
+    /// 宿主注入的当前挂钟时间（毫秒，UTC 午夜起）。
+    wallclock_ms: f32,
 }
 
 impl SvgTimeline {
@@ -39,6 +41,7 @@ impl SvgTimeline {
             time_ms: 0.0,
             triggered: std::collections::HashMap::new(),
             ended: std::collections::HashMap::new(),
+            wallclock_ms: 0.0,
         }
     }
 
@@ -66,6 +69,11 @@ impl SvgTimeline {
 
     pub fn svg(&self) -> &AnimatedSvg {
         &self.svg
+    }
+
+    /// 注入当前挂钟时间（毫秒，UTC 午夜起），供 wallclock begin 判定。
+    pub fn set_wallclock_ms(&mut self, ms: f32) {
+        self.wallclock_ms = if ms.is_finite() && ms >= 0.0 { ms } else { 0.0 };
     }
 
     /// 显式触发 `begin="indefinite"` / 事件基的动画（SMIL `beginElement()`）。
@@ -127,8 +135,11 @@ impl SvgTimeline {
                                 _ => false,
                             }
                     }
-                    Begin::Syncbase { event: e, .. } => e == event,
+                    Begin::Syncbase { id, event: e, .. } => {
+                        e == event && target.is_some_and(|t| t == id)
+                    }
                     Begin::AccessKey(_) => event == "keypress" || event == "accessKey",
+                    Begin::Wallclock { .. } => event == "wallclock",
                     _ => false,
                 };
                 if matches {
@@ -148,7 +159,16 @@ impl SvgTimeline {
             .paths
             .iter()
             .enumerate()
-            .map(|(pi, p)| eval_path(p, self.time_ms, pi, &self.triggered, &self.ended))
+            .map(|(pi, p)| {
+                eval_path(
+                    p,
+                    self.time_ms,
+                    pi,
+                    &self.triggered,
+                    &self.ended,
+                    self.wallclock_ms,
+                )
+            })
             .collect();
         SvgFrame {
             paths,
@@ -191,6 +211,7 @@ fn eval_path(
     path_index: usize,
     triggered: &std::collections::HashMap<(usize, usize), f32>,
     ended: &std::collections::HashMap<(usize, usize), f32>,
+    wallclock_ms: f32,
 ) -> RenderedPath {
     let mut segments = path.base.clone();
     let mut paint_mode = path.paint_mode;
@@ -210,7 +231,7 @@ fn eval_path(
         match anim {
             Animation::Set(set) => {
                 if let Some((_, active, _)) = phase(
-                    &effective_timing(&set.timing, virtual_begin, virtual_end),
+                    &effective_timing(&set.timing, virtual_begin, virtual_end, wallclock_ms),
                     time_ms,
                 ) {
                     // set 是离散的：活跃期内取 to，非活跃期保持基值。
@@ -249,6 +270,40 @@ fn eval_path(
                             "stroke" => {
                                 stroke = parse_hex_rgba(&set.to);
                             }
+                            "transform" => {
+                                let v = set.to.trim();
+                                let args = |s: &str| -> Vec<f32> {
+                                    s.split(|c: char| c == ',' || c.is_ascii_whitespace())
+                                        .filter_map(|x| x.parse().ok())
+                                        .collect()
+                                };
+                                let delta = if let Some(a) = v.strip_prefix("translate(") {
+                                    let n = args(a.trim_end_matches(')'));
+                                    if n.len() >= 2 {
+                                        [1.0, 0.0, 0.0, 1.0, n[0], n[1]]
+                                    } else {
+                                        IDENTITY
+                                    }
+                                } else if let Some(a) = v.strip_prefix("scale(") {
+                                    let n = args(a.trim_end_matches(')'));
+                                    if n.len() >= 2 {
+                                        [n[0], 0.0, 0.0, n[1], 0.0, 0.0]
+                                    } else {
+                                        IDENTITY
+                                    }
+                                } else if let Some(a) = v.strip_prefix("rotate(") {
+                                    let n = args(a.trim_end_matches(')'));
+                                    if !n.is_empty() {
+                                        let r = n[0].to_radians();
+                                        [r.cos(), r.sin(), -r.sin(), r.cos(), 0.0, 0.0]
+                                    } else {
+                                        IDENTITY
+                                    }
+                                } else {
+                                    IDENTITY
+                                };
+                                transform = delta;
+                            }
                             "x" | "y" | "width" | "height" | "r" => {
                                 if let Ok(v) = set.to.parse::<f32>() {
                                     let idx = match set.attribute_name.as_str() {
@@ -271,7 +326,7 @@ fn eval_path(
             }
             Animation::Opacity(a) => {
                 if let Some((v, _)) = sample_f32(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     1.0,
@@ -285,7 +340,7 @@ fn eval_path(
             }
             Animation::StrokeColor(a) => {
                 if let Some((v, _)) = sample_color(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     [0.0, 0.0, 0.0, 0.0],
@@ -295,7 +350,7 @@ fn eval_path(
             }
             Animation::Style(a) => {
                 if let Some((v, _)) = sample_f32(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     1.0,
@@ -310,7 +365,7 @@ fn eval_path(
             }
             Animation::Geometry(a) => {
                 if let Some((v, _)) = sample_f32(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     0.0,
@@ -332,7 +387,7 @@ fn eval_path(
             }
             Animation::Fill(a) => {
                 if let Some((v, _)) = sample_color(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     [1.0, 1.0, 1.0, 1.0],
@@ -356,7 +411,7 @@ fn eval_path(
             }
             Animation::Path(a) => {
                 if let Some((v, _)) = sample_path(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     &path.base,
@@ -366,7 +421,7 @@ fn eval_path(
             }
             Animation::Transform(a) => {
                 if let Some((v, _)) = sample_f32x3(
-                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &effective_timing(&a.timing, virtual_begin, virtual_end, wallclock_ms),
                     &a.values,
                     time_ms,
                     [0.0, 0.0, 0.0],
@@ -430,10 +485,19 @@ fn eval_path(
 }
 
 /// 把宿主显式触发/结束的时刻套进 Timing 的 begin/end。
-fn effective_timing(t: &Timing, virtual_begin: Option<f32>, virtual_end: Option<f32>) -> Timing {
+fn effective_timing(
+    t: &Timing,
+    virtual_begin: Option<f32>,
+    virtual_end: Option<f32>,
+    wallclock_ms: f32,
+) -> Timing {
     let mut t = t.clone();
     if let Some(b) = virtual_begin {
         t.begin = Begin::Offset(b);
+    }
+    // wallclock：绝对挂钟时刻换算成相对文档开始的偏移。
+    if let Begin::Wallclock { time_ms } = t.begin {
+        t.begin = Begin::Offset(time_ms - wallclock_ms);
     }
     if let Some(e) = virtual_end {
         t.end_ms = Some(e);
@@ -559,6 +623,29 @@ fn eased(timing: &Timing, seg: usize, linear: f32) -> f32 {
     }
 }
 
+/// 泛型 paced 分段（标量提取函数测距）。
+fn segment_at_paced_f32<T: Copy>(values: &[T], scalar: impl Fn(&T) -> f32, t: f32) -> (usize, f32) {
+    if values.len() <= 2 {
+        return (0, t.clamp(0.0, 1.0));
+    }
+    let mut cum = vec![0.0f32];
+    for w in values.windows(2) {
+        cum.push(cum.last().unwrap() + (scalar(&w[1]) - scalar(&w[0])).abs());
+    }
+    let total = *cum.last().unwrap();
+    if total <= 0.0 {
+        return (0, t);
+    }
+    let target = t * total;
+    for i in 0..cum.len() - 1 {
+        if cum[i + 1] >= target {
+            let span = (cum[i + 1] - cum[i]).max(f32::EPSILON);
+            return (i, ((target - cum[i]) / span).clamp(0.0, 1.0));
+        }
+    }
+    (values.len() - 2, 1.0)
+}
+
 /// paced：把时间进度 t 按各段"值距离"重新分配到段上，使值匀速变化。
 fn segment_at_paced<T: Copy + Into<f32>>(values: &[T], t: f32) -> (usize, f32) {
     if values.len() <= 2 {
@@ -643,7 +730,11 @@ fn sample_color(
     if list.is_empty() {
         return None;
     }
-    let (seg, p) = segment_at(timing, t, list.len());
+    let (seg, p) = if timing.calc_mode == CalcMode::Paced {
+        segment_at_paced_f32(&list, |c| (c[0] + c[1] + c[2] + c[3]) / 4.0, t)
+    } else {
+        segment_at(timing, t, list.len())
+    };
     let p = eased(timing, seg, p);
     let a = list[seg];
     let b = if timing.calc_mode == CalcMode::Discrete {
@@ -682,7 +773,11 @@ fn sample_f32x3(
     if list.is_empty() {
         return None;
     }
-    let (seg, p) = segment_at(timing, t, list.len());
+    let (seg, p) = if timing.calc_mode == CalcMode::Paced {
+        segment_at_paced_f32(&list, |x| (x[0] + x[1] + x[2]) / 3.0, t)
+    } else {
+        segment_at(timing, t, list.len())
+    };
     let p = eased(timing, seg, p);
     let a = list[seg];
     let b = if timing.calc_mode == CalcMode::Discrete {

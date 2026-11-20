@@ -26,7 +26,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1458 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
+| 测试 | `cargo test --workspace` —— 1462 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
 | 隔离门禁 | `cargo tree -p zephyra-vector --depth 1` —— 只出现 `ab_glyph` / `bytemuck`；出现任何 workspace crate 即为破坏隔离 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 

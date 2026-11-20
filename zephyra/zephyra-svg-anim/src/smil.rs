@@ -395,6 +395,25 @@ fn parse_begin(s: &str) -> Begin {
     if s == "indefinite" {
         return Begin::Indefinite;
     }
+    // wallclock(1999-12-31T23:59:59Z) / wallclock(12:30:00) —— 简化为时钟字符串，
+    // 转成从 UTC 午夜起的毫秒；宿主用 set_wallclock_ms 注入当前时间。
+    if let Some(inner) = s
+        .strip_prefix("wallclock(")
+        .and_then(|x| x.strip_suffix(')'))
+    {
+        let t = inner.trim();
+        let ms = if t.contains(':') {
+            let parts: Vec<f32> = t.split(':').filter_map(|p| p.parse().ok()).collect();
+            match parts.len() {
+                2 => parts[0] * 3_600_000.0 + parts[1] * 60_000.0,
+                3 => parts[0] * 3_600_000.0 + parts[1] * 60_000.0 + parts[2] * 1000.0,
+                _ => 0.0,
+            }
+        } else {
+            parse_time(t).unwrap_or(0.0)
+        };
+        return Begin::Wallclock { time_ms: ms };
+    }
     // accessKey 通常单独给；begin 里也可能写成 "accessKey(k)"（非标准但兼容）。
     if let Some(inner) = s
         .strip_prefix("accessKey(")

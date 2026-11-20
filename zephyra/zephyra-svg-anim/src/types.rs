@@ -94,6 +94,9 @@ pub enum Begin {
     },
     /// `accessKey="k"`：按键触发。
     AccessKey(char),
+    /// `wallclock(...)`：绝对时间（毫秒，从 UTC 午夜起）。
+    /// 宿主通过 SvgTimeline::set_wallclock_ms 注入当前挂钟时间。
+    Wallclock { time_ms: f32 },
 }
 
 /// `restart` 属性。
