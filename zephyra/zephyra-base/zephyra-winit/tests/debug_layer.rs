@@ -276,7 +276,7 @@ fn debug_layer_explains_dynamic_resource_rejection() {
 }
 
 /// 本仓库的顶点着色器字节码。
-const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
+const VS_BYTECODE: &[u8] = zephyra_fx::shaders::VS_BYTECODE;
 
 /// 平凡顶点着色器：`float4 VSMain(uint id : SV_VertexID) : SV_Position`。
 const TRIV_VS: &[u8] = include_bytes!("triv.vs.bin");

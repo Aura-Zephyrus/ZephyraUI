@@ -23,16 +23,10 @@
 //! 「wgpu 30 与 naga 30 用同一个前端」的直接推论。真编不过时 `cargo build` 失败，
 //! 这是好事：比运行时崩好查。
 
-use std::path::PathBuf;
-
 fn main() {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("shaders")
-        .join("zephyra.wgsl");
-    let wgsl = std::fs::read_to_string(&src).unwrap_or_else(|e| {
-        panic!("读着色器源 {} 失败: {e}", src.display());
-    });
-    println!("cargo:rerun-if-changed={}", src.display());
+    // WGSL 源由 zephyra-vector 按分段顺序拼接后导出。它是 git 依赖，Cargo 在
+    // 依赖更新时会自动重编 build script —— 不再需要 rerun-if-changed 指向本地文件。
+    let wgsl = zephyra_vector::shaders::wgsl_source();
 
     let module = naga::front::wgsl::parse_str(&wgsl).unwrap_or_else(|e| {
         panic!("WGSL 解析失败: {e}");

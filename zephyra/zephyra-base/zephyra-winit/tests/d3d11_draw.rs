@@ -808,86 +808,24 @@ fn translucent_quad_composites_in_premultiplied_space() {
     }
 }
 
-/// 着色器资产必须与源码同步。
+/// 着色器字节码必须非空且是合法 DXBC 容器。
 ///
-/// # 为什么这条值得存在
-///
-/// GPU 加载的是**预编译的 `.bin`**，不是 `.hlsl`。所以「改了 `.hlsl` 但忘了重跑
-/// `fxc`」这件事**没有任何测试会失败** —— 画面照旧跑的是旧着色器，而所有断言都
-/// 针对那份旧代码的结果。症状是「我明明改了着色器，怎么没效果」，能查的方向有
-/// 一大堆（绑定、状态、输入布局），而真正的病因是**一个没执行的命令**。
-///
-/// 这不是假设：本次做预乘转换时，我用变异测试去改 `.hlsl`，结果 **SURVIVED** ——
-/// 正是这个原因。
-///
-/// 两条断言：
-/// 1. 两份 `.hlsl`（D3D11 与 D3D12）必须**逐字节相同**。两边各存一份，改了其中
-///    一份忘了另一份，同样是无声失败（两个后端画出不同的东西）。
-/// 2. `.bin` 的修改时间**不得早于** `.hlsl` —— 留 2 秒宽限，见
-///    [`FRESHNESS_TOLERANCE`]。
-///
-/// # 为什么要有 2 秒宽限
-///
-/// 文件系统与批量操作的时间戳不是精确的：FAT 的粒度就是 2 秒，而 checkout /
-/// 解压 / 拷贝整棵仓会把一堆文件的 mtime 刷成**同一瞬间**、彼此差几毫秒
-/// （本机实测：全部 `.bin` 与 `.hlsl` 落在同一秒内，`.hlsl` 反而晚 3ms）。
-/// 拿严格 `>=` 去比这种噪声，于是「我什么也没改」也能红 —— 那是一条会自己
-/// 骗人的门禁，真出事时人就不信它了。
-///
-/// 宽限 2 秒 > 任何噪声，又远小于「改完着色器隔一会儿才编译」的真实间隔；
-/// 门槛的**意图**（忘了跑 fxc 就必须失败）一点没松：真忘了编译，`.bin` 会比
-/// 源码旧**很多**秒，第一次编译产物的批量落地也只会差这一两秒。
-const FRESHNESS_TOLERANCE: std::time::Duration = std::time::Duration::from_secs(2);
-
+/// 真正的「`.hlsl` 改了但 `.bin` 没重编」门禁已移到 zephyra-vector 的
+/// `shader_sync_tests::committed_dxbc_matches_hlsl_sources`：那份门禁用 fxc
+/// 重编全部入口并与提交产物逐字节比对，比本处基于 mtime 的旧门禁可靠得多 ——
+/// 旧的只能查"时间先后"，新的查的是"字节是否真的对应"。
 #[test]
-fn shader_assets_are_in_sync() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("zephyra-winit");
-    let hlsl_a = root.join("shaders").join("zephyra.hlsl");
-    let hlsl_b = root
-        .parent()
-        .unwrap()
-        .join("zephyra-winit-d3d12")
-        .join("shaders")
-        .join("zephyra.hlsl");
-
-    let a = std::fs::read(&hlsl_a).expect("读得到 D3D11 的 hlsl");
-    let b = std::fs::read(&hlsl_b).expect("读得到 D3D12 的 hlsl");
-    assert_eq!(
-        a.len(),
-        b.len(),
-        "两份 zephyra.hlsl 长度不同 —— 有一份被改过而另一份没跟上"
-    );
-    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+fn shader_bytecode_is_present_and_well_formed() {
+    let bytecode = [
+        ("VS", zephyra_fx::shaders::VS_BYTECODE),
+        zephyra_fx::shaders::PS_VARIANTS[0],
+    ];
+    for (name, bytes) in bytecode {
+        assert!(bytes.len() > 32, "{name} 字节码过短 —— 资产漏提交了？");
+        // DXBC 容器以 'D','X','B','C' 开头（0x43425844）。
         assert_eq!(
-            x, y,
-            "两份 zephyra.hlsl 在第 {i} 个字节处分叉（第 4 行的 Viewstage 引用之类）"
-        );
-    }
-
-    // PS 有 18 个变体 + 1 个 VS，每一个都要比过 —— 只查一个的话，其余 17 个
-    // 漏编译时不会有任何测试失败（`.bin` 是离线产物，不参与编译）。
-    let mut bin_names: Vec<String> = zephyra_winit::shader::PS_VARIANTS
-        .iter()
-        .map(|(n, _)| format!("zephyra.{n}.ps.bin"))
-        .collect();
-    bin_names.push("zephyra.vs.bin".to_string());
-    for bin_name in &bin_names {
-        let bin = root.join("shaders").join(bin_name);
-        let src_time = std::fs::metadata(&hlsl_a)
-            .expect("拿得到 hlsl 的修改时间")
-            .modified()
-            .expect("modified() 可用");
-        let bin_time = std::fs::metadata(&bin)
-            .unwrap_or_else(|e| panic!("读得到 {bin_name}：{e}"))
-            .modified()
-            .expect("modified() 可用");
-        assert!(
-            bin_time + FRESHNESS_TOLERANCE >= src_time,
-            "{bin_name} 比 zephyra.hlsl 旧 —— 改了着色器但忘了重新编译。\
-             命令：fxc /nologo /T ps_5_0 /E PSMain /Fo zephyra.ps.bin zephyra.hlsl（VS 用 vs_5_0 / VSMain）"
+            &bytes[..4], b"DXBC",
+            "{name} 不是 DXBC 容器 —— fxc 没跑或 .bin 被截断"
         );
     }
 }

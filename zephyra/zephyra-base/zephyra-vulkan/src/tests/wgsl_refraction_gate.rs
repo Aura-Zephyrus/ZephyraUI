@@ -10,15 +10,17 @@
 //!
 //! 每条断言钉一个已实测过的失效模式，出处见 `docs/dev-log/` 的折射三条日志。
 
-/// 与构建期同一份源（`build.rs` 读的也是它）。
-const WGSL: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/zephyra.wgsl"));
+/// 与构建期同一份源（都来自 `zephyra_vector::shaders::wgsl_source()`）。
+fn wgsl() -> String {
+    zephyra_fx::shaders::wgsl_source()
+}
 
 /// 入口必须存在 —— 漏了它 `create_entry_pipeline` 要到运行期建管线时才报错，
 /// 而那时的症状是「启动即失败」，与「管线建错」无法区分。
 #[test]
 fn fs_refraction_entry_exists() {
     assert!(
-        WGSL.contains("fn fs_refraction(i: VsOut)"),
+        wgsl().contains("fn fs_refraction(i: VsOut)"),
         "WGSL 里没有 fs_refraction 入口 —— 折射在 Linux 侧会整个消失"
     );
 }
@@ -30,7 +32,7 @@ fn fs_refraction_entry_exists() {
 #[test]
 fn refraction_mask_is_a_one_pixel_band() {
     assert!(
-        WGSL.contains("let edge = 1.0;"),
+        wgsl().contains("let edge = 1.0;"),
         "折射遮罩的 edge 不再是 1px —— 宽遮罩会把边缘处最强的折射乘成 0（实测差 6 倍）"
     );
 }
@@ -43,7 +45,7 @@ fn refraction_mask_is_a_one_pixel_band() {
 #[test]
 fn bezel_is_not_clamped_by_the_corner_radius() {
     assert!(
-        WGSL.contains("let bezel = min(max(i.color.g, 1.0), min(i.half_size.x, i.half_size.y));"),
+        wgsl().contains("let bezel = min(max(i.color.g, 1.0), min(i.half_size.x, i.half_size.y));"),
         "折射 bezel 的夹法变了 —— 只能按半边长夹，按圆角半径夹会让倒角参数的上 3/4 变空档"
     );
 }
@@ -55,11 +57,11 @@ fn bezel_is_not_clamped_by_the_corner_radius() {
 #[test]
 fn displacement_is_the_bounded_wedge_form() {
     assert!(
-        WGSL.contains("sin(slope - theta_r) / max(cos(theta_r), 1e-3)"),
+        wgsl().contains("sin(slope - theta_r) / max(cos(theta_r), 1e-3)"),
         "位移公式不是有界楔形偏折式 —— 薄棱镜近似会在 t→0（Θs→90°）处发散（实测 491px vs 28px）"
     );
     assert!(
-        !WGSL.contains("tan(slope) - tan(theta_r)"),
+        !wgsl().contains("tan(slope) - tan(theta_r)"),
         "位移公式里出现了薄棱镜近似 —— 它在大角度下发散，实测位移是厚度的 17~27 倍"
     );
 }
@@ -71,8 +73,8 @@ fn displacement_is_the_bounded_wedge_form() {
 #[test]
 fn dispersion_offsets_red_and_blue_in_opposite_directions() {
     assert!(
-        WGSL.contains("off_uv * (1.0 + dispersion)")
-            && WGSL.contains("off_uv * (1.0 - dispersion)"),
+        wgsl().contains("off_uv * (1.0 + dispersion)")
+            && wgsl().contains("off_uv * (1.0 - dispersion)"),
         "色散的两个方向系数不完整 —— R/B 必须沿法线反向拉开，否则色散永不生效"
     );
 }
@@ -84,14 +86,15 @@ fn dispersion_offsets_red_and_blue_in_opposite_directions() {
 #[test]
 fn fs_backdrop_blur_exists_and_samples_the_backdrop() {
     assert!(
-        WGSL.contains("fn fs_backdrop_blur(i: VsOut)"),
+        wgsl().contains("fn fs_backdrop_blur(i: VsOut)"),
         "WGSL 里没有 fs_backdrop_blur 入口 —— 磨砂在 Linux 侧会整个消失"
     );
     // 在这个入口的源码段里，采样必须是 g_dst（元素背后），不是 g_tex（元素自己）。
-    let start = WGSL
+    let src = wgsl();
+    let start = src
         .find("fn fs_backdrop_blur(i: VsOut)")
         .expect("上面刚断言存在");
-    let body = &WGSL[start..];
+    let body = &src[start..];
     let end = body.find("\n}").map(|e| e + 2).unwrap_or(body.len());
     let body = &body[..end];
     assert!(

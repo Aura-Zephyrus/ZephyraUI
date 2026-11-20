@@ -42,7 +42,7 @@ use crate::quad::Vertex;
 /// 而 `vs_5_1` 编出来的东西**大小完全相同**（1152 字节），所以「看大小」查不出来；
 /// 它要到 `CreateVertexShader` 才被拒绝，返回 `E_INVALIDARG`。症状是
 /// `zephyra-winit` 的整个 GPU 套件（31 条）一起红，而画面路根本还没走到。
-pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
+pub const VS_BYTECODE: &[u8] = zephyra_fx::shaders::VS_BYTECODE;
 
 /// 全部 `.bin` 的生成命令。
 ///
@@ -52,109 +52,105 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// fxc /nologo /T ps_5_0 /E PSRefraction /Fo shaders/zephyra.PSRefraction.ps.bin shaders/zephyra.hlsl
 /// ```
 ///
-/// 改 `.hlsl` 之后**全部** 20 个 entry 都要重编：`tests/d3d11_draw.rs` 的
-/// `shader_assets_are_in_sync` 比的是每个 `.bin` 的 mtime 晚于 `.hlsl`，
-/// 只编改动的那一个会让其余 19 条变旧。
-///
-/// 只能有一对 hlsl（D3D11 / D3D12 各存一份），且必须逐字节相同 —— 那条门禁
-/// 也一起查。
+/// 改 HLSL 之后全部 25 个 entry 都要重编；同步门禁已移入 zephyra-vector 的
+/// `shader_sync_tests::committed_dxbc_matches_hlsl_sources`（fxc 重编逐字节比对）。
+/// 源与产物现在只有一份，由 `zephyra_fx::shaders` 统一导出，两个后端共享。
 pub const BUILD_COMMAND_HINT: &str = "fxc /nologo /T {vs_5_0|ps_5_0} /E <Entry>";
 
 /// 像素着色器**变体表**，与 `zephyra-winit`（D3D11 那边）**逐项一致**。
 ///
-/// 两边各写一份是刻意的：`.bin` 是**同一批**离线产物（`shader_assets_are_in_sync`
-/// 保证两份 `.hlsl` 与全部 `.bin` 字节一致），但"哪个模式用哪个变体"是**后端自己的
-/// 决定**，放在一起反而会让两边互相牵制。
+/// 两边各写一份是刻意的：字节码是同一批产物（`zephyra_fx::shaders` 统一导出），
+/// 但"哪个模式用哪个变体"是**后端自己的决定**，放在一起反而会让两边互相牵制。
 ///
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
 pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
-    ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
+    ("PSMain", zephyra_fx::shaders::ps::PSMain),
     (
         "PSOverlay",
-        include_bytes!("../shaders/zephyra.PSOverlay.ps.bin"),
+        zephyra_fx::shaders::ps::PSOverlay,
     ),
     (
         "PSDarken",
-        include_bytes!("../shaders/zephyra.PSDarken.ps.bin"),
+        zephyra_fx::shaders::ps::PSDarken,
     ),
     (
         "PSLighten",
-        include_bytes!("../shaders/zephyra.PSLighten.ps.bin"),
+        zephyra_fx::shaders::ps::PSLighten,
     ),
     (
         "PSColorDodge",
-        include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin"),
+        zephyra_fx::shaders::ps::PSColorDodge,
     ),
     (
         "PSColorBurn",
-        include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin"),
+        zephyra_fx::shaders::ps::PSColorBurn,
     ),
     (
         "PSHardLight",
-        include_bytes!("../shaders/zephyra.PSHardLight.ps.bin"),
+        zephyra_fx::shaders::ps::PSHardLight,
     ),
     (
         "PSSoftLight",
-        include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin"),
+        zephyra_fx::shaders::ps::PSSoftLight,
     ),
     (
         "PSDifference",
-        include_bytes!("../shaders/zephyra.PSDifference.ps.bin"),
+        zephyra_fx::shaders::ps::PSDifference,
     ),
     (
         "PSExclusion",
-        include_bytes!("../shaders/zephyra.PSExclusion.ps.bin"),
+        zephyra_fx::shaders::ps::PSExclusion,
     ),
     (
         "PSMultiply",
-        include_bytes!("../shaders/zephyra.PSMultiply.ps.bin"),
+        zephyra_fx::shaders::ps::PSMultiply,
     ),
-    ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
+    ("PSHue", zephyra_fx::shaders::ps::PSHue),
     (
         "PSSaturation",
-        include_bytes!("../shaders/zephyra.PSSaturation.ps.bin"),
+        zephyra_fx::shaders::ps::PSSaturation,
     ),
     (
         "PSColor",
-        include_bytes!("../shaders/zephyra.PSColor.ps.bin"),
+        zephyra_fx::shaders::ps::PSColor,
     ),
     (
         "PSLuminosity",
-        include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin"),
+        zephyra_fx::shaders::ps::PSLuminosity,
     ),
     (
         "PSBlurH",
-        include_bytes!("../shaders/zephyra.PSBlurH.ps.bin"),
+        zephyra_fx::shaders::ps::PSBlurH,
     ),
     (
         "PSBlurV",
-        include_bytes!("../shaders/zephyra.PSBlurV.ps.bin"),
+        zephyra_fx::shaders::ps::PSBlurV,
     ),
     (
         "PSComposite",
-        include_bytes!("../shaders/zephyra.PSComposite.ps.bin"),
+        zephyra_fx::shaders::ps::PSComposite,
     ),
     (
         "PSRefraction",
-        include_bytes!("../shaders/zephyra.PSRefraction.ps.bin"),
+        zephyra_fx::shaders::ps::PSRefraction,
     ),
     (
         "PSBackdropBlur",
-        include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
+        zephyra_fx::shaders::ps::PSBackdropBlur,
     ),
     (
         "PSHollowShadow",
-        include_bytes!("../shaders/zephyra.PSHollowShadow.ps.bin"),
+        zephyra_fx::shaders::ps::PSHollowShadow,
     ),
     (
         "PSHighlight",
-        include_bytes!("../shaders/zephyra.PSHighlight.ps.bin"),
+        zephyra_fx::shaders::ps::PSHighlight,
     ),
     (
         "PSInnerShadow",
-        include_bytes!("../shaders/zephyra.PSInnerShadow.ps.bin"),
+        zephyra_fx::shaders::ps::PSInnerShadow,
     ),
-    ("PSLens", include_bytes!("../shaders/zephyra.PSLens.ps.bin")),
+    ("PSLens", zephyra_fx::shaders::ps::PSLens),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。

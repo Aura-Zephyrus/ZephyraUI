@@ -46,6 +46,8 @@ zephyra-platform-win = { path = "../zephyra-platform-win" }
 
 [build-dependencies]
 naga = { version = "30", features = ["wgsl-in", "spv-out"] }
+# WGSL 源的单一真相源在 zephyra-vector；build script 从它取拼接后的完整源。
+zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", branch = "main" }
 
 [lib]
 path = "src/lib.rs"

@@ -41,10 +41,10 @@ const MIN_COVERAGE: f64 = 0.99;
 ///
 /// 刻意用 SM 4.0（比本项目那套的 5.0 低两档）：这样一旦它坏了，可以顺带排除
 /// 「5.0 的某个特性有问题」，而不用再去猜版本差异。
-const MINIMAL_VS: &[u8] = include_bytes!("../shaders/minimal.vs.bin");
+const MINIMAL_VS: &[u8] = include_bytes!("minimal.vs.bin");
 
 /// 纯红像素着色器，无输入。
-const MINIMAL_PS: &[u8] = include_bytes!("../shaders/minimal.ps.bin");
+const MINIMAL_PS: &[u8] = include_bytes!("minimal.ps.bin");
 
 /// 清成纯蓝，于是「画出来的红色像素」与「没画到的蓝色像素」不会混淆。
 ///

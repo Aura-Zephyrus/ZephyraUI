@@ -77,7 +77,7 @@ pub mod dev_reload;
 // 后端无关的绘制代码已搬进 `zephyra-vector`。这里按原路径再导出，
 // 使宿主与既有的 `crate::quad` / `crate::text` 写法继续可用。
 pub use zephyra_vector::text;
-pub use zephyra_vector::{cpu_raster, geom_clip, offscreen, pixels, quad, texture};
+pub use zephyra_vector::{cpu_raster, geom_clip, offscreen, pixels, quad, shaders, texture};
 
 pub use pixels::{srgb_bytes, write_bmp, PixelRead};
 pub use quad::RenderReport;

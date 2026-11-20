@@ -3025,7 +3025,7 @@ dependencies = [
 [[package]]
 name = "zephyra-vector"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/zephyra-vector.git?branch=main#c6a6dbd305908aef8a5666174c88d7da6b9adcec"
+source = "git+https://github.com/Aura-Zephyrus/zephyra-vector.git?branch=main#68eae084c097aae2bb5645596df3a505d39eb61f"
 dependencies = [
  "ab_glyph",
  "bytemuck",
@@ -3047,6 +3047,7 @@ dependencies = [
  "zephyra-platform-linux",
  "zephyra-platform-win",
  "zephyra-render-ext",
+ "zephyra-vector",
  "zephyra-window",
  "zephyra-winit-input",
 ]

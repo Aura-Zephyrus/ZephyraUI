@@ -61,7 +61,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use crate::quad::Vertex;
 
 /// 顶点着色器字节码（`fxc /T vs_5_0`）。
-pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
+pub const VS_BYTECODE: &[u8] = zephyra_fx::shaders::VS_BYTECODE;
 
 /// 像素着色器变体表：`(HLSL 入口名, 字节码)`。
 ///
@@ -82,93 +82,93 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// 紧随其后的 14 个是可分离 / 非可分离混合模式的合成变体（E4.2 / E4.3）。
 /// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
 pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
-    ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
+    ("PSMain", zephyra_fx::shaders::ps::PSMain),
     (
         "PSOverlay",
-        include_bytes!("../shaders/zephyra.PSOverlay.ps.bin"),
+        zephyra_fx::shaders::ps::PSOverlay,
     ),
     (
         "PSDarken",
-        include_bytes!("../shaders/zephyra.PSDarken.ps.bin"),
+        zephyra_fx::shaders::ps::PSDarken,
     ),
     (
         "PSLighten",
-        include_bytes!("../shaders/zephyra.PSLighten.ps.bin"),
+        zephyra_fx::shaders::ps::PSLighten,
     ),
     (
         "PSColorDodge",
-        include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin"),
+        zephyra_fx::shaders::ps::PSColorDodge,
     ),
     (
         "PSColorBurn",
-        include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin"),
+        zephyra_fx::shaders::ps::PSColorBurn,
     ),
     (
         "PSHardLight",
-        include_bytes!("../shaders/zephyra.PSHardLight.ps.bin"),
+        zephyra_fx::shaders::ps::PSHardLight,
     ),
     (
         "PSSoftLight",
-        include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin"),
+        zephyra_fx::shaders::ps::PSSoftLight,
     ),
     (
         "PSDifference",
-        include_bytes!("../shaders/zephyra.PSDifference.ps.bin"),
+        zephyra_fx::shaders::ps::PSDifference,
     ),
     (
         "PSExclusion",
-        include_bytes!("../shaders/zephyra.PSExclusion.ps.bin"),
+        zephyra_fx::shaders::ps::PSExclusion,
     ),
     (
         "PSMultiply",
-        include_bytes!("../shaders/zephyra.PSMultiply.ps.bin"),
+        zephyra_fx::shaders::ps::PSMultiply,
     ),
-    ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
+    ("PSHue", zephyra_fx::shaders::ps::PSHue),
     (
         "PSSaturation",
-        include_bytes!("../shaders/zephyra.PSSaturation.ps.bin"),
+        zephyra_fx::shaders::ps::PSSaturation,
     ),
     (
         "PSColor",
-        include_bytes!("../shaders/zephyra.PSColor.ps.bin"),
+        zephyra_fx::shaders::ps::PSColor,
     ),
     (
         "PSLuminosity",
-        include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin"),
+        zephyra_fx::shaders::ps::PSLuminosity,
     ),
     (
         "PSBlurH",
-        include_bytes!("../shaders/zephyra.PSBlurH.ps.bin"),
+        zephyra_fx::shaders::ps::PSBlurH,
     ),
     (
         "PSBlurV",
-        include_bytes!("../shaders/zephyra.PSBlurV.ps.bin"),
+        zephyra_fx::shaders::ps::PSBlurV,
     ),
     (
         "PSComposite",
-        include_bytes!("../shaders/zephyra.PSComposite.ps.bin"),
+        zephyra_fx::shaders::ps::PSComposite,
     ),
     (
         "PSRefraction",
-        include_bytes!("../shaders/zephyra.PSRefraction.ps.bin"),
+        zephyra_fx::shaders::ps::PSRefraction,
     ),
     (
         "PSBackdropBlur",
-        include_bytes!("../shaders/zephyra.PSBackdropBlur.ps.bin"),
+        zephyra_fx::shaders::ps::PSBackdropBlur,
     ),
     (
         "PSHollowShadow",
-        include_bytes!("../shaders/zephyra.PSHollowShadow.ps.bin"),
+        zephyra_fx::shaders::ps::PSHollowShadow,
     ),
     (
         "PSHighlight",
-        include_bytes!("../shaders/zephyra.PSHighlight.ps.bin"),
+        zephyra_fx::shaders::ps::PSHighlight,
     ),
     (
         "PSInnerShadow",
-        include_bytes!("../shaders/zephyra.PSInnerShadow.ps.bin"),
+        zephyra_fx::shaders::ps::PSInnerShadow,
     ),
-    ("PSLens", include_bytes!("../shaders/zephyra.PSLens.ps.bin")),
+    ("PSLens", zephyra_fx::shaders::ps::PSLens),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体。
@@ -272,8 +272,8 @@ impl std::fmt::Display for ShaderError {
         match self {
             ShaderError::NotDxbc => write!(
                 f,
-                "着色器字节码不是 DXBC 容器。请重新生成：\
-                 fxc /T vs_5_0 /E VSMain shaders/zephyra.hlsl /Fo shaders/zephyra.vs.bin"
+                "着色器字节码不是 DXBC 容器。源与产物现在由 zephyra-vector 维护：\
+                 在 E:/zephyra-vector/shaders/hlsl 重跑 fxc 并更新提交产物"
             ),
             ShaderError::NoInputSignature => {
                 write!(f, "DXBC 里没有 ISGN（输入签名）chunk，无法建顶点布局")
