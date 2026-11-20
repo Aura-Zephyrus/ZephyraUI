@@ -152,6 +152,8 @@ pub enum TransformKind {
     Translate,
     Scale,
     Rotate,
+    SkewX,
+    SkewY,
 }
 
 /// `<animateTransform>`：三个分量（平移 x/y、缩放 x/y、旋转 angle/cx/cy）。
@@ -167,10 +169,23 @@ pub struct TransformAnim {
 pub struct MotionAnim {
     pub timing: Timing,
     pub path: Vec<Segment>,
-    /// 是否让元素朝向运动方向（SMIL `rotate="auto"`）。
-    pub auto_rotate: bool,
+    /// 运动旋转模式：`auto` / `auto-reverse` / 无（0）。
+    pub rotate_mode: MotionRotate,
     /// `keyPoints`：沿路径的关键点比例（0..1），与 keyTimes 对应。
     pub key_points: Vec<f32>,
+    /// `<mpath xlink:href="#id">` 引用的路径 id（解析时只记录，不跨文档解析）。
+    pub mpath_href: Option<String>,
+}
+
+/// `<animateMotion rotate="...">` 的模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionRotate {
+    /// 不旋转（默认）。
+    None,
+    /// 朝向运动方向。
+    Auto,
+    /// 朝向运动方向 + 180°（反向）。
+    AutoReverse,
 }
 
 /// 几何属性动画：x / y / width / height / r / cx / cy。

@@ -195,6 +195,14 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                             mul(transform, [1.0, 0.0, 0.0, 1.0, v[0], v[1]])
                         }
                         TransformKind::Scale => mul(transform, [v[0], 0.0, 0.0, v[1], 0.0, 0.0]),
+                        TransformKind::SkewX => {
+                            // skewX(θ)：x' = x + tan(θ)·y
+                            mul(transform, [1.0, 0.0, v[0].tan(), 1.0, 0.0, 0.0])
+                        }
+                        TransformKind::SkewY => {
+                            // skewY(θ)：y' = tan(θ)·x + y
+                            mul(transform, [1.0, v[0].tan(), 0.0, 1.0, 0.0, 0.0])
+                        }
                         TransformKind::Rotate => {
                             let (r, cx, cy) = (v[0].to_radians(), v[1], v[2]);
                             let (s, c) = (r.sin(), r.cos());
@@ -212,7 +220,12 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 if let Some((p, angle, _)) = sample_motion(a, time_ms) {
                     motion_offset = p;
                     transform = mul(transform, [1.0, 0.0, 0.0, 1.0, p.0, p.1]);
-                    if a.auto_rotate {
+                    if a.rotate_mode != MotionRotate::None {
+                        let angle = if a.rotate_mode == MotionRotate::AutoReverse {
+                            angle + std::f32::consts::PI
+                        } else {
+                            angle
+                        };
                         let (s, c) = (angle.sin(), angle.cos());
                         transform = mul(transform, [c, s, -s, c, 0.0, 0.0]);
                     }
@@ -254,11 +267,20 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
     if local < 0.0 {
         return None;
     }
-    // `end` 是绝对时刻：到了就按 fill 处理（freeze 停末值 / remove 回基值）。
+    // `end` 是绝对时刻：到了就按 fill 处理。
+    // freeze 停在 **end 那一刻的实际进度**，不是无条件 t=1 ——
+    // 那会让「begin=0 dur=1000 end=400」的动画跳到终值，而 SMIL 要求停在 0.4。
     if let Some(end) = timing.end_ms {
         if time_ms >= end {
+            let effective = (end - timing.begin_ms).max(0.0);
+            let raw = effective / timing.dur_ms;
+            let t = if timing.repeat == Repeat::Indefinite || raw <= 1.0 {
+                raw.fract().clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
             return match timing.fill {
-                FillMode::Freeze => Some((1.0, false, 0)),
+                FillMode::Freeze => Some((t, false, raw.floor() as u32)),
                 FillMode::Remove => None,
             };
         }

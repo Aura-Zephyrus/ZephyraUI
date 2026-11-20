@@ -181,7 +181,14 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
             Some(Animation::Motion(MotionAnim {
                 timing,
                 path,
-                auto_rotate: attr(attrs, "rotate") == Some("auto"),
+                rotate_mode: match attr(attrs, "rotate") {
+                    Some("auto") => MotionRotate::Auto,
+                    Some("auto-reverse") => MotionRotate::AutoReverse,
+                    _ => MotionRotate::None,
+                },
+                mpath_href: attr(attrs, "mpath")
+                    .or_else(|| attr(attrs, "href"))
+                    .map(|s| s.to_string()),
                 key_points,
             }))
         }
@@ -190,6 +197,8 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                 "translate" => TransformKind::Translate,
                 "scale" => TransformKind::Scale,
                 "rotate" => TransformKind::Rotate,
+                "skewX" => TransformKind::SkewX,
+                "skewY" => TransformKind::SkewY,
                 _ => return None,
             };
             let values = parse_f32x3_values(attrs, &[0.0, 0.0, 0.0])?;
@@ -285,22 +294,38 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
 /// SMIL 时钟：`7878ms` / `1.5s` / `0.25s`。
 fn parse_time(s: &str) -> Option<f32> {
     let s = s.trim();
-    if let Some(v) = s.strip_suffix("ms") {
-        return v
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .filter(|v| v.is_finite() && *v >= 0.0);
+    // SMIL clock-value: hh:mm:ss.frac / mm:ss.frac
+    if s.contains(':') {
+        let parts: Vec<&str> = s.split(':').collect();
+        let nums: Option<Vec<f32>> = parts.iter().map(|p| p.parse::<f32>().ok()).collect();
+        let nums = nums?;
+        let ms = match nums.len() {
+            2 => nums[0] * 60_000.0 + nums[1] * 1000.0,
+            3 => nums[0] * 3_600_000.0 + nums[1] * 60_000.0 + nums[2] * 1000.0,
+            _ => return None,
+        };
+        return (ms.is_finite() && ms >= 0.0).then_some(ms);
     }
-    if let Some(v) = s.strip_suffix('s') {
-        return v
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(|v| v * 1000.0)
-            .filter(|v| v.is_finite() && *v >= 0.0);
+    for (suffix, scale) in [
+        ("ms", 1.0),
+        ("min", 60_000.0),
+        ("h", 3_600_000.0),
+        ("s", 1000.0),
+    ] {
+        if let Some(v) = s.strip_suffix(suffix) {
+            return v
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| v * scale)
+                .filter(|v| v.is_finite() && *v >= 0.0);
+        }
     }
-    None
+    // 裸数字按秒。
+    s.parse::<f32>()
+        .ok()
+        .map(|v| v * 1000.0)
+        .filter(|v| v.is_finite() && *v >= 0.0)
 }
 
 fn parse_f32_list(s: &str) -> Vec<f32> {
@@ -350,6 +375,7 @@ fn parse_f32x3_values(attrs: &str, base: &[f32; 3]) -> Option<Values<[f32; 3]>> 
     let parse_triple = |s: &str| -> Option<[f32; 3]> {
         let v = parse_f32_list(s);
         match v.len() {
+            1 => Some([v[0], 0.0, 0.0]), // skewX/skewY 只有一个角度
             2 => Some([v[0], v[1], 0.0]),
             3 => Some([v[0], v[1], v[2]]),
             _ => None,
@@ -380,6 +406,36 @@ fn parse_f32x3_values(attrs: &str, base: &[f32; 3]) -> Option<Values<[f32; 3]>> 
 fn parse_color_values(attrs: &str) -> Option<Values<[f32; 4]>> {
     let parse_color = |s: &str| -> Option<[f32; 4]> {
         let s = s.trim();
+        let named = match s {
+            "red" => Some([1.0, 0.0, 0.0, 1.0]),
+            "green" => Some([0.0, 0.5, 0.0, 1.0]),
+            "blue" => Some([0.0, 0.0, 1.0, 1.0]),
+            "white" => Some([1.0, 1.0, 1.0, 1.0]),
+            "black" => Some([0.0, 0.0, 0.0, 1.0]),
+            "transparent" => Some([0.0, 0.0, 0.0, 0.0]),
+            _ => None,
+        };
+        if named.is_some() {
+            return named;
+        }
+        if let Some(inner) = s
+            .strip_prefix("rgba(")
+            .and_then(|x| x.strip_suffix(')'))
+            .or_else(|| s.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')))
+        {
+            let v: Vec<f32> = inner
+                .split(',')
+                .filter_map(|p| p.trim().parse().ok())
+                .collect();
+            if v.len() >= 3 {
+                return Some([
+                    (v[0] / 255.0).min(1.0),
+                    (v[1] / 255.0).min(1.0),
+                    (v[2] / 255.0).min(1.0),
+                    if v.len() > 3 { v[3].min(1.0) } else { 1.0 },
+                ]);
+            }
+        }
         let hex = s.strip_prefix('#')?;
         let ch = |i: usize, n: usize| u8::from_str_radix(&hex[i..i + n], 16).ok();
         match hex.len() {

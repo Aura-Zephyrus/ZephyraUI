@@ -268,9 +268,12 @@ fn end_attribute_stops_animation_early() {
     }
     let mut tl = SvgTimeline::new(svg2);
     let at_end = tl.seek(500.0);
-    // freeze ⇒ 停在 end 那一刻的插值（0.4），而不是继续到 1。
-    // 当前简化实现停在 t=1 —— 这条钉住 end 至少生效（不等于原 dur 的 t=0.5）。
-    assert!((at_end.paths[0].opacity - 1.0).abs() < 1e-4);
+    // freeze ⇒ 必须停在 end 那一刻的插值（400/1000 = 0.4），不是 t=1 的终值。
+    assert!(
+        (at_end.paths[0].opacity - 0.4).abs() < 0.02,
+        "op={}",
+        at_end.paths[0].opacity
+    );
 }
 
 #[test]
@@ -407,4 +410,81 @@ fn key_points_remap_motion_progress() {
     let f = tl.seek(500.0);
     // keyPoints 与默认等分相同 ⇒ 仍是 x=50。
     assert!((f.paths[0].transform[4] - 50.0).abs() < 1.0);
+}
+
+/// auto-reverse：运动方向反向（+180°）。
+const AUTOREVERSE_SVG: &str = r#"<svg viewBox="0 0 100 100">
+  <path d="M0 0L4 4L8 0Z">
+    <animateMotion path="M0 0L100 0" dur="1000ms" rotate="auto-reverse" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// skewX 变换。
+const SKEW_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L4 4L8 0Z">
+    <animateTransform type="skewX" from="0" to="45" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// 颜色关键字 + rgb()。
+const NAMED_COLOR_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="fill" values="red;rgb(0,0,255)" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"##;
+
+/// 时钟格式 min / clock-value。
+const CLOCK_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="0.001min" fill="freeze"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn auto_reverse_adds_180_degrees() {
+    let svg = parse_animated_svg(AUTOREVERSE_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    let t = mid.paths[0].transform;
+    // auto-reverse 对水平路径：旋转 180° ⇒ cos=-1, sin≈0。
+    assert!((t[0] + 1.0).abs() < 0.01, "a={}", t[0]);
+    assert!(t[1].abs() < 0.01, "b={}", t[1]);
+}
+
+#[test]
+fn skew_x_transform_applies_tan() {
+    let svg = parse_animated_svg(SKEW_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    let t = mid.paths[0].transform;
+    // skewX(22.5°) ⇒ tan≈0.414，在矩阵 c 位。
+    assert!((t[2] - 22.5_f32.tan()).abs() < 0.01, "c={}", t[2]);
+}
+
+#[test]
+fn named_and_rgb_colors_parse() {
+    let svg = parse_animated_svg(NAMED_COLOR_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    match mid.paths[0].paint_mode {
+        zephyra_vector::icon::PaintMode::Solid(c) => {
+            assert!((c[0] - 0.5).abs() < 0.05 && c[2] > 0.4, "色={c:?}");
+        }
+        _ => panic!("应产出纯色"),
+    }
+}
+
+#[test]
+fn clock_value_formats_parse() {
+    let svg = parse_animated_svg(CLOCK_SVG).unwrap();
+    match &svg.paths[0].animations[0] {
+        zephyra_svg_anim::Animation::Opacity(a) => {
+            assert!(
+                (a.timing.dur_ms - 60.0).abs() < 0.01,
+                "dur={}",
+                a.timing.dur_ms
+            );
+        }
+        _ => unreachable!(),
+    }
 }
