@@ -236,6 +236,11 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                 mpath_href: attr(attrs, "mpath")
                     .or_else(|| attr(attrs, "href"))
                     .map(|s| s.to_string()),
+                origin: attr(attrs, "origin")
+                    .map(parse_f32_list)
+                    .filter(|v| v.len() >= 2)
+                    .map(|v| (v[0], v[1]))
+                    .unwrap_or((0.0, 0.0)),
                 key_points,
             }))
         }
@@ -269,6 +274,11 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                 "d" => {
                     let values = parse_path_values(attrs, base)?;
                     Some(Animation::Path(PathAnim { timing, values }))
+                }
+                "stroke" => {
+                    // stroke 可以是颜色，也可能是 `none`；只处理颜色。
+                    let values = parse_color_values(attrs)?;
+                    Some(Animation::StrokeColor(StrokeColorAnim { timing, values }))
                 }
                 "fill-opacity" | "stroke-opacity" | "stroke-width" => {
                     let values = parse_f32_values(attrs, 1.0)?;
@@ -307,17 +317,25 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         }
     };
     let begin = parse_begin(attr(attrs, "begin").unwrap_or("0ms"));
-    let repeat = match attr(attrs, "repeatCount") {
-        Some("indefinite") => Repeat::Indefinite,
-        Some(v) => Repeat::Count(v.parse().ok()?),
-        None => match attr(attrs, "repeatDur") {
-            Some("indefinite") => Repeat::Indefinite,
-            Some(v) => parse_time(v)
-                .filter(|d| *d > 0.0)
-                .map(Repeat::Duration)
-                .unwrap_or(Repeat::Count(1)),
-            None => Repeat::Count(1),
+    let rc = match attr(attrs, "repeatCount") {
+        Some("indefinite") => Some(None), // indefinite
+        Some(v) => v.parse::<u32>().ok().map(Some),
+        None => None,
+    };
+    let rd = match attr(attrs, "repeatDur") {
+        Some("indefinite") => Some(None),
+        Some(v) => parse_time(v).filter(|d| *d > 0.0).map(Some),
+        None => None,
+    };
+    let repeat = match (rc, rd) {
+        (Some(None), _) | (_, Some(None)) => Repeat::Indefinite,
+        (Some(Some(c)), Some(Some(d))) => Repeat::Bounded {
+            count: c,
+            total_ms: d,
         },
+        (Some(Some(c)), None) => Repeat::Count(c),
+        (None, Some(Some(d))) => Repeat::Duration(d),
+        (None, None) => Repeat::Count(1),
     };
     let fill = if attr(attrs, "fill") == Some("freeze") {
         FillMode::Freeze

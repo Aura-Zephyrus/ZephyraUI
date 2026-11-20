@@ -607,3 +607,81 @@ fn additive_transform_stacks_translations() {
     assert!((t[4] - 5.0).abs() < 0.5, "tx={}", t[4]);
     assert!((t[5] - 5.0).abs() < 0.5, "ty={}", t[5]);
 }
+
+/// paced：值间距不等，匀速应按距离分配时间。
+const PACED_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" values="0;1;1.2" dur="1000ms" calcMode="paced" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// repeatCount + repeatDur 同时给：取先到者。
+const BOUNDED_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="1000ms" repeatCount="5" repeatDur="2500ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// stroke 颜色动画。
+const STROKE_COLOR_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="stroke" from="#ff0000" to="#0000ff" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"##;
+
+/// animateMotion origin。
+const ORIGIN_SVG: &str = r#"<svg viewBox="0 0 100 100">
+  <path d="M0 0L4 4L8 0Z">
+    <animateMotion path="M0 0L10 0" origin="5 7" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn paced_values_use_value_distance() {
+    let svg = parse_animated_svg(PACED_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // 值距离 0→1 =1，1→1.2=0.2，总 1.2。t=0.5 ⇒ 累计距离 0.6，
+    // 全在第一段内 ⇒ 值 0 + 1×(0.6/1.0) = 0.6（paced 的匀速语义）。
+    let f = tl.seek(500.0);
+    assert!(
+        (f.paths[0].opacity - 0.6).abs() < 0.05,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn repeat_count_and_dur_take_earliest() {
+    let svg = parse_animated_svg(BOUNDED_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // repeatDur=2500ms 先于 repeatCount=5(5000ms) 到 ⇒ 2500ms 停。
+    let f = tl.seek(3000.0);
+    assert!(
+        (f.paths[0].opacity - 1.0).abs() < 1e-4,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn stroke_color_animates() {
+    let svg = parse_animated_svg(STROKE_COLOR_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    let c = mid.paths[0].stroke.expect("应有描边色");
+    assert!(
+        (c[0] - 0.5).abs() < 0.05 && (c[2] - 0.5).abs() < 0.05,
+        "色={c:?}"
+    );
+}
+
+#[test]
+fn motion_origin_offsets_path() {
+    let svg = parse_animated_svg(ORIGIN_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    let t = mid.paths[0].transform;
+    // 路径中点 x=5 + origin.x=5 ⇒ 10；y=0 + origin.y=7 ⇒ 7。
+    assert!((t[4] - 10.0).abs() < 0.5, "tx={}", t[4]);
+    assert!((t[5] - 7.0).abs() < 0.5, "ty={}", t[5]);
+}

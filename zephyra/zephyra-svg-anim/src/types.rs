@@ -48,6 +48,8 @@ pub enum Repeat {
     Indefinite,
     /// `repeatDur="2500ms"`：重复到总时长达到该值。
     Duration(f32),
+    /// `repeatCount` 与 `repeatDur` 同时给：取**先到者**（SMIL 规定）。
+    Bounded { count: u32, total_ms: f32 },
 }
 
 /// `fill` 属性：动画结束后停在终值还是回到基值。
@@ -98,6 +100,13 @@ pub enum Restart {
     Always,
     WhenNotActive,
     Never,
+}
+
+/// `stroke` 颜色动画。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeColorAnim {
+    pub timing: Timing,
+    pub values: Values<[f32; 4]>,
 }
 
 /// `fill-opacity` / `stroke` / `stroke-width` / `stroke-opacity` 动画。
@@ -216,6 +225,8 @@ pub struct MotionAnim {
     pub key_points: Vec<f32>,
     /// `<mpath xlink:href="#id">` 引用的路径 id（解析时只记录，不跨文档解析）。
     pub mpath_href: Option<String>,
+    /// `origin`：运动路径的起点偏移 (x, y)，默认 (0,0)。
+    pub origin: (f32, f32),
 }
 
 /// `<animateMotion rotate="...">` 的模式。
@@ -259,6 +270,8 @@ pub enum Animation {
     Geometry(GeometryAnim),
     /// 描边 / 不透明度样式动画。
     Style(StyleAnim),
+    /// stroke 颜色动画。
+    StrokeColor(StrokeColorAnim),
     Path(PathAnim),
     Transform(TransformAnim),
     Motion(MotionAnim),

@@ -113,6 +113,7 @@ impl SvgTimeline {
                     Animation::Path(a) => &a.timing.begin,
                     Animation::Transform(a) => &a.timing.begin,
                     Animation::Motion(a) => &a.timing.begin,
+                    Animation::StrokeColor(a) => &a.timing.begin,
                 };
                 let matches = match begin {
                     Begin::Event {
@@ -199,7 +200,7 @@ fn eval_path(
     let mut fill_opacity = 1.0f32;
     let mut stroke_opacity = 1.0f32;
     let mut stroke_width = 0.0f32;
-    let stroke: Option<[f32; 4]> = None;
+    let mut stroke: Option<[f32; 4]> = None;
 
     for (anim_index, anim) in path.animations.iter().enumerate() {
         // 事件/indefinite 动画：由 beginElement/fire_event 触发，用触发时刻作虚拟 begin。
@@ -229,6 +230,39 @@ fn eval_path(
                                     segments = v;
                                 }
                             }
+                            "fill-opacity" => {
+                                if let Ok(v) = set.to.parse::<f32>() {
+                                    fill_opacity = v.clamp(0.0, 1.0);
+                                }
+                            }
+                            "stroke-opacity" => {
+                                if let Ok(v) = set.to.parse::<f32>() {
+                                    stroke_opacity = v.clamp(0.0, 1.0);
+                                }
+                            }
+                            "stroke-width" => {
+                                if let Ok(v) = set.to.parse::<f32>() {
+                                    stroke_width = v.max(0.0);
+                                }
+                            }
+                            "stroke" => {
+                                stroke = parse_hex_rgba(&set.to);
+                            }
+                            "x" | "y" | "width" | "height" | "r" => {
+                                if let Ok(v) = set.to.parse::<f32>() {
+                                    let idx = match set.attribute_name.as_str() {
+                                        "x" => 0,
+                                        "y" => 1,
+                                        "width" => 2,
+                                        "height" => 3,
+                                        "r" => 4,
+                                        _ => 5,
+                                    };
+                                    if idx < 5 {
+                                        geometry[idx] = v;
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -246,6 +280,16 @@ fn eval_path(
                     } else {
                         v.clamp(0.0, 1.0)
                     };
+                }
+            }
+            Animation::StrokeColor(a) => {
+                if let Some((v, _)) = sample_color(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    [0.0, 0.0, 0.0, 0.0],
+                ) {
+                    stroke = Some(v);
                 }
             }
             Animation::Style(a) => {
@@ -446,6 +490,7 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
         Repeat::Count(n) => iteration >= n,
         Repeat::Indefinite => false,
         Repeat::Duration(total) => local >= total,
+        Repeat::Bounded { count, total_ms } => iteration >= count || local >= total_ms,
     };
     if done {
         return match timing.fill {
@@ -490,8 +535,34 @@ fn eased(timing: &Timing, seg: usize, linear: f32) -> f32 {
             .get(seg)
             .map(|b| b.at(linear))
             .unwrap_or(linear),
+        // paced 对 values 的弧长分段在 segment_at_paced 里完成，
+        // 这里只处理段内（paced 段内仍是线性）。
         CalcMode::Linear | CalcMode::Paced => linear,
     }
+}
+
+/// paced：把时间进度 t 按各段"值距离"重新分配到段上，使值匀速变化。
+fn segment_at_paced<T: Copy + Into<f32>>(values: &[T], t: f32) -> (usize, f32) {
+    if values.len() <= 2 {
+        return (0, t.clamp(0.0, 1.0));
+    }
+    let mut cum = vec![0.0f32];
+    for w in values.windows(2) {
+        let d = (w[1].into() - w[0].into()).abs();
+        cum.push(cum.last().unwrap() + d);
+    }
+    let total = *cum.last().unwrap();
+    if total <= 0.0 {
+        return (0, t);
+    }
+    let target = t * total;
+    for i in 0..cum.len() - 1 {
+        if cum[i + 1] >= target {
+            let span = (cum[i + 1] - cum[i]).max(f32::EPSILON);
+            return (i, ((target - cum[i]) / span).clamp(0.0, 1.0));
+        }
+    }
+    (values.len() - 2, 1.0)
 }
 
 fn sample_f32(
@@ -509,7 +580,11 @@ fn sample_f32(
     if list.is_empty() {
         return None;
     }
-    let (seg, p) = segment_at(timing, t, list.len());
+    let (seg, p) = if timing.calc_mode == CalcMode::Paced {
+        segment_at_paced(&list, t)
+    } else {
+        segment_at(timing, t, list.len())
+    };
     let p = eased(timing, seg, p);
     let base_v = if timing.calc_mode == CalcMode::Discrete {
         list[seg]
@@ -806,7 +881,14 @@ fn sample_motion(anim: &MotionAnim, time_ms: f32) -> Option<((f32, f32), f32, bo
     let (x0, y0) = pts[i];
     let (x1, y1) = pts[i + 1];
     let angle = (y1 - y0).atan2(x1 - x0);
-    Some(((x0 + (x1 - x0) * f, y0 + (y1 - y0) * f), angle, active))
+    Some((
+        (
+            x0 + (x1 - x0) * f + anim.origin.0,
+            y0 + (y1 - y0) * f + anim.origin.1,
+        ),
+        angle,
+        active,
+    ))
 }
 
 /// 累计弧长：返回进度 t 对应的点序号（带小数）。
