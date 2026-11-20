@@ -13,7 +13,7 @@
 //! - `ActivationState::key_down` 在焦点节点 `ACTIVATABLE` 且非 `DISABLED` 时闩住
 //!   `held`；
 //! - 宿主把 `held` 并进 `InputState::pressed`，应用按「上帧按着 → 这帧松了 =
-//!   点击」重建 click（`gallery/frontend/app/mod.rs`）。
+//!   点击」重建 click（判据在 `zephyra_core::input::clicks_from`）。
 //!
 //! 于是无障碍动作就复用它：聚焦 + 闩住 → 下一帧松开 → 应用收到一次**与键盘
 //! 完全同构**的 click。这条路径已经有门禁钉死（`ActivationState` 的闩住/不闩住

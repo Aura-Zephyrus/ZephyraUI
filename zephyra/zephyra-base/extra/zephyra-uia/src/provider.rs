@@ -1022,7 +1022,7 @@ mod tests {
             id: 0,
             parent: None,
             key: String::new(),
-            name: "Zephyra Gallery".into(),
+            name: "Test Window".into(),
             role: Role::Window,
             toggle: None,
             enabled: true,

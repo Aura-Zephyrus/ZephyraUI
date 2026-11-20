@@ -97,7 +97,7 @@ pub struct Element {
     pub parent: Option<usize>,
     /// 事件路由身份 —— UIA 的 Toggle / Invoke 动作最终按它回到应用。
     ///
-    /// 它就是控件模板里的 `key`，与 `Gallery::click` 分派用的是**同一个**串。
+    /// 它就是控件模板里的 `key`，与应用的 click 分派用的是**同一个**串。
     pub key: String,
     /// 可访问名 —— 屏读器念出来的那个。
     pub name: String,

@@ -8,7 +8,7 @@
 //! WindowSet<B>                 ≈ DXamlCore + 消息泵
 //! ├─ B (Backend)               ≈ 设备/队列/图集/纹理表的持有者（进程级共享）
 //! └─ windows: Vec<Box<dyn WindowHost>>
-//!    ├─ HostWindow<Gallery>    ≈ DesktopWindowImpl + 内容树
+//!    ├─ HostWindow<App>        ≈ DesktopWindowImpl + 内容树
 //!    └─ HostWindow<Inspector>  ≈ DesktopWindowImpl + 另一棵内容树
 //! ```
 //!

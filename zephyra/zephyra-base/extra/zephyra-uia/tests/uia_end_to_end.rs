@@ -70,17 +70,17 @@ fn ctx() -> Context<'static> {
     Context::new(Box::leak(Box::new(Theme::dark())))
 }
 
-/// 应用侧重建 click 的逻辑 —— 与 `gallery/frontend/app/mod.rs` 同一形状。
-///
-/// 应用认 click 的判据是「`pressed` 由 `Some` 变成 `None`」。
+/// 应用侧重建 click —— 用框架里的同一份判据（`clicks_from`），
+/// 而不是在本测试里再抄一遍「上帧按着、这帧松了」。
 fn reconstruct_click(
     last_pressed: &Option<ElementKey>,
     pressed: &Option<ElementKey>,
 ) -> Option<ElementKey> {
-    match (last_pressed, pressed) {
-        (Some(prev), None) => Some(prev.clone()),
-        _ => None,
-    }
+    let last: Vec<ElementKey> = last_pressed.iter().cloned().collect();
+    let now: Vec<ElementKey> = pressed.iter().cloned().collect();
+    zephyra_core::input::clicks_from(&last, &now, false)
+        .into_iter()
+        .next()
 }
 
 #[test]

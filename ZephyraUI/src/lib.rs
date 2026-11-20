@@ -21,8 +21,10 @@
 //! # 两条不能碰的规矩
 //!
 //! 1. **外观不进源码。** 控件只发 `NodeTag` / `ElementKey` / 分类名 / 内容，
-//!    颜色与尺寸全在 `.zstyle`。门禁按**整棵树 × 全部页面 × 全部交互态**判
-//!    （`gallery/tests/gates.rs`）。
+//!    颜色与尺寸全在 `.zstyle`。只靠框架数据能判的规则（令牌存在、motion 档位
+//!    有规则、模板无字面文案）在本仓 `tests/widget_gates.rs`；需要整棵树 ×
+//!    全部页面 × 全部交互态的规则仍在 `gallery/tests/gates.rs`（要应用自己的 View
+//!    才能造树）。
 //!
 //! 2. **本 crate 不依赖渲染后端。** 控件库的用户不该被迫引入 D3D12。
 //!    后端由应用（`gallery/`）用 feature 选。
@@ -30,8 +32,8 @@
 //! # i18n：控件只发 key
 //!
 //! 控件模板的文案参数收**语义 key**，翻译发生在控件内部（`tr()` → 宿主的
-//! 文案表）。于是控件层**永远不发面向用户的文案** —— 这条门禁就做在
-//! `gallery/tests/gates.rs` 里。
+//! 文案表）。于是控件层**永远不发面向用户的文案** —— 模板源码的门禁做在
+//! 本仓 `tests/widget_gates.rs`，应用树上的门禁在 `gallery/tests/gates.rs`。
 //!
 //! 控件**自身语义**的文案（复选框组组头的「全选」）归 [`i18n`]，自带三语言
 //! 默认译文，应用可覆盖。
@@ -40,6 +42,7 @@ pub mod catalog;
 pub mod checkbox;
 pub mod i18n;
 pub mod liquid_button;
+pub mod motion;
 pub mod popup;
 pub mod scroll_bar;
 pub mod scroll_view;
@@ -63,6 +66,11 @@ pub use i18n::{
     KEY_PARAMS, NAMESPACE,
 };
 pub use liquid_button::{LiquidButton, LIQUID_BUTTON_H, LIQUID_BUTTON_W};
+pub use motion::{
+    fade_class, glass_anchor_ty, morph_class, morph_height, reveal_items, visible, visible_slide,
+    DropdownMotion, BTN_H, CLOSE_MS, FADE_CLASSES, FADE_STEPS, MENU_H, MENU_SLIDE, MORPH_CLASSES,
+    MORPH_STEPS, OPEN_MS, REVEAL_AT,
+};
 pub use popup::Popup;
 pub use scroll_bar::{ScrollBar, ScrollBarAxis, MIN_THUMB_LENGTH, PAGE_FRACTION};
 pub use scroll_view::{ScrollView, SCROLL_DRAG_SLOP, SCROLL_WHEEL_DELTA};

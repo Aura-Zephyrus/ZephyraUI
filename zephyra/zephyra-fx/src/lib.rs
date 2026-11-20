@@ -278,6 +278,27 @@ impl InputState {
     pub fn rect_of(&self, key: &ElementKey) -> Option<zephyra_core::core::Rect> {
         self.rects.iter().find(|(k, _)| k == key).map(|(_, r)| *r)
     }
+
+    /// 当前**全部**按下目标（多指各按一个时长度 > 1）。
+    ///
+    /// `pressed_keys` 为空时回落到 `pressed` —— 单指宿主只填后者也不会漏。
+    /// 这是「按 key 找自己」那条判据的唯一入口，应用不该再各写一遍 fallback。
+    pub fn pressed_set(&self) -> Vec<ElementKey> {
+        if self.pressed_keys.is_empty() {
+            self.pressed.iter().cloned().collect()
+        } else {
+            self.pressed_keys.clone()
+        }
+    }
+
+    /// 本帧新产生的点击（上帧按着、这帧松了），用 [`Self::pressed_set`] 作当前集合。
+    ///
+    /// `last` 是**上一帧**的 [`Self::pressed_set`] 结果 —— 应用要在 `on_input`
+    /// 末尾把它存下来，下一帧再传进来。判据本身（取消不是抬起、多指集合差）住在
+    /// `zephyra_core::input::clicks_from`，与无障碍桥共用同一份。
+    pub fn clicks_from(&self, last: &[ElementKey]) -> Vec<ElementKey> {
+        zephyra_core::input::clicks_from(last, &self.pressed_set(), self.cancelled)
+    }
 }
 
 /// 一次滚轮输入。
@@ -383,7 +404,7 @@ pub trait View {
     /// 「动画有问题」：动画进度全靠鼠标事件凑）。
     ///
     /// 默认 `false`：静止的保留式 UI 一帧都不画。实现者（应用）只需要回答
-    /// 「某个动画是否还没收敛」—— 见 `Gallery::wants_frames`。
+    /// 「某个动画是否还没收敛」—— 见各应用自己的 `View::wants_frames` 实现。
     fn wants_frames(&self) -> bool {
         false
     }

@@ -158,7 +158,8 @@ cargo test -p zephyra-ui            # 本 crate：令牌镜像校验等
 cargo test --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery   # 控件的真正判据在 gallery 仓
 ```
 
-本 crate 自己只有少量单测；**控件的判据在 gallery 仓的 `tests/gates.rs`**（按整棵树判，
+本 crate 的框架级门禁在 `tests/widget_gates.rs`（不依赖应用）；需要整棵树的判据仍在
+gallery 仓的 `tests/gates.rs`（按整棵树判，
 遍历全部页面 × 全部交互态，不按函数判 —— 逐函数查只能查到「我记得去查的那个」）。
 另有 `interaction_tests.rs`（命中 / 捕获 / 拖动离位不触发点击）与
 `hover_layout_tests.rs`（hover 改尺寸要重排）。

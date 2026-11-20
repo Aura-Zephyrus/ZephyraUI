@@ -31,6 +31,7 @@
 //! 而"哪个控件被点了"必须结合布局矩形才有意义。
 
 pub mod activation;
+pub mod click;
 pub mod focus;
 pub mod gesture;
 pub mod manipulation;
@@ -43,6 +44,7 @@ pub mod text;
 pub mod viewport;
 
 pub use activation::ActivationState;
+pub use click::{clicks_from, ClickTracker};
 pub use focus::FocusState;
 pub use gesture::StaticGesture;
 pub use manipulation::ManipulationDelta;
