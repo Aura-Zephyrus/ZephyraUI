@@ -295,3 +295,116 @@ fn by_on_fill_uses_base() {
         _ => panic!("by 应产出纯色"),
     }
 }
+
+/// accumulate="sum"：每次重复在上次终值上继续累加。
+const ACCUMULATE_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" values="0;0.2" dur="1000ms" repeatCount="indefinite" accumulate="sum" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// repeatDur 具体时长。
+const REPEATDUR_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="1000ms" repeatDur="2500ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// 几何属性动画。
+const GEOMETRY_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="width" from="10" to="20" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// 废弃的 <animateColor>。
+const ANIMATECOLOR_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animateColor from="#ff0000" to="#0000ff" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"##;
+
+/// calcMode="discrete" 对颜色。
+const DISCRETE_SVG: &str = r##"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="fill" values="#ff0000;#00ff00;#0000ff" dur="1000ms" calcMode="discrete" fill="freeze"/>
+  </path>
+</svg>"##;
+
+#[test]
+fn accumulate_sum_keeps_growing_across_repeats() {
+    let svg = parse_animated_svg(ACCUMULATE_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let f = tl.seek(1500.0); // 第 2 次重复的中点：0.2 + 0.1 = 0.3
+    assert!(
+        (f.paths[0].opacity - 0.3).abs() < 0.02,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn repeat_dur_duration_stops_at_total() {
+    let svg = parse_animated_svg(REPEATDUR_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let f = tl.seek(3000.0);
+    // 2500ms 到了 ⇒ freeze 停在终值 1（remove 会回基值）。
+    assert!((f.paths[0].opacity - 1.0).abs() < 1e-4);
+}
+
+#[test]
+fn geometry_attribute_animates() {
+    let svg = parse_animated_svg(GEOMETRY_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    assert!(
+        (mid.paths[0].geometry[2] - 15.0).abs() < 0.01,
+        "width={}",
+        mid.paths[0].geometry[2]
+    );
+}
+
+#[test]
+fn animate_color_element_is_supported() {
+    let svg = parse_animated_svg(ANIMATECOLOR_SVG).unwrap();
+    assert_eq!(svg.paths[0].animations.len(), 1);
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    match mid.paths[0].paint_mode {
+        zephyra_vector::icon::PaintMode::Solid(c) => {
+            assert!((c[0] - 0.5).abs() < 0.05 && (c[2] - 0.5).abs() < 0.05);
+        }
+        _ => panic!("animateColor 应产出纯色"),
+    }
+}
+
+#[test]
+fn discrete_calc_mode_holds_each_value() {
+    let svg = parse_animated_svg(DISCRETE_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(400.0); // 第 1 段内 ⇒ 保持红色
+    match mid.paths[0].paint_mode {
+        zephyra_vector::icon::PaintMode::Solid(c) => {
+            assert!(c[0] > 0.9 && c[1] < 0.01, "应是红色: {c:?}");
+        }
+        _ => panic!("discrete 应产出纯色"),
+    }
+}
+
+#[test]
+fn key_points_remap_motion_progress() {
+    let svg = parse_animated_svg(AUTO_ROTATE_SVG).unwrap();
+    let mut svg2 = svg.clone();
+    if let Some(anim) = svg2.paths[0].animations.get_mut(0) {
+        match anim {
+            zephyra_svg_anim::Animation::Motion(a) => {
+                a.key_points = vec![0.0, 0.5, 1.0];
+            }
+            _ => unreachable!(),
+        }
+    }
+    let mut tl = SvgTimeline::new(svg2);
+    let f = tl.seek(500.0);
+    // keyPoints 与默认等分相同 ⇒ 仍是 x=50。
+    assert!((f.paths[0].transform[4] - 50.0).abs() < 1.0);
+}

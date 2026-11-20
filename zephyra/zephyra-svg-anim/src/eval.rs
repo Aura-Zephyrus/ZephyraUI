@@ -107,11 +107,12 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
     let mut opacity = 1.0f32;
     let mut transform = IDENTITY;
     let mut motion_offset = (0.0f32, 0.0f32);
+    let mut geometry: [f32; 6] = [0.0; 6]; // x, y, width, height, r, (unused)
 
     for anim in &path.animations {
         match anim {
             Animation::Set(set) => {
-                if let Some((_, active)) = phase(&set.timing, time_ms) {
+                if let Some((_, active, _)) = phase(&set.timing, time_ms) {
                     // set 是离散的：活跃期内取 to，非活跃期保持基值。
                     if active {
                         match set.attribute_name.as_str() {
@@ -142,6 +143,23 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                     } else {
                         v.clamp(0.0, 1.0)
                     };
+                }
+            }
+            Animation::Geometry(a) => {
+                if let Some((v, _)) = sample_f32(&a.timing, &a.values, time_ms, 0.0) {
+                    let idx = match a.attribute_name.as_str() {
+                        "x" => 0,
+                        "y" => 1,
+                        "width" => 2,
+                        "height" => 3,
+                        "r" => 4,
+                        "cx" => 0,
+                        "cy" => 1,
+                        _ => 5,
+                    };
+                    if idx < 5 {
+                        geometry[idx] = v;
+                    }
                 }
             }
             Animation::Fill(a) => {
@@ -210,6 +228,7 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
         opacity,
         transform,
         motion_offset,
+        geometry,
     }
 }
 
@@ -230,7 +249,7 @@ fn mul(a: [f32; 6], b: [f32; 6]) -> [f32; 6] {
 /// 公共采样状态：返回 (值, 是否仍在活跃期)。
 ///
 /// `None` 表示动画尚未开始，调用方保持基值。
-fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool)> {
+fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
     let local = time_ms - timing.begin_ms;
     if local < 0.0 {
         return None;
@@ -239,7 +258,7 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool)> {
     if let Some(end) = timing.end_ms {
         if time_ms >= end {
             return match timing.fill {
-                FillMode::Freeze => Some((1.0, false)),
+                FillMode::Freeze => Some((1.0, false, 0)),
                 FillMode::Remove => None,
             };
         }
@@ -248,22 +267,19 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool)> {
     let done = match timing.repeat {
         Repeat::Count(n) => iteration >= n as f32,
         Repeat::Indefinite => false,
+        Repeat::Duration(total) => local >= total,
     };
     if done {
         // fill="freeze"：停在末值（t=1）；fill="remove"：回基值（None）。
         return match timing.fill {
-            FillMode::Freeze => Some((1.0, false)),
+            FillMode::Freeze => Some((1.0, false, 0)),
             FillMode::Remove => None,
         };
     }
     let raw = local / timing.dur_ms;
-    let iteration = raw.floor();
+    let iteration = raw.floor() as u32;
     let t = raw.fract();
-    // accumulate="sum" 时，把已完成的重复次数并进进度，让下一次重复从上次终值继续。
-    // 对 values 列表而言这等价于把 t 往后推 iteration 个完整周期 ——
-    // 用 iter_offset 传给采样函数，在列表末尾做线性外推。
-    let _ = iteration;
-    Some((t.clamp(0.0, 1.0), true))
+    Some((t.clamp(0.0, 1.0), true, iteration))
 }
 
 /// 在 keyTimes 上定位当前段，返回 (段下标, 段内 0..1 进度)。
@@ -309,7 +325,7 @@ fn sample_f32(
     time_ms: f32,
     base: f32,
 ) -> Option<(f32, bool)> {
-    let (t, active) = phase(timing, time_ms)?;
+    let (t, active, iteration) = phase(timing, time_ms)?;
     let list: Vec<f32> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![*a, *b],
@@ -320,10 +336,18 @@ fn sample_f32(
     }
     let (seg, p) = segment_at(timing, t, list.len());
     let p = eased(timing, seg, p);
-    let v = if timing.calc_mode == CalcMode::Discrete {
+    let base_v = if timing.calc_mode == CalcMode::Discrete {
         list[seg]
     } else {
         list[seg] + (list[seg + 1] - list[seg]) * p
+    };
+    // accumulate="sum"：第 n 次重复把前 n 次终值累加进来。
+    let v = if timing.accumulate_sum {
+        let first = list[0];
+        let last = *list.last().unwrap();
+        base_v + (last - first) * iteration as f32
+    } else {
+        base_v
     };
     Some((v, active))
 }
@@ -334,7 +358,7 @@ fn sample_color(
     time_ms: f32,
     base: [f32; 4],
 ) -> Option<([f32; 4], bool)> {
-    let (t, active) = phase(timing, time_ms)?;
+    let (t, active, iteration) = phase(timing, time_ms)?;
     let list: Vec<[f32; 4]> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![*a, *b],
@@ -354,13 +378,24 @@ fn sample_color(
     let (seg, p) = segment_at(timing, t, list.len());
     let p = eased(timing, seg, p);
     let a = list[seg];
-    let b = list[seg + 1];
-    let v = [
+    let b = if timing.calc_mode == CalcMode::Discrete {
+        a
+    } else {
+        list[seg + 1]
+    };
+    let mut v = [
         a[0] + (b[0] - a[0]) * p,
         a[1] + (b[1] - a[1]) * p,
         a[2] + (b[2] - a[2]) * p,
         a[3] + (b[3] - a[3]) * p,
     ];
+    if timing.accumulate_sum {
+        let first = list[0];
+        let last = *list.last().unwrap();
+        for i in 0..4 {
+            v[i] += (last[i] - first[i]) * iteration as f32;
+        }
+    }
     Some((v, active))
 }
 
@@ -370,7 +405,7 @@ fn sample_f32x3(
     time_ms: f32,
     base: [f32; 3],
 ) -> Option<([f32; 3], bool)> {
-    let (t, active) = phase(timing, time_ms)?;
+    let (t, active, iteration) = phase(timing, time_ms)?;
     let list: Vec<[f32; 3]> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![*a, *b],
@@ -382,15 +417,24 @@ fn sample_f32x3(
     let (seg, p) = segment_at(timing, t, list.len());
     let p = eased(timing, seg, p);
     let a = list[seg];
-    let b = list[seg + 1];
-    Some((
-        [
-            a[0] + (b[0] - a[0]) * p,
-            a[1] + (b[1] - a[1]) * p,
-            a[2] + (b[2] - a[2]) * p,
-        ],
-        active,
-    ))
+    let b = if timing.calc_mode == CalcMode::Discrete {
+        a
+    } else {
+        list[seg + 1]
+    };
+    let mut v = [
+        a[0] + (b[0] - a[0]) * p,
+        a[1] + (b[1] - a[1]) * p,
+        a[2] + (b[2] - a[2]) * p,
+    ];
+    if timing.accumulate_sum {
+        let first = list[0];
+        let last = *list.last().unwrap();
+        for i in 0..3 {
+            v[i] += (last[i] - first[i]) * iteration as f32;
+        }
+    }
+    Some((v, active))
 }
 
 /// 路径形变：段结构一致时逐段插值；不一致时展平到等长折线再插值。
@@ -400,7 +444,7 @@ fn sample_path(
     time_ms: f32,
     base: &[Segment],
 ) -> Option<(Vec<Segment>, bool)> {
-    let (t, active) = phase(timing, time_ms)?;
+    let (t, active, _iteration) = phase(timing, time_ms)?;
     let list: Vec<Vec<Segment>> = match values {
         Values::List(v) => v.clone(),
         Values::FromTo(a, b) => vec![a.clone(), b.clone()],
@@ -563,16 +607,23 @@ fn sample_segments(segments: &[Segment], steps: u32) -> Vec<(f32, f32)> {
 
 /// `<animateMotion>`：按路径累计弧长匀速前进。
 fn sample_motion(anim: &MotionAnim, time_ms: f32) -> Option<((f32, f32), f32, bool)> {
-    let (t, active) = phase(&anim.timing, time_ms)?;
+    let (t, active, _iteration) = phase(&anim.timing, time_ms)?;
     let pts = sample_segments(&anim.path, 16);
     if pts.len() < 2 {
         return Some(((0.0, 0.0), 0.0, active));
     }
     // paced：按累计弧长取点；linear：按点序号取点。
-    let target_s = if anim.timing.calc_mode == CalcMode::Paced {
-        arc_length_at(&pts, t)
+    // keyPoints 把时间进度映射到路径上的关键点（按 keyTimes 分段）。
+    let mapped_t = if anim.key_points.len() >= 2 {
+        let (seg, p) = segment_at(&anim.timing, t, anim.key_points.len());
+        anim.key_points[seg] + (anim.key_points[seg + 1] - anim.key_points[seg]) * p
     } else {
-        t * (pts.len() - 1) as f32
+        t
+    };
+    let target_s = if anim.timing.calc_mode == CalcMode::Paced {
+        arc_length_at(&pts, mapped_t)
+    } else {
+        mapped_t * (pts.len() - 1) as f32
     };
     let s = target_s.min((pts.len() - 1) as f32);
     let i = (s.floor() as usize).min(pts.len() - 2);

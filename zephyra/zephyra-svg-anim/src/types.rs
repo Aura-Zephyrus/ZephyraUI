@@ -40,12 +40,14 @@ impl core::fmt::Display for SvgAnimError {
 }
 
 /// 重复次数。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Repeat {
     /// 固定次数（0 = 不播，1 = 播一次）。
     Count(u32),
     /// `repeatCount="indefinite"` / `repeatDur="indefinite"`。
     Indefinite,
+    /// `repeatDur="2500ms"`：重复到总时长达到该值。
+    Duration(f32),
 }
 
 /// `fill` 属性：动画结束后停在终值还是回到基值。
@@ -167,6 +169,17 @@ pub struct MotionAnim {
     pub path: Vec<Segment>,
     /// 是否让元素朝向运动方向（SMIL `rotate="auto"`）。
     pub auto_rotate: bool,
+    /// `keyPoints`：沿路径的关键点比例（0..1），与 keyTimes 对应。
+    pub key_points: Vec<f32>,
+}
+
+/// 几何属性动画：x / y / width / height / r / cx / cy。
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometryAnim {
+    pub timing: Timing,
+    /// 属性名（x/y/width/height/r/cx/cy）。
+    pub attribute_name: String,
+    pub values: Values<f32>,
 }
 
 /// `<set>`：在一段时间内把属性设成固定值（离散，无插值）。
@@ -186,6 +199,8 @@ pub enum Animation {
     Set(SetAnim),
     Opacity(OpacityAnim),
     Fill(FillAnim),
+    /// 几何属性动画。
+    Geometry(GeometryAnim),
     Path(PathAnim),
     Transform(TransformAnim),
     Motion(MotionAnim),
@@ -223,6 +238,8 @@ pub struct RenderedPath {
     pub transform: [f32; 6],
     /// 运动路径带来的偏移（已并进 transform 的 e/f，单独留一份便于调试/HUD）。
     pub motion_offset: (f32, f32),
+    /// 几何属性动画的结果：[x, y, width, height, r]（未设置的属性为 0）。
+    pub geometry: [f32; 6],
 }
 
 /// 一帧的完整结果。

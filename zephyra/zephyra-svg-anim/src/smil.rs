@@ -97,7 +97,13 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
         let mut anim_rest = rest;
         loop {
             let mut found: Option<(&str, &str, &str)> = None; // (tag, attrs, after)
-            for tag in ["<animateMotion", "<animateTransform", "<set", "<animate"] {
+            for tag in [
+                "<animateMotion",
+                "<animateTransform",
+                "<animateColor",
+                "<set",
+                "<animate",
+            ] {
                 if let Some((attrs, after)) = next_tag(anim_rest, tag) {
                     // <animate> 是 <animateTransform> / <animateMotion> 的前缀：
                     // 若更长的标签在同一位置命中，就跳过短的那个。
@@ -157,6 +163,11 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
     }
     let timing = parse_timing(attrs)?;
     match tag {
+        // 废弃但仍常见的 <animateColor>：与 fill 动画同义。
+        "<animateColor" => {
+            let values = parse_color_values(attrs)?;
+            Some(Animation::Fill(FillAnim { timing, values }))
+        }
         "<animateMotion" => {
             let path = attr(attrs, "path")
                 .and_then(|d| parse_path_data(d).ok())
@@ -164,10 +175,14 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
             if path.is_empty() {
                 return None;
             }
+            let key_points = attr(attrs, "keyPoints")
+                .map(parse_f32_list)
+                .unwrap_or_default();
             Some(Animation::Motion(MotionAnim {
                 timing,
                 path,
                 auto_rotate: attr(attrs, "rotate") == Some("auto"),
+                key_points,
             }))
         }
         "<animateTransform" => {
@@ -199,6 +214,14 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                     let values = parse_path_values(attrs, base)?;
                     Some(Animation::Path(PathAnim { timing, values }))
                 }
+                "x" | "y" | "width" | "height" | "r" | "cx" | "cy" => {
+                    let values = parse_f32_values(attrs, 0.0)?;
+                    Some(Animation::Geometry(GeometryAnim {
+                        timing,
+                        attribute_name: name.to_string(),
+                        values,
+                    }))
+                }
                 _ => None,
             }
         }
@@ -218,7 +241,11 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         Some(s) => Repeat::Count(s.parse().ok()?),
         None => match attr(attrs, "repeatDur") {
             Some("indefinite") => Repeat::Indefinite,
-            _ => Repeat::Count(1),
+            Some(v) => parse_time(v)
+                .filter(|d| *d > 0.0)
+                .map(Repeat::Duration)
+                .unwrap_or(Repeat::Count(1)),
+            None => Repeat::Count(1),
         },
     };
     let fill = if attr(attrs, "fill") == Some("freeze") {
