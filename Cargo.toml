@@ -4,8 +4,8 @@ resolver = "2"
 #
 #   zephyra-core   通用层（无外部依赖）：画什么 —— property/tree/layout/diff/input/frame
 #      ↓ DisplayList（纯数据、可序列化、可断言）
-#   zephyra-vector 矢量绘制库：路径几何 / 图标 / 文本排版 / 字形图集 / 顶点展开 / 光栅
-#      ↑ core 与 fx 都依赖它；它只依赖 ab_glyph + bytemuck，不认识任何 workspace crate
+#   zephyra-vector 已独立成仓：E:\zephyra-vector（https://github.com/Aura-Zephyrus/zephyra-vector.git）
+#      core / fx / svg-anim 通过 git 依赖它；它只依赖 ab_glyph + bytemuck
 #   zephyra-fx     效果器层：帧循环 / 调试桥 / 对 vector 渲染 API 的再导出
 #      ↓ 顶点流 + 中立的资源需求
 #   zephyra-base/  系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
@@ -15,7 +15,6 @@ resolver = "2"
 members = [
     "zephyra/zephyra-core",
     # 后端无关的矢量绘制库：core 与 fx 都依赖它；它自己不依赖任何 workspace crate。
-    "zephyra/zephyra-vector",
     # SVG SMIL 动画引擎：解析 + 时间线 + 插值，只依赖 vector 与零依赖 bezier。
     "zephyra/zephyra-svg-anim",
     "zephyra/zephyra-fx",
@@ -98,7 +97,6 @@ members = [
 # 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
 default-members = [
     "zephyra/zephyra-core",
-    "zephyra/zephyra-vector",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-base/zephyra-winit",
 ]

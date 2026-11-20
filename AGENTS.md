@@ -26,15 +26,15 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1462 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
-| 隔离门禁 | `cargo tree -p zephyra-vector --depth 1` —— 只出现 `ab_glyph` / `bytemuck`；出现任何 workspace crate 即为破坏隔离 |
+| 测试 | `cargo test --workspace` —— 1168 通过 / 0 失败 / 73 ignored（vector 294 条已独立成仓）（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
+| 隔离门禁 | vector 已独立成仓（`E:\zephyra-vector`）：其 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`；主仓通过 git 依赖它 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
 单点验证：
 
 ```text
 cargo test -p zephyra-core <filter>          # 单 crate / 单条用例
-cargo test -p zephyra-vector                 # 矢量绘制库：几何 / 图标 / 文本 / 顶点展开 / 光栅（294 条）
+cargo test --manifest-path ../zephyra-vector/Cargo.toml --workspace  # vector 独立仓：几何 / 图标 / 文本 / 光栅（294 条）
 cargo test -p zephyra-dcomp --lib            # 纯逻辑断言，不要窗口
 cargo test -p zephyra-dcomp --test smoke     # 真窗口 + 真 GPU
 # gallery 已迁至独立仓 E:\zephyra-gallery（https://github.com/Aura-Zephyrus/ZephyraUI-gallery.git）
@@ -154,7 +154,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
    宿主只回答「要不要推上屏」，不读 `Node::dirty()` 决策内容。这条被破过
    （`HostWindow` 曾长期存 `node` / `list` / `needs_layout` 三块状态），破了的
    症状就是本仓 GPU 问题反复出现的根源，见 `docs/dev-log/2026-10-gpu-device-hung.md`。
-2. **绘制库与主仓库完全隔离**：依赖严格单向（主仓库 → `zephyra-vector`），新库不依赖任何 workspace crate。`cargo tree -p zephyra-core --depth 1` 恰好两行（core + vector）；`cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`。vector 拥有全部后端无关的矢量绘制（几何 / 图标 / 文本 / 图集 / 顶点展开 / 光栅）。
+2. **绘制库已独立成仓**：`zephyra-vector` 在 `E:\zephyra-vector`（https://github.com/Aura-Zephyrus/zephyra-vector.git），主仓通过 Cargo.toml 的 git 依赖引用（不写 path）。依赖严格单向（主仓 → vector），vector 不依赖任何主仓 crate。`cargo tree -p zephyra-core --depth 1` 里 vector 以 git 源出现；vector 仓自己的 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`。vector 拥有全部后端无关的矢量绘制（几何 / 图标 / 文本 / 图集 / 顶点展开 / 光栅）。
    core 与 fx `forbid(unsafe_code)`；unsafe 只许出现在 `zephyra-base/`。
 3. **外观不进源码**：控件只发 `key`（事件身份）与分类名（选择器），颜色 / 尺寸 /
    圆角全在 `.zstyle`，颜色走 `@令牌` → `Theme::role()`。`ZephyraUI/tests/gates.rs`
