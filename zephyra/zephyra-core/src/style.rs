@@ -87,6 +87,9 @@ impl Node {
             paragraph_spacing: 0.0,
             scale: 1.0,
             direction: Default::default(),
+            // 高级文字能力（装饰线 / 两端对齐 / 伪粗体 / LCD）由 zephyra-vector
+            // 提供；样式层暂无对应属性，全部用缺省值。
+            ..Default::default()
         }
     }
 
