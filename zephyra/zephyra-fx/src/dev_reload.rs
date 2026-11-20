@@ -314,4 +314,57 @@ mod tests {
         Styler::apply(&mut styler, &mut node);
         assert_eq!(calls.load(Ordering::SeqCst), 100, "应使用替换后的闭包");
     }
+
+    #[test]
+    fn watcher_reports_deleted_files() {
+        let root = scratch("deleted");
+        std::fs::create_dir_all(&root).unwrap();
+        let style = root.join("gone.zstyle");
+        std::fs::write(&style, "a { }\n").unwrap();
+        let mut watcher = AssetWatcher::new(std::slice::from_ref(&root));
+        assert!(watcher.poll().is_empty());
+
+        std::fs::remove_file(&style).unwrap();
+        std::thread::sleep(POLL_INTERVAL);
+        let changed = watcher.poll();
+        assert!(changed.contains(&style), "删除应被检出: {changed:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reloadable_replaces_value_and_clones_share_it() {
+        let cell = Reloadable::new(1u32);
+        let clone = cell.clone();
+        assert_eq!(*cell.get(), 1);
+        clone.replace(7);
+        assert_eq!(*cell.get(), 7, "克隆把手替换后原持有者应看到新值");
+    }
+
+    #[test]
+    fn dev_reloader_invokes_callback_only_on_change() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = scratch("callback");
+        std::fs::create_dir_all(&root).unwrap();
+        let style = root.join("a.zstyle");
+        std::fs::write(&style, "a { }\n").unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        let mut reloader = DevReloader::new(std::slice::from_ref(&root), move |paths| {
+            if !paths.is_empty() {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+
+        reloader.poll();
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "无变化不应调回调");
+        std::thread::sleep(POLL_INTERVAL);
+        std::fs::write(&style, "a { width: 2px; }\n").unwrap();
+        std::thread::sleep(POLL_INTERVAL);
+        reloader.poll();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "有变化应调一次回调");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
