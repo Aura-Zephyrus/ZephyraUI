@@ -73,6 +73,8 @@ pub mod cpu_only;
 /// 资源热重载（.zstyle / .zypui）。release 下整个模块不存在。
 #[cfg(debug_assertions)]
 pub mod dev_reload;
+/// 动态库缺库自检（普通模式需要，release 也保留）。
+pub mod link_check;
 
 // 后端无关的绘制代码已搬进 `zephyra-vector`。这里按原路径再导出，
 // 使宿主与既有的 `crate::quad` / `crate::text` 写法继续可用。

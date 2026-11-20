@@ -219,6 +219,10 @@ pub struct DevReloader {
 
 impl DevReloader {
     pub fn new(roots: &[PathBuf], on_change: impl FnMut(&[PathBuf]) + 'static) -> Self {
+        eprintln!(
+            "[zephyra-dev] hot reload armed for .zstyle / .zypui in {} dir(s)",
+            roots.len()
+        );
         Self {
             watcher: AssetWatcher::new(roots),
             on_change: Box::new(on_change),
@@ -228,6 +232,16 @@ impl DevReloader {
     pub fn poll(&mut self) {
         let changed = self.watcher.poll();
         if !changed.is_empty() {
+            // 统一的「检测到变化」提示：任何装了 DevReloader 的 app 都有这行，
+            // 后面紧跟 app 自己打印的「重载成功 / 失败」结果。
+            eprintln!(
+                "[zephyra-dev] assets changed: {}",
+                changed
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             (self.on_change)(&changed);
         }
     }

@@ -110,6 +110,15 @@ fn explicit_config_survives_mcp_restart_with_one_disconnect_hook() {
     }
     mcp.join().unwrap();
 
+    // 第二条 pong 到手那一刻，断连钩子可能还要再 poll 一帧才触发
+    // （对端 drop 与本地读到 0 字节之间有调度延迟）。有界等它，避免并行负载
+    // 下偶发读到 0 就误判「没有断连收尾」。
+    let hook_deadline = Instant::now() + Duration::from_millis(500);
+    while disconnects.load(Ordering::Acquire) == 0 && Instant::now() < hook_deadline {
+        bridge.poll(&mut host);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
     assert_eq!(messages.len(), 4, "整条链应留下 4 条消息: {messages:?}");
     assert_eq!(messages[0], "r0:hello:hello integration-app 1.2.3");
     assert!(
