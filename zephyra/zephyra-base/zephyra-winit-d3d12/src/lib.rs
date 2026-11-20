@@ -101,7 +101,6 @@ pub mod swapchain;
 // 按原路径再导出，是为了让既有调用点（`zephyra_winit_d3d12::Vertex`）不用改。
 #[cfg(debug_assertions)]
 pub use zephyra_fx::cpu_only;
-pub use zephyra_fx::layout_tree;
 pub use zephyra_fx::quad::Vertex;
 pub use zephyra_fx::{cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{PixelRead, RenderReport, TextureNames};

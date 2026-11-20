@@ -494,9 +494,6 @@ pub struct Renderer {
     segment_scratch: Scratch,
     /// 当前帧的绘制尺寸（物理像素）—— 视口/裁剪由它算。
     size: (u32, u32),
-    /// 上传前把字节补齐到 4 的倍数。
-    #[allow(dead_code, reason = "离屏 pass 用；接线前先建好")]
-    pad: Vec<u8>,
     /// `ZEPHYRA_FRAME_DUMP` 是否已经写过一副图。
     #[allow(dead_code, reason = "离屏 pass 用；接线前先建好")]
     #[cfg(debug_assertions)]
@@ -910,7 +907,6 @@ impl Renderer {
             ext_texture_keys: std::collections::HashSet::new(),
             segment_scratch: Scratch::new(),
             size: (1, 1),
-            pad: Vec::new(),
             #[cfg(debug_assertions)]
             dumped: false,
         })

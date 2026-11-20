@@ -67,9 +67,8 @@ pub use i18n::{
 };
 pub use liquid_button::{LiquidButton, LIQUID_BUTTON_H, LIQUID_BUTTON_W};
 pub use motion::{
-    fade_class, glass_anchor_ty, morph_class, morph_height, reveal_items, visible, visible_slide,
-    DropdownMotion, BTN_H, CLOSE_MS, FADE_CLASSES, FADE_STEPS, MENU_H, MENU_SLIDE, MORPH_CLASSES,
-    MORPH_STEPS, OPEN_MS, REVEAL_AT,
+    morph_class, morph_height, reveal_items, visible, DropdownMotion, BTN_H, CLOSE_MS, MENU_H,
+    MORPH_CLASSES, MORPH_STEPS, OPEN_MS, REVEAL_AT,
 };
 pub use popup::Popup;
 pub use scroll_bar::{ScrollBar, ScrollBarAxis, MIN_THUMB_LENGTH, PAGE_FRACTION};
@@ -80,4 +79,3 @@ pub use text_area::TextArea;
 pub use text_buffer::TextBuffer;
 pub use text_field::TextField;
 pub use toggle::{RadioGroup, RadioOption, ToggleSwitch, KNOB_PRESSED_SCALE, KNOB_TRAVEL};
-pub use tokens as token_names;

@@ -74,7 +74,6 @@ pub mod texture;
 // 不用改 —— 搬 crate 是结构调整，不该顺手改调用点的名字。
 #[cfg(debug_assertions)]
 pub use zephyra_fx::cpu_only;
-pub use zephyra_fx::layout_tree;
 pub use zephyra_fx::{cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{
     from_font_file, from_system_font, Frame, InputState, PixelRead, RenderReport, TextEngine,

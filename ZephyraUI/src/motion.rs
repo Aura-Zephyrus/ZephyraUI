@@ -38,9 +38,6 @@ pub const CLOSE_MS: f32 = 180.0;
 /// 每档在 `.zstyle` 里给出尺寸、圆角、内边距与透明度——代码只发 `dd-morph-N`。
 pub const MORPH_STEPS: u32 = 60;
 
-/// 兼容旧名：淡入现在由 `dd-morph-N` 一并承载，档位密度不变。
-pub const FADE_STEPS: u32 = MORPH_STEPS;
-
 /// 一次开合的状态机 + 定时补间。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DropdownMotion {
@@ -186,20 +183,12 @@ pub const MORPH_CLASSES: [&str; MORPH_STEPS as usize] = [
     "dd-morph-60",
 ];
 
-/// 兼容旧名：`dd-fade-N` 语义并入 `dd-morph-N`。
-pub const FADE_CLASSES: [&str; FADE_STEPS as usize] = MORPH_CLASSES;
-
 /// 进度 → 当前形变分类名（0 进度返回空串）。
 pub fn morph_class(value: f32) -> &'static str {
     match zephyra_style::anim::step_with(value, MORPH_STEPS) {
         Some(n) => MORPH_CLASSES[(n - 1) as usize],
         None => "",
     }
-}
-
-/// 兼容旧名。
-pub fn fade_class(value: f32) -> &'static str {
-    morph_class(value)
 }
 
 /// 菜单项揭示阈值：盒子长到一定程度再显示内容，避免文字从小方块里溢出。
@@ -227,19 +216,6 @@ pub fn morph_height(value: f32) -> f32 {
         Some(n) => BTN_H + (MENU_H - BTN_H) * (n as f32 / MORPH_STEPS as f32),
         None => BTN_H,
     }
-}
-
-/// 菜单覆盖在按钮上展开：不额外上移，随高度从按钮顶边向下形变。
-pub fn glass_anchor_ty(value: f32) -> f32 {
-    let _ = value;
-    0.0
-}
-
-/// 兼容旧 API。
-pub const MENU_SLIDE: f32 = 0.0;
-
-pub fn visible_slide(_value: f32) -> f32 {
-    0.0
 }
 
 #[cfg(test)]

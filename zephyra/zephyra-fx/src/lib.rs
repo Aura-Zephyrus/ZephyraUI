@@ -73,8 +73,6 @@ pub mod cpu_only;
 /// 资源热重载（.zstyle / .zypui）。release 下整个模块不存在。
 #[cfg(debug_assertions)]
 pub mod dev_reload;
-/// 动态库缺库自检（普通模式需要，release 也保留）。
-pub mod link_check;
 
 // 后端无关的绘制代码已搬进 `zephyra-vector`。这里按原路径再导出，
 // 使宿主与既有的 `crate::quad` / `crate::text` 写法继续可用。
@@ -107,12 +105,6 @@ pub static Z_INDEX: zephyra_core::property::PropertyKey = zephyra_core::property
 /// 之所以是类型别名而不是 `impl Trait`：它出现在各后端 `HostWindow` 与
 /// [`cpu_only::CpuHost`] 的字段类型里，必须能被外部指名。
 pub type TextEngine = zephyra_core::text::TextStack<AbGlyphSource>;
-
-/// 重新导出布局函数。
-///
-/// `cpu_only` 与各后端的帧循环走的是**同一段**布局代码路径。重复实现一遍的话，
-/// 两边迟早会漂移 —— 而漂移之后「CPU 参考图」就不再是「实际画面」的参考了。
-pub use zephyra_core::layout::layout as layout_tree;
 
 use zephyra_core::context::Context;
 use zephyra_core::diff::DiffStats;
