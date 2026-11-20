@@ -35,14 +35,11 @@
 //! 降级时发生。core 有图集，于是能给出 uv；core 不碰纹理句柄，于是只用那个不透明
 //! 的 [`crate::paint::TextureRef`]。
 //!
-//! # 已知限制
+//! # 整形能力
 //!
-//! **没有 GSUB/GPOS 整形。** 本层不做连字、双向文本与复杂脚本 —— 那些需要完整的
-//! OpenType 整形栈。阿拉伯语、印地语会显示成逐字孤立字形。要支持就得换一个更强的
-//! [`GlyphSource`]（且 [`GlyphSource::advance`] 需要返回整段而非单字形，以承载
-//! 字素簇）。
-//!
-//! 行内断行按**字符边界**切，不做连字符与字素簇感知的断词。对 UI 标签够用。
+//! 真实字体来源（`AbGlyphSource`）通过 `rustybuzz` 实现 GSUB/GPOS：连字、字距对、
+//! mark 定位与复杂脚本上下文字形。BiDi、UAX #14 断行与字素簇边界同样由
+//! `zephyra-vector` 处理；详细限制见上游 `text` 模块文档。
 
 pub use zephyra_vector::text::*;
 

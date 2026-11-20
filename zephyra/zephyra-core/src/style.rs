@@ -86,6 +86,7 @@ impl Node {
             text_align: crate::text::TextAlign::Left,
             paragraph_spacing: 0.0,
             scale: 1.0,
+            direction: Default::default(),
         }
     }
 

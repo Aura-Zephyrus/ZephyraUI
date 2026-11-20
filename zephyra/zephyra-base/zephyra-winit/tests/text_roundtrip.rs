@@ -18,7 +18,7 @@
 //!  采样图集                 GPU —— 这里用 CPU 代替
 //! ```
 //!
-//! 最后一个箭头是唯一的 GPU 环节。而它做的事是「**按 uv 去位图里取值**」——
+//! 最后一个箭头是唯一的 GPU 环节。而它做的事是「**按 uv 去位图里取 SDF 距离值**」——
 //! 这一步完全可以在 CPU 上重演一遍。
 //!
 //! # 这个测试因此能证明什么
@@ -74,13 +74,14 @@ fn stack() -> Option<TextStack<AbGlyphSource>> {
     Some(s)
 }
 
-/// 按 uv 在图集里取覆盖率（**重演片元着色器的 `g_tex.Sample(...).a`**）。
+/// 按 uv 在图集里取 SDF 值（**重演片元着色器的 `g_tex.Sample(...).r`**）。
 ///
 /// 采样取 uv 对应的**像素中心**：`floor(uv * ATLAS_SIZE)`。
+/// SDF 图集的 red 通道是距离值；GPU 字形分支读的就是它（不是 alpha）。
 fn sample_atlas(atlas: &[u8], u: f32, v: f32) -> u8 {
     let x = ((u * ATLAS_SIZE as f32) as usize).min(ATLAS_SIZE as usize - 1);
     let y = ((v * ATLAS_SIZE as f32) as usize).min(ATLAS_SIZE as usize - 1);
-    atlas[(y * ATLAS_SIZE as usize + x) * 4 + 3]
+    atlas[(y * ATLAS_SIZE as usize + x) * 4]
 }
 
 /// 把 `DisplayList` 展开成顶点流。
@@ -115,6 +116,11 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
     );
 
     // ---- 3. uv 全部落在 0..1，且面积合理 ----
+    // SDF 按固定基准档位栅格化，绘制时按 `显示字号 / 基准字号` 缩放。
+    // 所以 uv 反推的图集像素宽 × scale 才等于 dst 宽，不再是 1:1。
+    let display = style.effective_size();
+    let tier = zephyra_core::text::sdf_tier(display);
+    let scale = display / tier as f32;
     let atlas_pixels = stack.atlas().pixels();
     for (i, q) in quads.iter().enumerate() {
         assert!(
@@ -134,13 +140,13 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
             "第 {i} 个字形的 uv 面积为零"
         );
 
-        // uv 反推成像素，应当落在图集内，且尺寸与 dst 一致（uv 与 dst 是同一个位图）。
-        let px_w = q.uv.width * ATLAS_SIZE as f32;
-        let px_h = q.uv.height * ATLAS_SIZE as f32;
+        // uv 反推成图集像素，乘上 SDF 缩放后应当与 dst 一致。
+        let px_w = q.uv.width * ATLAS_SIZE as f32 * scale;
+        let px_h = q.uv.height * ATLAS_SIZE as f32 * scale;
         assert!(
             (px_w - q.dst.width).abs() < 0.5,
-            "第 {i} 个字形：uv 反推宽度 {px_w} 与 dst 宽度 {} 不符 —— \
-             两者本该是同一块位图",
+            "第 {i} 个字形：uv 反推宽度 {px_w}（scale={scale:.3}）与 dst 宽度 {} 不符 —— \
+             uv 与 dst 必须是同一块位图的两种尺度",
             q.dst.width
         );
         assert!(
@@ -153,7 +159,7 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
     // ---- 4. ★ 闭环：按 uv 去图集采样，必须有墨 ----
     //
     // 这一步是整个测试的核心。它重演了片元着色器 `kind == GLYPH` 分支做的事：
-    // `g_tex.Sample(g_smp, uv).a`。若采样恒为 0，那么字在屏幕上必然是空白 ——
+    // `g_tex.Sample(g_smp, uv).r`（SDF 距离值）。若采样恒为 0，那么字必然是空白 ——
     // 而此时几何与 uv 都已验证正确，嫌疑范围就只剩 GPU 环节。
     let mut inked = 0;
     for (i, q) in quads.iter().enumerate() {
