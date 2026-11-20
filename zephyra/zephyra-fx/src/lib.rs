@@ -55,6 +55,16 @@
 
 #![cfg_attr(windows, allow(dead_code))]
 
+/// 桥的默认端口。`zephyra mcp` 与 `ZEPHYRA_DEBUG_PORT` 缺省都用它。
+///
+/// 放在 crate 根（而不是 dev-only 的 `bridge` 模块）：CLI 的跨仓一致性门禁
+/// 在 release 测试里也要能引用这些常量。它们只是字面量，不是 dev 实现。
+pub const DEFAULT_PORT: u16 = 7878;
+/// 开启桥的环境变量名（值 = 端口）。
+pub const PORT_ENV: &str = "ZEPHYRA_DEBUG_PORT";
+/// CLI 注入：MCP server 的监听端口（应用据此连入 MCP）。
+pub const MCP_PORT_ENV: &str = "ZEPHYRA_MCP_PORT";
+
 // dev 设施：debug 构建才有；release 编译期彻底剔除（没有运行时开关可绕过）。
 #[cfg(debug_assertions)]
 pub mod bridge;

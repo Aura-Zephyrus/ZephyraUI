@@ -37,18 +37,8 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};
 
-/// 默认端口。`zephyra mcp` 与 `ZEPHYRA_DEBUG_PORT` 缺省都用它。
-pub const DEFAULT_PORT: u16 = 7878;
-
-/// 开启桥的环境变量名（值 = 端口）。
-pub const PORT_ENV: &str = "ZEPHYRA_DEBUG_PORT";
-
-/// 由 `zephyra dev` / `zephyra run` 注入：MCP server 的监听端口。
-///
-/// 设置后应用**主动连入 MCP**（agent 只经 stdio 与 MCP 说话，不再拿端口连应用）。
-/// 这是 CLI 启动应用时才有的能力：环境变量由 CLI 传给子进程，见 `zephyra-cli`
-/// 的 `spawn_inherit` / `spawn_pumped`。不设置则维持旧模式（监听 `PORT_ENV`）。
-pub const MCP_PORT_ENV: &str = "ZEPHYRA_MCP_PORT";
+// 协议常量定义在 crate 根（dev / release 都存在，CLI 的跨仓门禁要引用）。
+pub use crate::{DEFAULT_PORT, MCP_PORT_ENV, PORT_ENV};
 
 /// 一条从 TCP 上解析出来的命令。
 #[derive(Debug, Clone, PartialEq)]
