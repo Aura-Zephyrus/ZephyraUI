@@ -79,13 +79,25 @@ impl SvgTimeline {
     /// 显式触发 `begin="indefinite"` / 事件基的动画（SMIL `beginElement()`）。
     /// `path_index` / `anim_index` 定位到具体动画。
     pub fn begin_element(&mut self, path_index: usize, anim_index: usize) -> bool {
-        let exists = self
+        let anim = self
             .svg
             .paths
             .get(path_index)
-            .and_then(|p| p.animations.get(anim_index))
-            .is_some();
-        if exists {
+            .and_then(|p| p.animations.get(anim_index));
+        let exists = anim.is_some();
+        // restart="never"：触发过一次就不再重启。
+        let restart_never = anim.is_some_and(|a| match a {
+            Animation::Set(a) => a.timing.restart == Restart::Never,
+            Animation::Opacity(a) => a.timing.restart == Restart::Never,
+            Animation::Fill(a) => a.timing.restart == Restart::Never,
+            Animation::Geometry(a) => a.timing.restart == Restart::Never,
+            Animation::Style(a) => a.timing.restart == Restart::Never,
+            Animation::Path(a) => a.timing.restart == Restart::Never,
+            Animation::Transform(a) => a.timing.restart == Restart::Never,
+            Animation::StrokeColor(a) => a.timing.restart == Restart::Never,
+            Animation::Motion(a) => a.timing.restart == Restart::Never,
+        });
+        if exists && !(restart_never && self.triggered.contains_key(&(path_index, anim_index))) {
             self.triggered
                 .insert((path_index, anim_index), self.time_ms);
             self.ended.remove(&(path_index, anim_index));
@@ -560,6 +572,11 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
         Repeat::Bounded { count, total_ms } => iteration >= count || local >= total_ms,
     };
     if done {
+        // `min`：活跃期硬下限 —— dur 结束但 min 未到时，不能按 fill=remove
+        // 回基值，必须继续停在终值直到 min 到期。
+        if local < timing.min_ms {
+            return Some((1.0, false, 0));
+        }
         return if timing.repeat == Repeat::Count(0) {
             None
         } else {

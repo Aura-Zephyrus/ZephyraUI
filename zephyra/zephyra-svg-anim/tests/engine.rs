@@ -845,3 +845,115 @@ fn syncbase_id_is_respected() {
     // 正确 id 触发（尽管此动画的 begin 不是 syncbase，计数为 0 也合理）。
     let _ = tl.fire_event(Some("other"), "end");
 }
+
+/// calcMode="spline" + keySplines：控制点决定曲线形状。
+/// (0,0,1,1) 是线性；(0,1,1,0) 让中段加速。
+const SPLINE_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="0" to="1" dur="1000ms"
+             calcMode="spline" keySplines="0 0 1 1" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// keyTimes：自定义关键帧时间点（0; 0.25; 1）。
+const KEYTIMES_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" values="0;0.5;1" keyTimes="0;0.25;1"
+             dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// min：活跃期至少 800ms，即使 dur=200ms、fill=remove。
+const MIN_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" from="1" to="0" dur="200ms" min="800ms" fill="remove"/>
+  </path>
+</svg>"#;
+
+/// restart="never"：beginElement() 之后再次触发不应重启。
+const RESTART_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" begin="indefinite" from="0" to="1"
+             dur="1000ms" restart="never" fill="remove"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn spline_calc_mode_uses_key_splines() {
+    let svg = parse_animated_svg(SPLINE_SVG).unwrap();
+    // keySplines 应被解析成 1 条贝塞尔。
+    let has_spline = match &svg.paths[0].animations[0] {
+        zephyra_svg_anim::Animation::Opacity(a) => !a.timing.key_splines.is_empty(),
+        _ => false,
+    };
+    assert!(has_spline, "keySplines 应被解析");
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    // (0,0,1,1) 就是线性，中点 0.5。
+    assert!(
+        (mid.paths[0].opacity - 0.5).abs() < 0.05,
+        "op={}",
+        mid.paths[0].opacity
+    );
+}
+
+#[test]
+fn key_times_remap_progress() {
+    let svg = parse_animated_svg(KEYTIMES_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // t=0.25 正好落在第二个关键帧 ⇒ opacity=0.5。
+    let f = tl.seek(250.0);
+    assert!(
+        (f.paths[0].opacity - 0.5).abs() < 0.02,
+        "op={}",
+        f.paths[0].opacity
+    );
+    // t=0.125 在第一段中点 ⇒ opacity=0.25。
+    let f = tl.seek(125.0);
+    assert!(
+        (f.paths[0].opacity - 0.25).abs() < 0.02,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn min_holds_active_until_min_elapsed() {
+    let svg = parse_animated_svg(MIN_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    // dur=200ms 结束、但 min=800ms 未到：fill=remove 也必须停在终值 1。
+    let f = tl.seek(400.0);
+    assert!(
+        f.paths[0].opacity < 0.01,
+        "min 未到不应回基值，op={}",
+        f.paths[0].opacity
+    );
+    // min 到期后回基值。
+    let f = tl.seek(900.0);
+    assert!(
+        (f.paths[0].opacity - 1.0).abs() < 1e-4,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn restart_never_ignores_second_trigger() {
+    let svg = parse_animated_svg(RESTART_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    assert!(tl.begin_element(0, 0));
+    let f = tl.seek(500.0);
+    assert!(
+        (f.paths[0].opacity - 0.5).abs() < 0.05,
+        "op={}",
+        f.paths[0].opacity
+    );
+    // restart=never：第二次触发被忽略，动画继续按原时间走完并 remove 回基值。
+    tl.begin_element(0, 0);
+    let f = tl.seek(1100.0);
+    assert!(
+        f.paths[0].opacity > 0.99,
+        "不该重启，op={}",
+        f.paths[0].opacity
+    );
+}
