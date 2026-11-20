@@ -78,10 +78,9 @@ impl Node {
             size: self.number_or(&crate::props::TEXT_SIZE, 14.0, ctx).max(1.0),
             weight: 400,
             family: None,
-            line_height: {
-                let h = self.number_or(&crate::props::TEXT_LINE_HEIGHT, 1.2, ctx);
-                (h.is_finite() && h > 0.0).then_some(h)
-            },
+            // 未显式设置时给 None，让 zephyra-vector 用字体的 hhea 真实度量算行高
+            // （Skia 的 SkFontMetrics 行为）；只有属性真的给了倍数才覆盖它。
+            line_height: finite(self.number_or(&crate::props::TEXT_LINE_HEIGHT, f32::NAN, ctx)),
             letter_spacing: 0.0,
             text_align: crate::text::TextAlign::Left,
             paragraph_spacing: 0.0,

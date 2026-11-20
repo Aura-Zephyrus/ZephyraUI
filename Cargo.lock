@@ -3076,6 +3076,7 @@ dependencies = [
  "zephyra-core",
  "zephyra-fx",
  "zephyra-style",
+ "zephyra-svg-anim",
  "zstyle-compile",
 ]
 
@@ -3091,7 +3092,7 @@ dependencies = [
 [[package]]
 name = "zephyra-vector"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/zephyra-vector.git?branch=main#260d4429e7223342ba33e5198f1c936d4282e815"
+source = "git+https://github.com/Aura-Zephyrus/zephyra-vector.git?branch=main#81fb9f6aa176f94ee5cec02a9823a8fa7ff83920"
 dependencies = [
  "ab_glyph",
  "bytemuck",
