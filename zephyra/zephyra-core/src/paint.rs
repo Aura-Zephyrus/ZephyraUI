@@ -41,9 +41,52 @@ pub use zephyra_vector::paint::*;
 /// 几何只有一处算法（[`crate::layout`]），命中测试与绘制共用同一批矩形，所以不会
 /// 出现"看得见但点不到"。
 pub fn render(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
+    // ⚠ 图集淘汰重排必须在**同一趟**里收敛，否则文字串位。
+    //
+    // `text_command` 逐节点调用 `glyph_quads`，那里才真正栅格化并入图集。一趟
+    // 遍历中，前面的节点先拿到 uv，后面的节点可能因图集满而触发 LRU 淘汰 ——
+    // `GlyphAtlas::rebuild` 清空画布、重排所有幸存者、revision 加一，于是**前面
+    // 那些节点的 uv 全部失效**。而宿主在本帧结束后用最终 revision 上传最终图集，
+    // 结果就是「先算的文字落到别人的字形槽位上」——症状是一页文字里前一部分
+    // 错乱、最后一部分正常（后者是重排之后才算的）。这就是 ViewStage 设置页
+    // 抓到的 bug。
+    //
+    // 修复：若本趟重写了图集（revision 变化），再跑一趟。第二趟里所有字形都已
+    // 命中缓存（`touch` 成功），不会再淘汰，revision 稳定 ⇒ 整份 DisplayList 的
+    // uv 都属于同一份图集布局。正常情况（无淘汰）零额外开销。
+    //
+    // 注意前值必须在 `render_rec` **之前**读；放到之后读到的是终值，比较无意义。
+    // 这里用 helper 把「带 revision 快照的一趟」包起来，避免前值读错位置。
+    render_stable(node, ctx, out);
+}
+
+/// 跑绘制趟，并在检测到图集重排时重跑到收敛（见 [`render`] 的说明）。
+fn render_stable(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
+    let Some(engine) = ctx.engine else {
+        out.clear();
+        let mut order = 0u32;
+        render_rec(node, ctx, &mut order, out, PaintState::ROOT);
+        return;
+    };
+    let rev_before = engine.borrow().atlas_revision();
     out.clear();
     let mut order = 0u32;
     render_rec(node, ctx, &mut order, out, PaintState::ROOT);
+    let rev_after = engine.borrow().atlas_revision();
+    if rev_after != rev_before {
+        // 本趟发生过淘汰重排：前面节点的 uv 属于旧布局，作废重来。
+        // 重跑前 revision 已稳定（字形都在图集里，touch 命中不再淘汰），
+        // 至多再重排一次；若真的还在变（极端小的图集），循环到收敛或到达上限。
+        for _ in 0..4 {
+            let before = engine.borrow().atlas_revision();
+            out.clear();
+            let mut order = 0u32;
+            render_rec(node, ctx, &mut order, out, PaintState::ROOT);
+            if engine.borrow().atlas_revision() == before {
+                break;
+            }
+        }
+    }
 }
 
 /// 绘制趟沿树传递的状态。
