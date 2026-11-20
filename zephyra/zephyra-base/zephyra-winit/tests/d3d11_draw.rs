@@ -808,28 +808,6 @@ fn translucent_quad_composites_in_premultiplied_space() {
     }
 }
 
-/// 着色器字节码必须非空且是合法 DXBC 容器。
-///
-/// 真正的「`.hlsl` 改了但 `.bin` 没重编」门禁已移到 zephyra-vector 的
-/// `shader_sync_tests::committed_dxbc_matches_hlsl_sources`：那份门禁用 fxc
-/// 重编全部入口并与提交产物逐字节比对，比本处基于 mtime 的旧门禁可靠得多 ——
-/// 旧的只能查"时间先后"，新的查的是"字节是否真的对应"。
-#[test]
-fn shader_bytecode_is_present_and_well_formed() {
-    let bytecode = [
-        ("VS", zephyra_fx::shaders::VS_BYTECODE),
-        zephyra_fx::shaders::PS_VARIANTS[0],
-    ];
-    for (name, bytes) in bytecode {
-        assert!(bytes.len() > 32, "{name} 字节码过短 —— 资产漏提交了？");
-        // DXBC 容器以 'D','X','B','C' 开头（0x43425844）。
-        assert_eq!(
-            &bytes[..4], b"DXBC",
-            "{name} 不是 DXBC 容器 —— fxc 没跑或 .bin 被截断"
-        );
-    }
-}
-
 /// 纯色背景 + 带指定混合模式的纯色前景。
 ///
 /// 全部 29 个模式都能用（系数可表达的 15 个走固定功能方程，其余 14 个走 PS 变体），
