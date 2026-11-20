@@ -55,8 +55,14 @@
 
 #![cfg_attr(windows, allow(dead_code))]
 
+// dev 设施：debug 构建才有；release 编译期彻底剔除（没有运行时开关可绕过）。
+#[cfg(debug_assertions)]
 pub mod bridge;
+#[cfg(debug_assertions)]
 pub mod cpu_only;
+/// 资源热重载（.zstyle / .zypui）。release 下整个模块不存在。
+#[cfg(debug_assertions)]
+pub mod dev_reload;
 
 // 后端无关的绘制代码已搬进 `zephyra-vector`。这里按原路径再导出，
 // 使宿主与既有的 `crate::quad` / `crate::text` 写法继续可用。

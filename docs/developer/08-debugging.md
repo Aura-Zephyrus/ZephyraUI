@@ -8,8 +8,12 @@
 调试桥默认**关闭** —— 应用必须显式打开才会监听：
 
 ```bash
-ZEPHYRA_DEBUG_PORT=7878 cargo run --release
+ZEPHYRA_DEBUG_PORT=7878 cargo run
 ```
+
+⚠ **必须用 debug 构建**：桥、profiler、帧 dump、`ZEPHYRA_TRACE` 等诊断设施在
+release 里由 `#[cfg(debug_assertions)]` 编译期剔除 —— release 二进制里连这些
+环境变量名都不存在，不是「运行时默认关闭」而是「代码根本不在里面」。
 
 | 变量 | 作用 |
 |---|---|
@@ -18,7 +22,7 @@ ZEPHYRA_DEBUG_PORT=7878 cargo run --release
 
 不设 `ZEPHYRA_DEBUG_PORT` ⇒ 零监听，端口一个都不占。
 
-⚠ 桥是**调试设施**，不是产品功能：它没有任何鉴权，只监听回环地址。
+⚠ 桥是**调试设施**，不是产品功能：它没有任何鉴权，只监听回环地址。正因如此它不进 release 二进制；要在 release 性能下排查只能用 debug 构建。
 
 ## 二、四条入口，一份协议
 

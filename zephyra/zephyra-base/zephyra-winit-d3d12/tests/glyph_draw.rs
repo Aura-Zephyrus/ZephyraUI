@@ -44,6 +44,7 @@
 //! 两条都指向同一件事：判据必须**由几何 / 实测量出**，且它的分母要能区分
 //! 「噪声」与「缺失」。
 
+#![cfg(debug_assertions)]
 #![cfg(windows)]
 
 use zephyra_core::context::Context;

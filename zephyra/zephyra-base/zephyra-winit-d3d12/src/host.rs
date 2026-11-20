@@ -110,6 +110,7 @@ pub struct HostWindow<V: View> {
     /// 桥注入的「主指针按住」状态。断连收尾靠它判断要不要补一次抬起
     /// （见 [`BridgeHost::on_bridge_disconnect`]）——`pointer` 是路由层的
     /// 指针 id，与「按钮按没按住」是两回事，不能拿它当判据。
+    #[cfg(debug_assertions)]
     bridge_pointer_pressed: bool,
     pointer_pos: (f32, f32),
     pending_text_events: Vec<zephyra_core::input::TextEvent>,
@@ -216,11 +217,16 @@ pub struct HostWindow<V: View> {
     /// 未连上时每 50 ms 唤醒驱动重连，连上后 10 ms 轮询；MCP 重启导致断流时
     /// `BridgeHost::on_bridge_disconnect` 只调用一次（补抬注入的指针），自动
     /// 重连成功不重复触发。
+    #[cfg(debug_assertions)]
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
+    /// dev 资源热重载器（.zstyle / .zypui）。release 构建里字段不存在。
+    #[cfg(debug_assertions)]
+    dev_reloader: Option<zephyra_fx::dev_reload::DevReloader>,
     /// 最近一帧的统计（`stats` 命令的答案，`frame()` 末尾刷新）。
     ///
     /// 结构体而不是文本：文本形态由 [`zephyra_fx::bridge::FrameStats`] 的
     /// `Display` 出，JSON 形态由它的 `to_json` 出 —— 两份口径同源。
+    #[cfg(debug_assertions)]
     last_stats: zephyra_fx::bridge::FrameStats,
     /// **渲染过**的帧数（`wait_frames` 按它算）。
     ///
@@ -243,7 +249,9 @@ pub struct HostWindow<V: View> {
     last_present_at: Option<std::time::Instant>,
     /// 呈现之间的最小间隔（= 1 / 刷新率）。
     present_interval: std::time::Duration,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
+    #[cfg(debug_assertions)]
     profiler: zephyra_fx::bridge::PerformanceProfiler,
     /// 无障碍（UIA）接线。
     ///
@@ -654,6 +662,7 @@ impl<V: View> HostWindow<V> {
             cache: FrameCache::new(),
             router: InputRouter::new(),
             pointer: None,
+            #[cfg(debug_assertions)]
             bridge_pointer_pressed: false,
             pointer_pos: (0.0, 0.0),
             pending_text_events: Vec::new(),
@@ -681,12 +690,17 @@ impl<V: View> HostWindow<V> {
             system_languages: zephyra_platform_win::current().system_languages(),
             last_frame_at: None,
             traced_viewport: None,
+            #[cfg(debug_assertions)]
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
+            #[cfg(debug_assertions)]
+            dev_reloader: None,
+            #[cfg(debug_assertions)]
             last_stats: zephyra_fx::bridge::FrameStats::default(),
             rendered_frames: 0,
             last_present_at: None,
             present_interval: refresh_interval(&window),
             resource_telemetry: None,
+            #[cfg(debug_assertions)]
             profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
             uia: None,
             uia_redraw: false,
@@ -705,8 +719,15 @@ impl<V: View> HostWindow<V> {
     ///
     /// 默认构造仍走 `from_env()`；不依赖环境变量时用
     /// `DebugBridge::with_config(BridgeConfig { connect_to: Some(addr), .. })` 构造后传入。
+    #[cfg(debug_assertions)]
     pub fn set_bridge(&mut self, bridge: Option<zephyra_fx::bridge::DebugBridge>) {
         self.bridge = bridge;
+    }
+
+    /// 装一个 dev 资源热重载器。**仅 debug 构建存在**；release 没有这个方法。
+    #[cfg(debug_assertions)]
+    pub fn set_dev_reloader(&mut self, reloader: zephyra_fx::dev_reload::DevReloader) {
+        self.dev_reloader = Some(reloader);
     }
 
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
@@ -915,7 +936,11 @@ impl<V: View> HostWindow<V> {
     /// **不**包含 `present` —— 那由 [`Self::present`] 单独做，因为 resize 必须在
     /// 绘制之前处理（见 `sync_swapchain`），而呈现必须在绘制之后。
     pub fn frame(&mut self) -> Frame {
-        self.frame_inner(None).0
+        #[cfg(debug_assertions)]
+        let frame = self.frame_inner(None).0;
+        #[cfg(not(debug_assertions))]
+        let frame = self.frame_inner().0;
+        frame
     }
 
     /// 跑一帧；`capture` 非空时顺便读回像素。
@@ -923,11 +948,15 @@ impl<V: View> HostWindow<V> {
     /// ⚠ `capture` **不**改变这一帧的脏区（除非 `opts.repaint`）：截图是观测
     /// 手段，整帧重画会把「上一帧没被清掉的像素」擦掉 —— 那样残影类缺陷就
     /// **永远截不出来**。见 `zephyra_fx::bridge::ShotOptions`。
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     fn frame_inner(
         &mut self,
-        capture: Option<zephyra_fx::bridge::ShotOptions>,
+        #[cfg(debug_assertions)] capture: Option<zephyra_fx::bridge::ShotOptions>,
     ) -> (Frame, Option<Vec<u8>>) {
+        #[cfg(debug_assertions)]
         let frame_started = self.profiler.is_running().then(std::time::Instant::now);
+        #[cfg(not(debug_assertions))]
+        let frame_started: Option<std::time::Instant> = None;
         // 整帧（resize + 布局 + 记录 + 提交）都在共享栈的锁内完成。
         //
         // 锁在这里而不是在 `render_pass`：布局要读 `shared.engine`（字形图集），
@@ -1025,13 +1054,18 @@ impl<V: View> HostWindow<V> {
         // ⚠ `Unchanged` 时**连 present 都不能做**：本后端是 flip model
         // （`FLIP_DISCARD`，DComp 路径 `FLIP_SEQUENTIAL`），`Present` 之后后缓冲内容
         // 未定义。不画就 present 会把未定义内容推上屏。
-        let redrawn = content_redrawn || capture.is_some();
+        #[cfg(debug_assertions)]
+        let capture_is_some = capture.is_some();
+        #[cfg(not(debug_assertions))]
+        let capture_is_some = false;
+        let redrawn = content_redrawn || capture_is_some;
         if redrawn {
             self.rendered_frames += 1;
         }
         // 截图**默认沿用本帧脏区**：脏区外保留上一帧的像素（MSAA 目标纹理逐帧
         // 存活），于是残影（上一帧没被清掉的东西）**截得出来**。
         // 只有显式 `--repaint` 才整帧 —— 那时要的是一张干净参考图。
+        #[cfg(debug_assertions)]
         let damage = match capture {
             Some(opts) if opts.repaint => Damage::Full,
             _ => damage,
@@ -1039,7 +1073,7 @@ impl<V: View> HostWindow<V> {
         let render_started = frame_started.map(|_| std::time::Instant::now());
         let always_started = std::time::Instant::now();
         let (report, captured) = if redrawn {
-            self.render_pass(shared, damage, capture.is_some())
+            self.render_pass(shared, damage, capture_is_some)
         } else {
             (RenderReport::default(), None)
         };
@@ -1122,49 +1156,55 @@ impl<V: View> HostWindow<V> {
         self.input_latency_us = self.input_at.map(|at| at.elapsed().as_micros() as u64);
         self.input_at = None;
 
-        let new_stats = zephyra_fx::bridge::FrameStats {
-            quads: report.quads,
-            skipped: report.skipped,
-            dirtied: stats.dirtied,
-            needs_layout: stats.needs_layout,
-            redrawn,
-            hovered: self.router.hovered().map(|k| k.to_string()),
-            damage: Some(damage),
-            // 分段耗时：core 侧量的（对账 / 样式 / 脏区扫描 / 布局 / 绘制）。
-            // 「这一帧慢在哪」从此是**读出来的**，不用改代码加临时日志。
-            stages: Some(self.cache.timings()),
-            // 已渲染帧数：客户端靠它算 fps（两次采样相减 / 时间差）。
-            frames: self.rendered_frames,
-            // 临时探针：上一帧 `begin_frame` 里 wait_gpu() 等了多久。
-            // 「输入 → 帧就绪」的耗时。
-            input_latency_us: self.input_latency_us,
-            render_submit_us: Some(self.render_submit_us),
-            // 离屏趟数 = 这一帧 GPU 干了多少活的**主指标**（一趟 ≈ 四趟全屏光栅化）。
-            offscreen_passes: report.offscreen_passes,
-            backdrop_blur_passes: report.backdrop_blur_passes,
-            lens_passes: report.lens_passes,
-            refraction_passes: report.refraction_passes,
-        };
-        self.last_stats = if redrawn {
-            new_stats
-        } else {
-            zephyra_fx::bridge::stats_after_skipped(&self.last_stats, &new_stats)
-        };
+        #[cfg(debug_assertions)]
+        {
+            let new_stats = zephyra_fx::bridge::FrameStats {
+                quads: report.quads,
+                skipped: report.skipped,
+                dirtied: stats.dirtied,
+                needs_layout: stats.needs_layout,
+                redrawn,
+                hovered: self.router.hovered().map(|k| k.to_string()),
+                damage: Some(damage),
+                // 分段耗时：core 侧量的（对账 / 样式 / 脏区扫描 / 布局 / 绘制）。
+                // 「这一帧慢在哪」从此是**读出来的**，不用改代码加临时日志。
+                stages: Some(self.cache.timings()),
+                // 已渲染帧数：客户端靠它算 fps（两次采样相减 / 时间差）。
+                frames: self.rendered_frames,
+                // 临时探针：上一帧 `begin_frame` 里 wait_gpu() 等了多久。
+                // 「输入 → 帧就绪」的耗时。
+                input_latency_us: self.input_latency_us,
+                render_submit_us: Some(self.render_submit_us),
+                // 离屏趟数 = 这一帧 GPU 干了多少活的**主指标**（一趟 ≈ 四趟全屏光栅化）。
+                offscreen_passes: report.offscreen_passes,
+                backdrop_blur_passes: report.backdrop_blur_passes,
+                lens_passes: report.lens_passes,
+                refraction_passes: report.refraction_passes,
+            };
+            self.last_stats = if redrawn {
+                new_stats
+            } else {
+                zephyra_fx::bridge::stats_after_skipped(&self.last_stats, &new_stats)
+            };
+        }
         // ⚠ **只记真的重画了的帧**。
         //
         // 不记「跑过」的帧：事件循环在没有重画时也会跑（桥连着时更高频），
         // 而那些 tick 会把 fps 撑成一个假数字 —— 实测报告「2500 fps」而应用
         // 其实只画了 **9 帧**。性能采样要回答的是「**画一帧**要多久」，
         // 不是「空转一圈要多久」。
-        if redrawn {
-            if let Some(started) = frame_started {
-                self.profiler.record(zephyra_fx::bridge::FrameTiming {
-                    update_us,
-                    render_submit_us,
-                    total_us: started.elapsed().as_micros() as u64,
-                    // core 侧的分段：于是性能报告能说清「这一帧的 300 µs 花在哪」。
-                    stages: Some(self.cache.timings()),
-                });
+        #[cfg(debug_assertions)]
+        {
+            if redrawn {
+                if let Some(started) = frame_started {
+                    self.profiler.record(zephyra_fx::bridge::FrameTiming {
+                        update_us,
+                        render_submit_us,
+                        total_us: started.elapsed().as_micros() as u64,
+                        // core 侧的分段：于是性能报告能说清「这一帧的 300 µs 花在哪」。
+                        stages: Some(self.cache.timings()),
+                    });
+                }
             }
         }
 
@@ -2303,6 +2343,7 @@ fn hwnd_of<W: raw_window_handle::HasWindowHandle>(window: &W) -> Option<isize> {
 /// - **截图时强制渲染并读回**：`screenshot()` 经 `frame_inner(true)` 完整重绘，
 ///   MSAA resolve 后复制到 readback heap，再由桥返回 BMP 像素；D3D12 的真机闭环
 ///   已覆盖该路径，避免把旧的「尚未接线」能力说明留在实现旁。
+#[cfg(debug_assertions)]
 impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
     fn viewport(&self) -> (f32, f32) {
         let (w, h) = self.client_size();
@@ -2659,9 +2700,16 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
     fn tick(&mut self) -> HostTick {
         // 桥的 poll 放在帧判定之前：注入的 hover/click 在**本帧**就参与命中
         // 测试与布局（与 D3D11 侧同一时序契约）。
-        if let Some(mut b) = self.bridge.take() {
-            b.poll(self);
-            self.bridge = Some(b);
+        #[cfg(debug_assertions)]
+        {
+            if let Some(mut b) = self.bridge.take() {
+                b.poll(self);
+                self.bridge = Some(b);
+            }
+            // dev 资源热重载：每帧驱动，仅 debug 构建存在。
+            if let Some(reloader) = self.dev_reloader.as_mut() {
+                reloader.poll();
+            }
         }
 
         // ⚠ 窗口不可见（最小化 / 完全遮挡）时直接返回空帧：不 layout、不 paint、不 present。
@@ -2736,6 +2784,7 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         // ⚠ 不能一律 Poll：TCP 数据唤不醒 Wait，所以「有客户端」看起来
         // 必须 Poll —— 而实测那样会把事件循环拉到 **2500 Hz**（应用只画了
         // 9 帧），白烧 CPU。见 `DebugBridge::has_pending_work` 的说明。
+        #[cfg(debug_assertions)]
         if let Some(bridge) = self.bridge.as_ref() {
             if bridge.has_pending_work() {
                 tick.wants_poll = true;

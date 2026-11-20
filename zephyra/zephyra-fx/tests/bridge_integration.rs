@@ -9,6 +9,8 @@
 //! 宿主侧用真实的 [`BridgeHost`] 契约实现（不是 stub）：`on_bridge_disconnect`
 //! 的调用次数是断言的一部分 —— MCP 重启时宿主必须且只补一次收尾。
 
+#![cfg(debug_assertions)]
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};

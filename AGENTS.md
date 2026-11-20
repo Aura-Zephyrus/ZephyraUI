@@ -26,7 +26,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1393 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
+| 测试 | `cargo test --workspace` —— 1402 通过 / 0 失败 / 73 ignored（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
 | 隔离门禁 | `cargo tree -p zephyra-vector --depth 1` —— 只出现 `ab_glyph` / `bytemuck`；出现任何 workspace crate 即为破坏隔离 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
@@ -277,7 +277,12 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   「d3d12 或 linux-vk」⇒ 照原样写这个 bin 在 Linux 上**永远存不住**。所以改成
   「bin 恒可编，后端由 `gallery/src/bin/main.rs` 里的 `#[cfg(feature)]` 分流」，没开任何
   后端 feature 时 `main()` 打印一行提示并退出。
-- 环境变量：`ZEPHYRA_TRACE=1`（每帧统计，`zephyra dev` 默认开）、`ZEPHYRA_DCOMP`
+- **dev / release 编译期分离**：所有诊断设施（调试桥、`ZEPHYRA_MCP_PORT`、profiler、
+  `cpu_only`、`ZEPHYRA_FRAME_DUMP`、`ZEPHYRA_TRACE`、`alloc_probe`）都用
+  `#[cfg(debug_assertions)]` 门控 —— release 编译期彻底剔除，没有运行时开关可绕过。
+  验证：`cargo build --release` 后在 `gallery.exe` 里搜不到 `ZEPHYRA_DEBUG_PORT` /
+  `hello ` 等字符串。需要在 release 性能下调试时只能用 debug 构建（刻意取舍）。
+- 环境变量（**仅 debug 构建有效**）：`ZEPHYRA_TRACE=1`（每帧统计，`zephyra dev` 默认开）、`ZEPHYRA_DCOMP`
   （切 DirectComposition 呈现路径）、`ZEPHYRA_FRAME_DUMP=<path>`（把某帧后缓冲写成
   BMP，给「肉眼才看得见」的故障留证据）、`ZEPHYRA_MSAA`、`ZEPHYRA_ADAPTER`、
   `ZEPHYRA_FONT`（字体覆盖）、`ZEPHYRA_FRAMELESS=1|0`（强制无边框/带系统标题栏，
@@ -286,7 +291,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   `ZEPHYRA_TRANSPARENT=1|0`（同款覆盖，钉住主窗口默认值 `window.transparent`；
   窗口透明指逐像素 alpha 进合成器，不是 DWM 材质——见
   `docs/developer/win/07-window-transparent.md`）。
-  `--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`：
+  `--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`（**仅 debug 构建**）：
   不开窗口、不碰 GPU，出 BMP——**无显示器的环境也能验整条链**。
 - `#![deny(rustdoc::broken_intra_doc_links)]` 只在 12 个 `lib.rs` 里。**bin 目标不受
   门禁保护**（`text_probe.rs` 那 2 条警告就是这么漏过去的）。

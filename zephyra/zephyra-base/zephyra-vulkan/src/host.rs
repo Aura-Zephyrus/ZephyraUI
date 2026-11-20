@@ -143,6 +143,7 @@ pub struct HostWindow<V: View> {
     /// 帧缓冲当前尺寸 —— resize 只变尺寸不变图数，必须单独记。
     fb_extent: (u32, u32),
     /// `ZEPHYRA_FRAME_DUMP` 是否已经写过一副图。
+    #[cfg(debug_assertions)]
     dumped: bool,
     /// 窗口。**最后析构**。
     window: Arc<Window>,
@@ -321,6 +322,7 @@ impl<V: View> HostWindow<V> {
             framebuffers: Vec::new(),
             fb_views: Vec::new(),
             fb_extent: (0, 0),
+            #[cfg(debug_assertions)]
             dumped: false,
             window,
         }
@@ -504,7 +506,7 @@ impl<V: View> HostWindow<V> {
             }
         };
         self.frames += 1;
-        if trace_enabled() {
+        if trace_enabled_dev() {
             eprintln!(
                 "[trace] frame {} 客户区 {:?} 顶点 {} 字节 四边形 {} 未实现混合 {}",
                 self.frames,
@@ -570,16 +572,16 @@ impl<V: View> HostWindow<V> {
                     self.cache.list(),
                     zephyra_core::filter::BlendMode::SrcOver,
                 );
-            if trace_enabled() && unimplemented > 0 {
+            if trace_enabled_dev() && unimplemented > 0 {
                 eprintln!("[trace] 退回默认混合 {unimplemented} 段");
             }
-            if trace_enabled() && refractions > 0 {
+            if trace_enabled_dev() && refractions > 0 {
                 eprintln!("[trace] 折射趟 {refractions}");
             }
-            if trace_enabled() && lens_passes > 0 {
+            if trace_enabled_dev() && lens_passes > 0 {
                 eprintln!("[trace] 透镜趟 {lens_passes}");
             }
-            if trace_enabled() && backdrop_blurs > 0 {
+            if trace_enabled_dev() && backdrop_blurs > 0 {
                 eprintln!("[trace] 背景模糊趟 {backdrop_blurs}");
             }
             dev.device.end_command_buffer(self.cmd).ok();
@@ -593,40 +595,43 @@ impl<V: View> HostWindow<V> {
         }
         // 诊断：ZEPHYRA_FRAME_DUMP —— 读回刚画完的那张交换链图（此刻还在
         // PRESENT_SRC；read_back 自己做布局往返并转回）。1:1 对比的测量工具。
-        if !self.dumped {
-            if let Ok(path) = std::env::var("ZEPHYRA_FRAME_DUMP") {
-                self.dumped = true;
-                let (w, h) = self.surface.extent;
-                match self
-                    .surface
-                    .read_back(&dev, self.surface.images[idx as usize], w, h)
-                {
-                    Ok(data) => {
-                        let px = zephyra_fx::pixels::PixelRead {
-                            data,
-                            order: zephyra_fx::pixels::ChannelOrder::Bgra,
-                            row_pitch: w * 4,
-                            width: w,
-                            height: h,
-                            declared_width: w,
-                            declared_height: h,
-                        };
-                        let colors = px.distinct_colors(2);
-                        if path == "-" {
-                            eprintln!("[dump] {w}x{h} 颜色数 {colors}");
-                        } else {
-                            // `encode_srgb = false`：swapchain 用 UNORM（见
-                            // `Surface::new` 的格式取舍），读回字节 = 着色器线性值直通，与 Windows
-                            // D3D12 完全同构 —— 直接落盘就是「Windows 显示的那个值」。
-                            match zephyra_fx::write_bmp(&path, &px, false) {
-                                Ok(()) => {
-                                    eprintln!("[dump] 已写 {path}（{w}x{h}，颜色数 {colors}）")
+        #[cfg(debug_assertions)]
+        {
+            if !self.dumped {
+                if let Ok(path) = std::env::var("ZEPHYRA_FRAME_DUMP") {
+                    self.dumped = true;
+                    let (w, h) = self.surface.extent;
+                    match self
+                        .surface
+                        .read_back(&dev, self.surface.images[idx as usize], w, h)
+                    {
+                        Ok(data) => {
+                            let px = zephyra_fx::pixels::PixelRead {
+                                data,
+                                order: zephyra_fx::pixels::ChannelOrder::Bgra,
+                                row_pitch: w * 4,
+                                width: w,
+                                height: h,
+                                declared_width: w,
+                                declared_height: h,
+                            };
+                            let colors = px.distinct_colors(2);
+                            if path == "-" {
+                                eprintln!("[dump] {w}x{h} 颜色数 {colors}");
+                            } else {
+                                // `encode_srgb = false`：swapchain 用 UNORM（见
+                                // `Surface::new` 的格式取舍），读回字节 = 着色器线性值直通，与 Windows
+                                // D3D12 完全同构 —— 直接落盘就是「Windows 显示的那个值」。
+                                match zephyra_fx::write_bmp(&path, &px, false) {
+                                    Ok(()) => {
+                                        eprintln!("[dump] 已写 {path}（{w}x{h}，颜色数 {colors}）")
+                                    }
+                                    Err(e) => eprintln!("[dump] 写 {path} 失败: {e}"),
                                 }
-                                Err(e) => eprintln!("[dump] 写 {path} 失败: {e}"),
                             }
                         }
+                        Err(e) => eprintln!("[dump] 读回失败: {e}"),
                     }
-                    Err(e) => eprintln!("[dump] 读回失败: {e}"),
                 }
             }
         }
@@ -1272,11 +1277,17 @@ impl<V: View + 'static> ApplicationHandler for HostWindow<V> {
     }
 }
 
-fn trace_enabled() -> bool {
+#[cfg(debug_assertions)]
+fn trace_enabled_dev() -> bool {
     matches!(
         std::env::var("ZEPHYRA_TRACE").as_deref(),
         Ok("1") | Ok("true")
     )
+}
+
+#[cfg(not(debug_assertions))]
+fn trace_enabled_dev() -> bool {
+    false
 }
 
 fn window_handle_of(window: &Window) -> zephyra_platform::WindowHandle {

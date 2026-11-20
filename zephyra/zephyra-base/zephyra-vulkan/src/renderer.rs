@@ -499,6 +499,7 @@ pub struct Renderer {
     pad: Vec<u8>,
     /// `ZEPHYRA_FRAME_DUMP` 是否已经写过一副图。
     #[allow(dead_code, reason = "离屏 pass 用；接线前先建好")]
+    #[cfg(debug_assertions)]
     dumped: bool,
 }
 
@@ -910,6 +911,7 @@ impl Renderer {
             segment_scratch: Scratch::new(),
             size: (1, 1),
             pad: Vec::new(),
+            #[cfg(debug_assertions)]
             dumped: false,
         })
     }
