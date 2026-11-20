@@ -8,7 +8,7 @@ description = "效果器层：顶点展开、字形图集、CPU 参考光栅器�
 
 [dependencies]
 zephyra-core = { path = "../zephyra-core", version = "0.1.0" }
-zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", version = "0.1.0" }
+zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", branch = "main" }
 
 [lints.rust]
 unsafe_code = "forbid"

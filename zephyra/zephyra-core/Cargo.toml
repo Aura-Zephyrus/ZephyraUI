@@ -20,7 +20,7 @@ rust-version.workspace = true
 #    靠 workspace `members` 引入但不进 `default-members`，所以无差别的
 #    `cargo build` 既不编译它们，也不把它们算进本 crate 的依赖树。
 [dependencies]
-zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", version = "0.1.0" }
+zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", branch = "main" }
 
 [lints.rust]
 unsafe_code = "forbid"

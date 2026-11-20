@@ -11,7 +11,7 @@ publish = false
 # **不依赖 zephyra-core** —— 于是时间线与插值能在无 GPU、无窗口的 CI 里逐点断言。
 # 产物是路径段 / 变换 / 颜色，应用层自己决定怎么送进 DisplayList。
 [dependencies]
-zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", version = "0.1.0" }
+zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", branch = "main" }
 zephyra-bezier = { path = "../zephyra-core/extra/zephyra-bezier" }
 
 [lib]
