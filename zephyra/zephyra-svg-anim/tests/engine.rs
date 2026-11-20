@@ -480,11 +480,130 @@ fn clock_value_formats_parse() {
     match &svg.paths[0].animations[0] {
         zephyra_svg_anim::Animation::Opacity(a) => {
             assert!(
-                (a.timing.dur_ms - 60.0).abs() < 0.01,
-                "dur={}",
+                (a.timing.dur_ms.unwrap() - 60.0).abs() < 0.01,
+                "dur={:?}",
                 a.timing.dur_ms
             );
         }
         _ => unreachable!(),
     }
+}
+
+/// 事件基 begin + style 属性动画。
+const EVENT_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="fill-opacity" begin="click" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// 负 begin（从动画中间开始）。
+const NEGATIVE_BEGIN_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" begin="-500ms" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// dur="indefinite" + beginElement。
+const INDEFINITE_BEGIN_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L24 0L24 24L0 24Z">
+    <animate attributeName="opacity" begin="indefinite" from="0" to="1" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>"#;
+
+/// mpath 子元素引用。
+const MPATH_SVG: &str = r##"<svg viewBox="0 0 100 100">
+  <path id="route" d="M0 0L50 0L50 50"/>
+  <path d="M0 0L4 4L8 0Z">
+    <animateMotion dur="1000ms" fill="freeze">
+      <mpath xlink:href="#route"/>
+    </animateMotion>
+  </path>
+</svg>"##;
+
+/// additive transform。
+const ADD_TRANSFORM_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M0 0L4 4L8 0Z">
+    <animateTransform type="translate" from="0 0" to="10 0" dur="1000ms" additive="sum" fill="freeze"/>
+    <animateTransform type="translate" from="0 0" to="0 10" dur="1000ms" additive="sum" fill="freeze"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn event_begin_fires_only_after_trigger() {
+    let svg = parse_animated_svg(EVENT_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let before = tl.seek(400.0);
+    assert!(
+        (before.paths[0].fill_opacity - 1.0).abs() < 1e-4,
+        "未触发应保持基值"
+    );
+    assert_eq!(
+        tl.fire_event(None, "click"),
+        1,
+        "应有一个 begin=click 的动画"
+    );
+    let after = tl.seek(900.0); // 触发后 500ms ⇒ 进度 0.5
+    assert!(
+        (after.paths[0].fill_opacity - 0.5).abs() < 0.02,
+        "op={}",
+        after.paths[0].fill_opacity
+    );
+}
+
+#[test]
+fn negative_begin_starts_mid_animation() {
+    let svg = parse_animated_svg(NEGATIVE_BEGIN_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let f = tl.seek(0.0);
+    // begin=-500ms ⇒ t=0 时已播了 500ms ⇒ opacity≈0.5。
+    assert!(
+        (f.paths[0].opacity - 0.5).abs() < 0.02,
+        "op={}",
+        f.paths[0].opacity
+    );
+}
+
+#[test]
+fn begin_element_triggers_indefinite_animation() {
+    let svg = parse_animated_svg(INDEFINITE_BEGIN_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let before = tl.seek(100.0);
+    assert!(before.paths[0].opacity > 0.99, "未触发保持基值");
+    assert!(tl.begin_element(0, 0));
+    let mid = tl.seek(600.0); // 触发后 500ms
+    assert!(
+        (mid.paths[0].opacity - 0.5).abs() < 0.02,
+        "op={}",
+        mid.paths[0].opacity
+    );
+}
+
+#[test]
+fn mpath_child_element_resolves_path() {
+    let svg = parse_animated_svg(MPATH_SVG).unwrap();
+    // 有两条 path：第一条是路由（无动画），第二条带 motion。
+    let motion = svg.paths[1]
+        .animations
+        .iter()
+        .find_map(|a| match a {
+            zephyra_svg_anim::Animation::Motion(m) => Some(m),
+            _ => None,
+        })
+        .expect("应有 motion 动画");
+    assert!(motion.mpath_href.is_some(), "应记录 mpath href");
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    // 引用路径先水平走 50，再垂直走 50 ⇒ 中点约在 (50, 25)。
+    let t = mid.paths[1].transform;
+    assert!((t[4] - 50.0).abs() < 2.0, "tx={}", t[4]);
+}
+
+#[test]
+fn additive_transform_stacks_translations() {
+    let svg = parse_animated_svg(ADD_TRANSFORM_SVG).unwrap();
+    let mut tl = SvgTimeline::new(svg);
+    let mid = tl.seek(500.0);
+    let t = mid.paths[0].transform;
+    assert!((t[4] - 5.0).abs() < 0.5, "tx={}", t[4]);
+    assert!((t[5] - 5.0).abs() < 0.5, "ty={}", t[5]);
 }

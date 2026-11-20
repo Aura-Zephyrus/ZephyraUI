@@ -121,12 +121,31 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
                     }
                 }
             }
+            // 先处理动画元素本身，<mpath> 是下一轮要处理的子元素。
             match found {
                 Some((tag, attrs, after)) => {
                     if let Some(anim) = parse_animation(tag, attrs, &base) {
                         animations.push(anim);
                     }
                     anim_rest = after;
+                    // <mpath> 是 <animateMotion> 的子元素：紧跟其后，记到刚加的
+                    // motion 动画上，然后跳过它。
+                    if tag == "<animateMotion" {
+                        if let Some((mattrs, after_m)) = next_tag(anim_rest, "<mpath") {
+                            let href = attr(mattrs, "href")
+                                .or_else(|| attr(mattrs, "xlink:href"))
+                                .map(|s| s.to_string());
+                            if let Some(h) = href {
+                                for a in animations.iter_mut().rev() {
+                                    if let Animation::Motion(m) = a {
+                                        m.mpath_href = Some(h.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            anim_rest = after_m;
+                        }
+                    }
                 }
                 None => break,
             }
@@ -138,6 +157,35 @@ pub fn parse_animated_svg(text: &str) -> Result<AnimatedSvg, SvgAnimError> {
             fill_rule,
             animations,
         });
+    }
+
+    // <mpath xlink:href="#id"> 子元素：当前解析器只在 <animateMotion> 属性上
+    // 记了 mpath_href。这里扫文档里带 id 的 <path>，把引用解析成实际路径段。
+    // （<mpath> 作为子元素时，其属性会被 next_tag 跳过，所以从全文里搜 id。）
+    let mut id_paths: std::collections::HashMap<String, Vec<Segment>> =
+        std::collections::HashMap::new();
+    let mut scan = text;
+    while let Some((attrs, after)) = next_tag(scan, "<path") {
+        scan = after;
+        if let Some(id) = attr(attrs, "id") {
+            if let Some(d) = attr(attrs, "d") {
+                if let Ok(segs) = parse_path_data(d) {
+                    id_paths.insert(id.to_string(), segs);
+                }
+            }
+        }
+    }
+    for path in &mut paths {
+        for anim in &mut path.animations {
+            if let Animation::Motion(m) = anim {
+                if let Some(href) = &m.mpath_href {
+                    let id = href.trim_start_matches('#');
+                    if let Some(segs) = id_paths.get(id) {
+                        m.path = segs.clone();
+                    }
+                }
+            }
+        }
     }
 
     if paths.is_empty() {
@@ -172,9 +220,8 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
             let path = attr(attrs, "path")
                 .and_then(|d| parse_path_data(d).ok())
                 .unwrap_or_default();
-            if path.is_empty() {
-                return None;
-            }
+            // 注意：path 可能为空 —— SMIL 允许用 <mpath> 子元素引用路径，
+            // 那时真正的 path 在后面的 mpath 解析阶段填入。
             let key_points = attr(attrs, "keyPoints")
                 .map(parse_f32_list)
                 .unwrap_or_default();
@@ -223,6 +270,14 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
                     let values = parse_path_values(attrs, base)?;
                     Some(Animation::Path(PathAnim { timing, values }))
                 }
+                "fill-opacity" | "stroke-opacity" | "stroke-width" => {
+                    let values = parse_f32_values(attrs, 1.0)?;
+                    Some(Animation::Style(StyleAnim {
+                        timing,
+                        attribute_name: name.to_string(),
+                        values,
+                    }))
+                }
                 "x" | "y" | "width" | "height" | "r" | "cx" | "cy" => {
                     let values = parse_f32_values(attrs, 0.0)?;
                     Some(Animation::Geometry(GeometryAnim {
@@ -240,14 +295,21 @@ fn parse_animation(tag: &str, attrs: &str, base: &[Segment]) -> Option<Animation
 
 /// 解析 SMIL 的公共时间属性。缺 `dur` 视为非法（0 时长动画没有意义）。
 fn parse_timing(attrs: &str) -> Option<Timing> {
-    let dur_ms = parse_time(attr(attrs, "dur")?)?;
-    if dur_ms <= 0.0 {
-        return None;
-    }
-    let begin_ms = attr(attrs, "begin").and_then(parse_time).unwrap_or(0.0);
+    let dur_raw = attr(attrs, "dur")?;
+    let dur_ms = if dur_raw.trim() == "indefinite" {
+        None
+    } else {
+        let d = parse_time(dur_raw)?;
+        if d > 0.0 {
+            Some(d)
+        } else {
+            return None;
+        }
+    };
+    let begin = parse_begin(attr(attrs, "begin").unwrap_or("0ms"));
     let repeat = match attr(attrs, "repeatCount") {
         Some("indefinite") => Repeat::Indefinite,
-        Some(s) => Repeat::Count(s.parse().ok()?),
+        Some(v) => Repeat::Count(v.parse().ok()?),
         None => match attr(attrs, "repeatDur") {
             Some("indefinite") => Repeat::Indefinite,
             Some(v) => parse_time(v)
@@ -277,8 +339,13 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
     let end_ms = attr(attrs, "end").and_then(parse_time);
     let additive_sum = attr(attrs, "additive") == Some("sum");
     let accumulate_sum = attr(attrs, "accumulate") == Some("sum");
+    let restart = match attr(attrs, "restart") {
+        Some("whenNotActive") => Restart::WhenNotActive,
+        Some("never") => Restart::Never,
+        _ => Restart::Always,
+    };
     Some(Timing {
-        begin_ms,
+        begin,
         dur_ms,
         repeat,
         fill,
@@ -288,7 +355,61 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
         end_ms,
         additive_sum,
         accumulate_sum,
+        restart,
     })
+}
+
+/// `begin` 属性：偏移 / indefinite / 事件 / syncbase。
+fn parse_begin(s: &str) -> Begin {
+    let s = s.trim();
+    if s == "indefinite" {
+        return Begin::Indefinite;
+    }
+    // syncbase: "other.end+500ms" / "other.begin-1s"
+    if let Some(at) = s.find('.') {
+        let id = &s[..at];
+        let rest = &s[at + 1..];
+        let (event, offset) = if let Some(split) = rest.find(['+', '-']) {
+            let ev = &rest[..split];
+            let sign = if rest.as_bytes()[split] == b'-' {
+                -1.0
+            } else {
+                1.0
+            };
+            let off = parse_time(&rest[split + 1..]).unwrap_or(0.0) * sign;
+            (ev, off)
+        } else {
+            (rest, 0.0)
+        };
+        if !id.is_empty() && !event.is_empty() && event.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Begin::Syncbase {
+                id: id.to_string(),
+                event: event.to_string(),
+                offset_ms: offset,
+            };
+        }
+    }
+    // 事件: "click" / "btn.click"
+    if s.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Begin::Event {
+            target: None,
+            event: s.to_string(),
+        };
+    }
+    if let Some(dot) = s.rfind('.') {
+        let (target, event) = (&s[..dot], &s[dot + 1..]);
+        if event.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Begin::Event {
+                target: Some(target.to_string()),
+                event: event.to_string(),
+            };
+        }
+    }
+    // 偏移（可为负）。
+    let negative = s.starts_with('-');
+    let raw = s.trim_start_matches(['-', '+']);
+    let v = parse_time(raw).unwrap_or(0.0);
+    Begin::Offset(if negative { -v } else { v })
 }
 
 /// SMIL 时钟：`7878ms` / `1.5s` / `0.25s`。

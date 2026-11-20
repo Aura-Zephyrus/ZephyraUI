@@ -25,11 +25,21 @@ use crate::types::*;
 pub struct SvgTimeline {
     svg: AnimatedSvg,
     time_ms: f32,
+    /// 由 beginElement() 显式触发的动画在当前 iteration 的开始时刻
+    /// （key = 路径下标+动画下标）。
+    triggered: std::collections::HashMap<(usize, usize), f32>,
+    /// endElement() 显式结束的时刻。
+    ended: std::collections::HashMap<(usize, usize), f32>,
 }
 
 impl SvgTimeline {
     pub fn new(svg: AnimatedSvg) -> Self {
-        Self { svg, time_ms: 0.0 }
+        Self {
+            svg,
+            time_ms: 0.0,
+            triggered: std::collections::HashMap::new(),
+            ended: std::collections::HashMap::new(),
+        }
     }
 
     /// 推进 `dt_ms`（毫秒）并返回这一时刻的帧。
@@ -58,13 +68,85 @@ impl SvgTimeline {
         &self.svg
     }
 
+    /// 显式触发 `begin="indefinite"` / 事件基的动画（SMIL `beginElement()`）。
+    /// `path_index` / `anim_index` 定位到具体动画。
+    pub fn begin_element(&mut self, path_index: usize, anim_index: usize) -> bool {
+        let exists = self
+            .svg
+            .paths
+            .get(path_index)
+            .and_then(|p| p.animations.get(anim_index))
+            .is_some();
+        if exists {
+            self.triggered
+                .insert((path_index, anim_index), self.time_ms);
+            self.ended.remove(&(path_index, anim_index));
+        }
+        exists
+    }
+
+    /// 显式结束动画（SMIL `endElement()`）。
+    pub fn end_element(&mut self, path_index: usize, anim_index: usize) -> bool {
+        let exists = self
+            .svg
+            .paths
+            .get(path_index)
+            .and_then(|p| p.animations.get(anim_index))
+            .is_some();
+        if exists {
+            self.ended.insert((path_index, anim_index), self.time_ms);
+        }
+        exists
+    }
+
+    /// 按 id / 事件名触发所有匹配的 begin 动画（syncbase / 事件基的宿主侧入口）。
+    pub fn fire_event(&mut self, target: Option<&str>, event: &str) -> usize {
+        let mut count = 0;
+        for (pi, path) in self.svg.paths.iter().enumerate() {
+            for (ai, anim) in path.animations.iter().enumerate() {
+                let begin = match anim {
+                    Animation::Set(a) => &a.timing.begin,
+                    Animation::Opacity(a) => &a.timing.begin,
+                    Animation::Fill(a) => &a.timing.begin,
+                    Animation::Geometry(a) => &a.timing.begin,
+                    Animation::Style(a) => &a.timing.begin,
+                    Animation::Path(a) => &a.timing.begin,
+                    Animation::Transform(a) => &a.timing.begin,
+                    Animation::Motion(a) => &a.timing.begin,
+                };
+                let matches = match begin {
+                    Begin::Event {
+                        target: t,
+                        event: e,
+                    } => {
+                        e == event
+                            && match (t, target) {
+                                (None, _) => true,
+                                (Some(x), Some(y)) => x == y,
+                                _ => false,
+                            }
+                    }
+                    Begin::Syncbase { event: e, .. } => e == event,
+                    _ => false,
+                };
+                if matches {
+                    self.triggered.insert((pi, ai), self.time_ms);
+                    self.ended.remove(&(pi, ai));
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     /// 求当前帧。纯函数式的：不改时间，只按 `time_ms` 采样。
     pub fn frame(&self) -> SvgFrame {
         let paths = self
             .svg
             .paths
             .iter()
-            .map(|p| eval_path(p, self.time_ms))
+            .enumerate()
+            .map(|(pi, p)| eval_path(p, self.time_ms, pi, &self.triggered, &self.ended))
             .collect();
         SvgFrame {
             paths,
@@ -101,18 +183,34 @@ fn parse_hex_rgba(s: &str) -> Option<[f32; 4]> {
 }
 
 /// 求单条路径在 `time_ms` 的形态。
-fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
+fn eval_path(
+    path: &AnimatedPath,
+    time_ms: f32,
+    path_index: usize,
+    triggered: &std::collections::HashMap<(usize, usize), f32>,
+    ended: &std::collections::HashMap<(usize, usize), f32>,
+) -> RenderedPath {
     let mut segments = path.base.clone();
     let mut paint_mode = path.paint_mode;
     let mut opacity = 1.0f32;
     let mut transform = IDENTITY;
     let mut motion_offset = (0.0f32, 0.0f32);
     let mut geometry: [f32; 6] = [0.0; 6]; // x, y, width, height, r, (unused)
+    let mut fill_opacity = 1.0f32;
+    let mut stroke_opacity = 1.0f32;
+    let mut stroke_width = 0.0f32;
+    let stroke: Option<[f32; 4]> = None;
 
-    for anim in &path.animations {
+    for (anim_index, anim) in path.animations.iter().enumerate() {
+        // 事件/indefinite 动画：由 beginElement/fire_event 触发，用触发时刻作虚拟 begin。
+        let virtual_begin = triggered.get(&(path_index, anim_index)).copied();
+        let virtual_end = ended.get(&(path_index, anim_index)).copied();
         match anim {
             Animation::Set(set) => {
-                if let Some((_, active, _)) = phase(&set.timing, time_ms) {
+                if let Some((_, active, _)) = phase(
+                    &effective_timing(&set.timing, virtual_begin, virtual_end),
+                    time_ms,
+                ) {
                     // set 是离散的：活跃期内取 to，非活跃期保持基值。
                     if active {
                         match set.attribute_name.as_str() {
@@ -137,7 +235,12 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 }
             }
             Animation::Opacity(a) => {
-                if let Some((v, _)) = sample_f32(&a.timing, &a.values, time_ms, 1.0) {
+                if let Some((v, _)) = sample_f32(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    1.0,
+                ) {
                     opacity = if a.timing.additive_sum {
                         (opacity + v).clamp(0.0, 1.0)
                     } else {
@@ -145,8 +248,28 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                     };
                 }
             }
+            Animation::Style(a) => {
+                if let Some((v, _)) = sample_f32(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    1.0,
+                ) {
+                    match a.attribute_name.as_str() {
+                        "fill-opacity" => fill_opacity = v.clamp(0.0, 1.0),
+                        "stroke-opacity" => stroke_opacity = v.clamp(0.0, 1.0),
+                        "stroke-width" => stroke_width = v.max(0.0),
+                        _ => {}
+                    }
+                }
+            }
             Animation::Geometry(a) => {
-                if let Some((v, _)) = sample_f32(&a.timing, &a.values, time_ms, 0.0) {
+                if let Some((v, _)) = sample_f32(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    0.0,
+                ) {
                     let idx = match a.attribute_name.as_str() {
                         "x" => 0,
                         "y" => 1,
@@ -163,9 +286,12 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 }
             }
             Animation::Fill(a) => {
-                if let Some((v, _)) =
-                    sample_color(&a.timing, &a.values, time_ms, [1.0, 1.0, 1.0, 1.0])
-                {
+                if let Some((v, _)) = sample_color(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    [1.0, 1.0, 1.0, 1.0],
+                ) {
                     let base = match paint_mode {
                         PaintMode::Solid(c) => c,
                         _ => [0.0, 0.0, 0.0, 0.0],
@@ -184,35 +310,43 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
                 }
             }
             Animation::Path(a) => {
-                if let Some((v, _)) = sample_path(&a.timing, &a.values, time_ms, &path.base) {
+                if let Some((v, _)) = sample_path(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    &path.base,
+                ) {
                     segments = v;
                 }
             }
             Animation::Transform(a) => {
-                if let Some((v, _)) = sample_f32x3(&a.timing, &a.values, time_ms, [0.0, 0.0, 0.0]) {
-                    transform = match a.kind {
-                        TransformKind::Translate => {
-                            mul(transform, [1.0, 0.0, 0.0, 1.0, v[0], v[1]])
-                        }
-                        TransformKind::Scale => mul(transform, [v[0], 0.0, 0.0, v[1], 0.0, 0.0]),
-                        TransformKind::SkewX => {
-                            // skewX(θ)：x' = x + tan(θ)·y
-                            mul(transform, [1.0, 0.0, v[0].tan(), 1.0, 0.0, 0.0])
-                        }
-                        TransformKind::SkewY => {
-                            // skewY(θ)：y' = tan(θ)·x + y
-                            mul(transform, [1.0, v[0].tan(), 0.0, 1.0, 0.0, 0.0])
-                        }
+                if let Some((v, _)) = sample_f32x3(
+                    &effective_timing(&a.timing, virtual_begin, virtual_end),
+                    &a.values,
+                    time_ms,
+                    [0.0, 0.0, 0.0],
+                ) {
+                    // 先算出**本动画自身的增量**（基于单位矩阵），再按 additive 决定
+                    // 是叠加到已有 transform 还是替换它。
+                    let delta = match a.kind {
+                        TransformKind::Translate => [1.0, 0.0, 0.0, 1.0, v[0], v[1]],
+                        TransformKind::Scale => [v[0], 0.0, 0.0, v[1], 0.0, 0.0],
+                        TransformKind::SkewX => [1.0, 0.0, v[0].tan(), 1.0, 0.0, 0.0],
+                        TransformKind::SkewY => [1.0, v[0].tan(), 0.0, 1.0, 0.0, 0.0],
                         TransformKind::Rotate => {
                             let (r, cx, cy) = (v[0].to_radians(), v[1], v[2]);
                             let (s, c) = (r.sin(), r.cos());
-                            // 绕 (cx,cy)：T(c) · R · T(-c)
                             let rot = [c, s, -s, c, 0.0, 0.0];
                             mul(
-                                mul(transform, [1.0, 0.0, 0.0, 1.0, cx, cy]),
-                                mul(rot, [1.0, 0.0, 0.0, 1.0, -cx, -cy]),
+                                mul([1.0, 0.0, 0.0, 1.0, cx, cy], rot),
+                                [1.0, 0.0, 0.0, 1.0, -cx, -cy],
                             )
                         }
+                    };
+                    transform = if a.timing.additive_sum {
+                        mul(transform, delta)
+                    } else {
+                        delta
                     };
                 }
             }
@@ -242,7 +376,23 @@ fn eval_path(path: &AnimatedPath, time_ms: f32) -> RenderedPath {
         transform,
         motion_offset,
         geometry,
+        fill_opacity,
+        stroke_opacity,
+        stroke_width,
+        stroke,
     }
+}
+
+/// 把宿主显式触发/结束的时刻套进 Timing 的 begin/end。
+fn effective_timing(t: &Timing, virtual_begin: Option<f32>, virtual_end: Option<f32>) -> Timing {
+    let mut t = t.clone();
+    if let Some(b) = virtual_begin {
+        t.begin = Begin::Offset(b);
+    }
+    if let Some(e) = virtual_end {
+        t.end_ms = Some(e);
+    }
+    t
 }
 
 const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -263,17 +413,22 @@ fn mul(a: [f32; 6], b: [f32; 6]) -> [f32; 6] {
 ///
 /// `None` 表示动画尚未开始，调用方保持基值。
 fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
-    let local = time_ms - timing.begin_ms;
+    // begin 必须是已解析的时钟偏移；事件/indefinite/syncbase 由 timeline 显式
+    // 触发（beginElement），在静态采样里视为尚未开始。
+    let begin_ms = match timing.begin {
+        Begin::Offset(v) => v,
+        _ => return None,
+    };
+    let local = time_ms - begin_ms;
     if local < 0.0 {
         return None;
     }
-    // `end` 是绝对时刻：到了就按 fill 处理。
-    // freeze 停在 **end 那一刻的实际进度**，不是无条件 t=1 ——
-    // 那会让「begin=0 dur=1000 end=400」的动画跳到终值，而 SMIL 要求停在 0.4。
+    let dur = timing.dur_ms?; // indefinite ⇒ 静态采样永不结束
+                              // `end` 是绝对时刻：到了就按 fill 处理，且 freeze 停在 end 那一刻的实际进度。
     if let Some(end) = timing.end_ms {
         if time_ms >= end {
-            let effective = (end - timing.begin_ms).max(0.0);
-            let raw = effective / timing.dur_ms;
+            let effective = (end - begin_ms).max(0.0);
+            let raw = effective / dur;
             let t = if timing.repeat == Repeat::Indefinite || raw <= 1.0 {
                 raw.fract().clamp(0.0, 1.0)
             } else {
@@ -285,23 +440,21 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
             };
         }
     }
-    let iteration = (local / timing.dur_ms).floor();
+    let raw = local / dur;
+    let iteration = raw.floor() as u32;
     let done = match timing.repeat {
-        Repeat::Count(n) => iteration >= n as f32,
+        Repeat::Count(n) => iteration >= n,
         Repeat::Indefinite => false,
         Repeat::Duration(total) => local >= total,
     };
     if done {
-        // fill="freeze"：停在末值（t=1）；fill="remove"：回基值（None）。
         return match timing.fill {
             FillMode::Freeze => Some((1.0, false, 0)),
             FillMode::Remove => None,
         };
     }
-    let raw = local / timing.dur_ms;
-    let iteration = raw.floor() as u32;
-    let t = raw.fract();
-    Some((t.clamp(0.0, 1.0), true, iteration))
+    let t = raw.fract().clamp(0.0, 1.0);
+    Some((t, true, iteration))
 }
 
 /// 在 keyTimes 上定位当前段，返回 (段下标, 段内 0..1 进度)。

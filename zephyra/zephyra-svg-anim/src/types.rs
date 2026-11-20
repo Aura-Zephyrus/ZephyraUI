@@ -72,13 +72,51 @@ pub enum CalcMode {
     Spline,
 }
 
+/// `begin` / `end` 的时间规格。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Begin {
+    /// 相对文档开始的时钟偏移（毫秒），可为负（动画从中间开始）。
+    Offset(f32),
+    /// `begin="indefinite"`：只能由宿主 `beginElement()` 触发。
+    Indefinite,
+    /// 事件基：`begin="click"` / `begin="id.click"`。
+    Event {
+        target: Option<String>,
+        event: String,
+    },
+    /// syncbase：`begin="other.end+500ms"`。
+    Syncbase {
+        id: String,
+        event: String,
+        offset_ms: f32,
+    },
+}
+
+/// `restart` 属性。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restart {
+    Always,
+    WhenNotActive,
+    Never,
+}
+
+/// `fill-opacity` / `stroke` / `stroke-width` / `stroke-opacity` 动画。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleAnim {
+    pub timing: Timing,
+    pub attribute_name: String,
+    pub values: Values<f32>,
+}
+
 /// 一个动画的时间参数（SMIL 共通属性）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Timing {
     /// `begin`：相对文档开始的延迟（毫秒）。
-    pub begin_ms: f32,
+    /// `begin` 时间规格（偏移 / indefinite / 事件 / syncbase）。
+    pub begin: Begin,
     /// `dur`：单次时长（毫秒）。
-    pub dur_ms: f32,
+    /// `dur`：毫秒。`None` = `dur="indefinite"`。
+    pub dur_ms: Option<f32>,
     /// 重复策略。
     pub repeat: Repeat,
     /// 结束后是否冻结。
@@ -95,13 +133,15 @@ pub struct Timing {
     pub additive_sum: bool,
     /// `accumulate="sum"`：每次重复把上一次的终值作为下一次的起点。
     pub accumulate_sum: bool,
+    /// `restart` 策略。
+    pub restart: Restart,
 }
 
 impl Default for Timing {
     fn default() -> Self {
         Self {
-            begin_ms: 0.0,
-            dur_ms: 0.0,
+            begin: Begin::Offset(0.0),
+            dur_ms: None,
             repeat: Repeat::Count(1),
             fill: FillMode::Remove,
             calc_mode: CalcMode::Linear,
@@ -110,6 +150,7 @@ impl Default for Timing {
             end_ms: None,
             additive_sum: false,
             accumulate_sum: false,
+            restart: Restart::Always,
         }
     }
 }
@@ -216,6 +257,8 @@ pub enum Animation {
     Fill(FillAnim),
     /// 几何属性动画。
     Geometry(GeometryAnim),
+    /// 描边 / 不透明度样式动画。
+    Style(StyleAnim),
     Path(PathAnim),
     Transform(TransformAnim),
     Motion(MotionAnim),
@@ -255,6 +298,14 @@ pub struct RenderedPath {
     pub motion_offset: (f32, f32),
     /// 几何属性动画的结果：[x, y, width, height, r]（未设置的属性为 0）。
     pub geometry: [f32; 6],
+    /// fill-opacity（默认 1.0）。
+    pub fill_opacity: f32,
+    /// stroke-opacity（默认 1.0）。
+    pub stroke_opacity: f32,
+    /// stroke-width（默认 0）。
+    pub stroke_width: f32,
+    /// 描边色（None = currentColor）。
+    pub stroke: Option<[f32; 4]>,
 }
 
 /// 一帧的完整结果。
