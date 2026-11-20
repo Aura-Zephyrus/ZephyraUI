@@ -256,10 +256,20 @@ pub struct HostWindow<V: View> {
     atlas_revision_uploaded: u64,
     /// 图像纹理表：`Command::Image` 的句柄 → 采样视图。
     textures: TextureTable,
-    /// 调试桥（`ZEPHYRA_DEBUG_PORT` 开启时存在）。
+    /// 调试桥。两种拓扑共用同一套连接协议（见 `zephyra_fx::bridge`）：
+    ///
+    /// - **监听**：设了 `ZEPHYRA_DEBUG_PORT` ⇒ 等客户端连进来；
+    /// - **连出**：CLI 注入 `ZEPHYRA_MCP_PORT` ⇒ 应用连入 MCP。
+    ///
+    /// 两者可并存。连出模式尚未连上 MCP 时，宿主每 50 ms 唤醒一次驱动重连
+    /// （见本文件 `HostTick::wake_at` 的计算）；连上后改为 10 ms 轮询。
+    ///
+    /// MCP 重启 ⇒ 连出流断开，`BridgeHost::on_bridge_disconnect` 只在**客户端
+    /// 全消失那一刻**调用一次，宿主借此补抬注入的指针（否则会卡在「按住」态）；
+    /// 自动重连成功后不会重复调用。
     ///
     /// `Option` 而不是总是建：桥是**调试设施**，默认必须零开销——不监听
-    /// 任何端口，不占一个字节缓冲。见 `zephyra_fx::bridge` 的模块文档。
+    /// 任何端口，不占一个字节缓冲。
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计文本（`stats` 命令的答案，`frame()` 末尾刷新）。
     /// 最近一帧的统计（`stats` 命令的答案）。结构体而不是文本：文本与 JSON
@@ -1762,11 +1772,13 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
             }
         }
 
-        // 桥的轮询：有未处理数据 ⇒ Poll；有客户端无数据 ⇒ WaitUntil(10ms)；无客户端 ⇒ Wait。
+        // 桥的轮询分四档：有数据 ⇒ Poll；连着 / 拨号在途 ⇒ 10 ms（数据或连接
+        // 结果都要尽快看到）；连出退避 / 旧模式空闲 ⇒ 50 ms（新连接唤不醒 Wait）。
+        // `is_connecting` 让拨号在途不必等满 50 ms 才发现连上。
         if let Some(bridge) = self.bridge.as_ref() {
             if bridge.has_pending_work() {
                 tick.wants_poll = true;
-            } else if bridge.has_client() {
+            } else if bridge.has_client() || bridge.is_connecting() {
                 tick.wake_at =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(10));
             } else {

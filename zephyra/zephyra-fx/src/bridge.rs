@@ -33,7 +33,8 @@
 //! [`BridgeHost::screenshot`] 时自行择机（D3D11 与 D3D12 都在 present 前读回）。
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};
 
 /// 默认端口。`zephyra mcp` 与 `ZEPHYRA_DEBUG_PORT` 缺省都用它。
@@ -41,6 +42,13 @@ pub const DEFAULT_PORT: u16 = 7878;
 
 /// 开启桥的环境变量名（值 = 端口）。
 pub const PORT_ENV: &str = "ZEPHYRA_DEBUG_PORT";
+
+/// 由 `zephyra dev` / `zephyra run` 注入：MCP server 的监听端口。
+///
+/// 设置后应用**主动连入 MCP**（agent 只经 stdio 与 MCP 说话，不再拿端口连应用）。
+/// 这是 CLI 启动应用时才有的能力：环境变量由 CLI 传给子进程，见 `zephyra-cli`
+/// 的 `spawn_inherit` / `spawn_pumped`。不设置则维持旧模式（监听 `PORT_ENV`）。
+pub const MCP_PORT_ENV: &str = "ZEPHYRA_MCP_PORT";
 
 /// 一条从 TCP 上解析出来的命令。
 #[derive(Debug, Clone, PartialEq)]
@@ -849,9 +857,35 @@ pub trait BridgeHost {
     fn on_bridge_disconnect(&mut self) {}
 }
 
+/// 调试桥的连接状态。
+///
+/// 旧模式（只监听 `PORT_ENV`）恒为 [`BridgeState::Inactive`] —— 没有「连出去」
+/// 这回事。连出模式下三态对宿主有用：拨号在途要快唤醒回收连接线程的结果，
+/// 退避等待 50 ms 就够，连上后按数据密度选 Poll / 10 ms。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeState {
+    /// 未启用连出（旧模式，或桥未开启）。
+    Inactive,
+    /// 连出模式：连接线程在途。
+    Connecting,
+    /// 连出模式：至少一条流连着。
+    Connected,
+    /// 连出模式：连过但现在断了，等退避重试（MCP 重启是常态）。
+    Reconnecting,
+}
+
 /// 调试桥。`from_env` 开启；每帧 [`Self::poll`]。
+///
+/// 两种拓扑共用同一套 `Connection` 协议（谁拨号不影响「读命令、回响应」）：
+///
+/// - **旧模式**：监听 `ZEPHYRA_DEBUG_PORT`，客户端连进来（`listener`）。
+/// - **MCP 模式**：`ZEPHYRA_MCP_PORT` 由 CLI 注入，应用连进 MCP（`link`）。
 pub struct DebugBridge {
-    listener: TcpListener,
+    /// 旧模式的监听器。MCP 模式下仍可同时存在（`ZEPHYRA_DEBUG_PORT` 也设了），
+    /// 这样 `zephyra bridge` / `perf` / `debug` 这些直连工具不受影响。
+    listener: Option<TcpListener>,
+    /// MCP 模式的连出状态。
+    link: Option<OutboundLink>,
     /// 当前挂着的客户端连接。
     ///
     /// # 为什么是**多个**
@@ -927,6 +961,114 @@ struct Connection {
     pending_wait: Option<PendingWait>,
 }
 
+/// 连出状态。连接放在一次性线程里做，绝不阻塞帧循环；结果经 channel 回收。
+struct OutboundLink {
+    addr: SocketAddr,
+    rx: mpsc::Receiver<std::io::Result<TcpStream>>,
+    /// 有连接线程在途 —— 避免每帧都起一个线程。
+    connecting: bool,
+    /// 下次发起连接的时刻。MCP 还没起来时退避重试，不要每帧试。
+    next_try: Instant,
+    /// 连上后第一帧：应用身份。MCP 据此区分「哪个应用 / 哪版框架」。
+    hello: String,
+}
+
+/// 连出失败后的重试间隔。
+const CONNECT_RETRY: Duration = Duration::from_millis(500);
+
+/// `hello` 帧：应用连入 MCP 后主动报的身份。
+///
+/// 格式 `hello <app-name> <version>\n`。app-name 取可执行文件名，version 取
+/// 框架自身版本 —— 无需应用额外配置就能区分「哪个应用 / 哪版框架」，也给
+/// P2 的显式 builder API 留了升级路径（那时改成应用自己声明）。
+fn hello_line() -> String {
+    let name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "unknown".into());
+    format!("hello {name} {}\n", env!("CARGO_PKG_VERSION"))
+}
+
+impl OutboundLink {
+    fn new(addr: SocketAddr) -> Self {
+        let mut this = Self {
+            addr,
+            // 立刻被 spawn 换掉；这里的 receiver 只为了满足字段初始化。
+            rx: mpsc::channel::<std::io::Result<TcpStream>>().1,
+            connecting: false,
+            next_try: Instant::now(),
+            hello: hello_line(),
+        };
+        this.spawn();
+        this
+    }
+
+    fn spawn(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        let addr = self.addr;
+        std::thread::spawn(move || {
+            // 本机回环 300ms 足够；超时就报失败，poll 会退避重试。
+            let result =
+                TcpStream::connect_timeout(&addr, Duration::from_millis(300)).and_then(|s| {
+                    s.set_nodelay(true)?;
+                    s.set_nonblocking(true)?;
+                    Ok(s)
+                });
+            let _ = tx.send(result);
+        });
+        self.rx = rx;
+        self.connecting = true;
+    }
+
+    /// 每帧一次：收连接结果；未在连接且过了退避时刻就起一次新连接。
+    fn poll(&mut self, conns: &mut Vec<Connection>) {
+        if self.connecting {
+            match self.rx.try_recv() {
+                Ok(Ok(stream)) => {
+                    let before = conns.len();
+                    push_connection(conns, stream);
+                    // 身份必须赶在任何命令之前发出：MCP 侧在第一次 call 前先读掉它，
+                    // 否则下一句命令的响应会读到 hello，协议整体错位。
+                    if conns.len() > before {
+                        if let Some(conn) = conns.last_mut() {
+                            conn.write_buf.extend_from_slice(self.hello.as_bytes());
+                        }
+                    }
+                    self.connecting = false;
+                }
+                Ok(Err(_)) | Err(TryRecvError::Disconnected) => {
+                    self.connecting = false;
+                    self.next_try = Instant::now() + CONNECT_RETRY;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        } else if Instant::now() >= self.next_try {
+            self.spawn();
+        }
+    }
+
+    /// 已连上的流断了：安排重连（MCP 重启是 dev 工作流常态）。
+    fn disconnected(&mut self) {
+        if !self.connecting {
+            self.next_try = Instant::now() + CONNECT_RETRY;
+        }
+    }
+}
+
+/// 把一条已建好的流挂成连接 —— 两种拓扑共用（谁拨号不影响协议方向）。
+fn push_connection(conns: &mut Vec<Connection>, stream: TcpStream) {
+    if conns.len() >= MAX_CLIENTS {
+        return;
+    }
+    conns.push(Connection {
+        stream,
+        buf: Vec::new(),
+        write_buf: Vec::new(),
+        write_offset: 0,
+        pending_wait: None,
+    });
+}
+
 impl DebugBridge {
     /// 绑定 `port` 并置非阻塞。绑定失败（端口被占）由调用方决定怎么报——
     /// 桥是调试设施，**不该**让应用起不来。
@@ -934,30 +1076,62 @@ impl DebugBridge {
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         listener.set_nonblocking(true)?;
         Ok(Self {
-            listener,
+            listener: Some(listener),
+            link: None,
             conns: Vec::new(),
         })
     }
 
-    /// 按环境变量开启桥：`ZEPHYRA_DEBUG_PORT=<port>`（或空串取默认端口）。
-    /// 未设置返回 `None`——这是「调试桥默认关闭」的唯一入口，不存在隐式监听。
+    /// 按环境变量开启桥：
+    ///
+    /// - `ZEPHYRA_MCP_PORT`（CLI 注入）⇒ 应用**连入 MCP**，agent 只经 stdio 与 MCP 说话；
+    /// - `ZEPHYRA_DEBUG_PORT` ⇒ 旧模式，监听端口等客户端连进来。
+    ///
+    /// 两者可以同时设置：MCP 通道 + 直连的 `bridge` / `perf` / `debug` 工具并存。
+    /// 都没设置返回 `None` ——「调试桥默认关闭」的唯一入口，不存在隐式监听。
     pub fn from_env() -> Option<Self> {
-        let raw = std::env::var(PORT_ENV).ok()?;
-        let port = if raw.is_empty() {
-            DEFAULT_PORT
-        } else {
-            raw.parse().ok()?
-        };
-        match Self::bind(port) {
-            Ok(b) => {
-                eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}（{PORT_ENV}={raw}）");
-                Some(b)
-            }
-            Err(e) => {
-                eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行");
-                None
+        let debug_raw = std::env::var(PORT_ENV).ok();
+        let mcp_raw = std::env::var(MCP_PORT_ENV).ok();
+        if debug_raw.is_none() && mcp_raw.is_none() {
+            return None;
+        }
+
+        let mut listener = None;
+        if let Some(raw) = &debug_raw {
+            let port = if raw.is_empty() {
+                DEFAULT_PORT
+            } else {
+                raw.parse().ok()?
+            };
+            match TcpListener::bind(("127.0.0.1", port)) {
+                Ok(l) => {
+                    l.set_nonblocking(true).ok();
+                    eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}（{PORT_ENV}={raw}）");
+                    listener = Some(l);
+                }
+                Err(e) => {
+                    eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行");
+                }
             }
         }
+
+        let mut link = None;
+        if let Some(raw) = &mcp_raw {
+            let port = if raw.is_empty() {
+                DEFAULT_PORT
+            } else {
+                raw.parse().ok()?
+            };
+            let addr = SocketAddr::from(([127, 0, 0, 1], port));
+            eprintln!("[zephyra] 调试桥连入 MCP {addr}（{MCP_PORT_ENV}={raw}）");
+            link = Some(OutboundLink::new(addr));
+        }
+
+        Some(Self {
+            listener,
+            link,
+            conns: Vec::new(),
+        })
     }
 
     /// 每帧一次：接受连接、读可用字节、把凑齐的行解析成命令并执行。
@@ -980,24 +1154,25 @@ impl DebugBridge {
     /// `poll` 的实现体。拆出来只为让外层能在返回后统一判断连接是否消失
     /// （体内有多个 `return`，在体内加钩子必然漏分支）。
     fn poll_inner(&mut self, host: &mut dyn BridgeHost) {
-        // 接受新连接（最多 [`MAX_CLIENTS`] 个）。
+        // 旧模式：接受新连接（最多 [`MAX_CLIENTS`] 个）。
         //
         // ⚠ 原来只在「没有客户端」时 accept —— 于是第二个客户端只能挂在
         // backlog 里干等，而它的命令**一条也进不来**。
-        while self.conns.len() < MAX_CLIENTS {
-            let Ok((stream, _addr)) = self.listener.accept() else {
-                // WouldBlock = 没有新连接。
-                break;
-            };
-            let _ = stream.set_nonblocking(true);
-            let _ = stream.set_nodelay(true);
-            self.conns.push(Connection {
-                stream,
-                buf: Vec::new(),
-                write_buf: Vec::new(),
-                write_offset: 0,
-                pending_wait: None,
-            });
+        if let Some(listener) = &self.listener {
+            while self.conns.len() < MAX_CLIENTS {
+                let Ok((stream, _addr)) = listener.accept() else {
+                    // WouldBlock = 没有新连接。
+                    break;
+                };
+                let _ = stream.set_nonblocking(true);
+                let _ = stream.set_nodelay(true);
+                push_connection(&mut self.conns, stream);
+            }
+        }
+
+        // MCP 模式：非阻塞回收连出线程的结果；断了会在下一帧退避重连。
+        if let Some(link) = &mut self.link {
+            link.poll(&mut self.conns);
         }
 
         // 逐个连接处理。死掉的连接记下来，最后**倒序**移除（否则下标会错位）。
@@ -1005,6 +1180,11 @@ impl DebugBridge {
         for (index, conn) in self.conns.iter_mut().enumerate() {
             if !poll_connection(conn, host) {
                 dead.push(index);
+            }
+        }
+        if !dead.is_empty() {
+            if let Some(link) = &mut self.link {
+                link.disconnected();
             }
         }
         for index in dead.into_iter().rev() {
@@ -1018,6 +1198,36 @@ impl DebugBridge {
     /// 唤不醒 Wait 模式），无客户端回 Wait（静止零开销不动）。
     pub fn has_client(&self) -> bool {
         !self.conns.is_empty()
+    }
+
+    /// 当前连接状态，区分连出模式的三态。
+    ///
+    /// 旧模式（只有 `listener`）恒为 [`BridgeState::Inactive`]；只有连出模式才有
+    /// Connecting / Connected / Reconnecting 之分。
+    pub fn state(&self) -> BridgeState {
+        let Some(link) = &self.link else {
+            return BridgeState::Inactive;
+        };
+        if !self.conns.is_empty() {
+            BridgeState::Connected
+        } else if link.connecting {
+            BridgeState::Connecting
+        } else {
+            BridgeState::Reconnecting
+        }
+    }
+
+    /// 连出模式下是否已连上（有流）。旧模式恒为 `false`。
+    pub fn is_connected(&self) -> bool {
+        self.state() == BridgeState::Connected
+    }
+
+    /// 连出模式下连接线程是否在途。旧模式恒为 `false`。
+    ///
+    /// 宿主据此把「尚未连上」期间的唤醒档位从盲目的 50 ms 细化到 10 ms ——
+    /// 连接线程的结果经 channel 回收，唤醒越快发现得越早。
+    pub fn is_connecting(&self) -> bool {
+        self.state() == BridgeState::Connecting
     }
 
     /// 桥上有**没读完的数据**或**没写完的响应**。

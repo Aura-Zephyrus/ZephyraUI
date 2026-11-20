@@ -767,11 +767,65 @@ fn bridge_on_ephemeral_port() -> (DebugBridge, u16) {
     listener.set_nonblocking(true).unwrap();
     (
         DebugBridge {
-            listener,
+            listener: Some(listener),
+            link: None,
             conns: Vec::new(),
         },
         port,
     )
+}
+
+/// MCP 拓扑：应用连出到 MCP，连上后走的是**同一套**桥协议（读命令、回响应）。
+#[test]
+fn connects_out_to_mcp_and_serves_the_same_protocol() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // 假 MCP：监听、接受应用的连入、发一条 ping、读回响应。
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mcp = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // 应用连上后的第一帧是身份行（P1-4）；不先读掉，下面的响应解析会错位。
+        let mut hello = [0u8; 256];
+        let n = stream.read(&mut hello).unwrap();
+        let hello = std::str::from_utf8(&hello[..n]).unwrap().to_string();
+        assert!(hello.starts_with("hello "), "第一帧必须是 hello: {hello:?}");
+        tx.send(hello).unwrap();
+        stream.write_all(b"ping\n").unwrap();
+        tx.send(read_response(&mut stream)).unwrap();
+    });
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let bridge = DebugBridge {
+        listener: None,
+        link: Some(OutboundLink::new(addr)),
+        conns: Vec::new(),
+    };
+    let mut host = MockHost::new();
+    let done = std::sync::Arc::new(AtomicBool::new(false));
+    let worker_done = done.clone();
+    let worker = std::thread::spawn(move || {
+        let mut bridge = bridge;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !bridge.has_client() && std::time::Instant::now() < deadline {
+            bridge.poll(&mut host);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // 连上后再 poll 若干次，让它读到命令并把响应写出去。
+        for _ in 0..30 {
+            bridge.poll(&mut host);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        worker_done.store(true, Ordering::Release);
+    });
+
+    let hello = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(hello.starts_with("hello "), "{hello}");
+    let response = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(response.contains("pong"), "{response}");
+    worker.join().unwrap();
+    mcp.join().unwrap();
 }
 
 #[test]
@@ -1248,4 +1302,46 @@ fn disconnect_notifies_host_once_and_then_stays_quiet() {
     }
     bridge.poll(&mut host);
     assert_eq!(host.disconnects.load(Ordering::Acquire), 2);
+}
+
+/// 连接状态三态：旧模式无连出；连出模式区分拨号在途 / 连上 / 断开重连。
+#[test]
+fn bridge_state_distinguishes_outbound_phases() {
+    // 旧模式（只监听）没有「连出去」这回事。
+    let (bridge, _port) = bridge_on_ephemeral_port();
+    assert_eq!(bridge.state(), super::BridgeState::Inactive);
+    assert!(!bridge.is_connected());
+    assert!(!bridge.is_connecting());
+
+    // 假 MCP：监听、等应用连入。
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut bridge = DebugBridge {
+        listener: None,
+        link: Some(OutboundLink::new(addr)),
+        conns: Vec::new(),
+    };
+    // OutboundLink::new 立刻 spawn，连接线程在途。
+    assert_eq!(bridge.state(), super::BridgeState::Connecting);
+    assert!(bridge.is_connecting());
+    assert!(!bridge.is_connected());
+
+    let acceptor = std::thread::spawn(move || listener.accept().unwrap());
+    let mut host = MockHost::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !bridge.has_client() && std::time::Instant::now() < deadline {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    acceptor.join().unwrap();
+    assert_eq!(bridge.state(), super::BridgeState::Connected);
+    assert!(bridge.is_connected());
+    assert!(!bridge.is_connecting());
+
+    // 连出流断开（模拟 MCP 重启）：进入退避重连，既非连上也非拨号在途。
+    bridge.conns.clear();
+    bridge.link.as_mut().unwrap().disconnected();
+    assert_eq!(bridge.state(), super::BridgeState::Reconnecting);
+    assert!(!bridge.is_connected());
+    assert!(!bridge.is_connecting());
 }

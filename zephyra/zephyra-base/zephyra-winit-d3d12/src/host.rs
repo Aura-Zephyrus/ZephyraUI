@@ -211,7 +211,11 @@ pub struct HostWindow<V: View> {
     /// 重排；这一份纯粹是「resize 之后到底发生了什么」的观测点。
     /// 两者的值应当一致 —— 不一致本身就是缺陷（见 `docs/dev-log/task-responsive.md` B2）。
     traced_viewport: Option<(f32, f32)>,
-    /// 调试桥（`ZEPHYRA_DEBUG_PORT` 开启时存在）。见 `zephyra_fx::bridge`。
+    /// 调试桥。两种拓扑：`ZEPHYRA_DEBUG_PORT` ⇒ 监听客户端连入；CLI 注入
+    /// `ZEPHYRA_MCP_PORT` ⇒ 应用连入 MCP（见 `zephyra_fx::bridge`）。连出模式
+    /// 未连上时每 50 ms 唤醒驱动重连，连上后 10 ms 轮询；MCP 重启导致断流时
+    /// `BridgeHost::on_bridge_disconnect` 只调用一次（补抬注入的指针），自动
+    /// 重连成功不重复触发。
     bridge: Option<zephyra_fx::bridge::DebugBridge>,
     /// 最近一帧的统计（`stats` 命令的答案，`frame()` 末尾刷新）。
     ///
@@ -2718,7 +2722,8 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         // - **有未处理的数据** ⇒ Poll（数据在流，全速才对）；
         // - **有客户端但没数据** ⇒ WaitUntil(10 ms)（命令最多晚 10 ms，
         //   而 CPU 从「全速空转」降到 1% 量级）；
-        // - **没有客户端** ⇒ Wait（静止零开销）。
+        // - **连出拨号在途** ⇒ WaitUntil(10 ms)，尽快回收连接线程的结果；
+        // - **其余空闲**（连出退避 / 旧模式）⇒ WaitUntil(50 ms)（新连接唤不醒 Wait）。
         //
         // ⚠ 不能一律 Poll：TCP 数据唤不醒 Wait，所以「有客户端」看起来
         // 必须 Poll —— 而实测那样会把事件循环拉到 **2500 Hz**（应用只画了
@@ -2726,7 +2731,7 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
         if let Some(bridge) = self.bridge.as_ref() {
             if bridge.has_pending_work() {
                 tick.wants_poll = true;
-            } else if bridge.has_client() {
+            } else if bridge.has_client() || bridge.is_connecting() {
                 tick.wake_at =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(10));
             } else {
