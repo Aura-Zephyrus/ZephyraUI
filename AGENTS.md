@@ -27,7 +27,7 @@
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
 | 测试 | `cargo test --workspace` —— 1171 通过 / 0 失败 / 73 ignored（vector 294 条已独立成仓）（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
-| 隔离门禁 | vector 已独立成仓（`E:\zephyra-vector`）：其 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`；主仓通过 git 依赖它 |
+| 隔离门禁 | vector 已独立成仓（`E:\zephyra-vector`）：其 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`；主仓通过 git 依赖它。camera / video 也已独立成仓（`E:\zephyra-camera` / `E:\zephyra-video`），主仓与它们**零双向依赖**（它们不依赖主仓）。唯一例外：`zephyra-base/extra/zephyra-media` 单向 path 依赖 zephyra-video；它是可选播放桥接、不进 default-members，默认构建连依赖解析都不做。主仓核心仍零依赖 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
 单点验证：
@@ -68,7 +68,7 @@ unsafe 与设备代码）：`zstyle-compile`、`zephyra-style`、
 | 位置 | 判据 | 现有成员 |
 |---|---|---|
 | `zephyra/zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
-| `zephyra/zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera` |
+| `zephyra/zephyra-base/extra/` | 要碰平台 / 允许 unsafe，或可选播放栈 | `zephyra-uia`、`zephyra-media`（可选播放桥接；单向 path 依赖 zephyra-video，见上方门禁例外） |
 
 **「选择性编译」是 Cargo 层面的事实**：这些包在 `members` 里但不在
 `default-members` 里，所以无差别构建**连依赖解析都不做**。不要在 extra 里

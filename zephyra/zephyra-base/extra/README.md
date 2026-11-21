@@ -32,11 +32,17 @@
 //!
 //! | crate | 内容 | 设备代码在哪 |
 //! |---|---|---|
-//! | `zephyra-camera` | 摄像头采集与像素格式转换 | `capture` feature（nokhwa） |
 //! | `zephyra-uia` | 无障碍 / UI Automation | 整段是（COM 边界） |
+//! | `zephyra-media` | 可选播放桥接（demux / 解码线程 / A/V 同步 / 纹理与音频输出） | 按 feature：`video` / `audio` / `hw-dxva2` / `dynamic` |
 //!
-//! 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video.git
-//! （主仓与它完全解耦，零双向依赖）。
+//! 摄像头采集与视频解码均已独立成仓：
+//! https://github.com/Aura-Zephyrus/zephyra-camera.git
+//! https://github.com/Aura-Zephyrus/zephyra-video.git
+//! 主仓与它们零双向依赖（它们不依赖主仓）。
+//! 唯一例外：`zephyra-media` **单向** path 依赖 zephyra-video —— 它是可选播放
+//! 桥接、不进 default-members，默认构建连依赖解析都不做；核心 crate 仍零依赖。
+//! 每个 codec 由 `video-h264` / `audio-mp3` 等细粒度 feature 单独开启，
+//! 不强制一次编译全套 vendored C。
 
 // 本目录的两个包都是「可选能力」，不是主线的必经之路。
 // 折射（refraction）与背景采样尚未落地 —— 它们需要碰三个后端的渲染器。

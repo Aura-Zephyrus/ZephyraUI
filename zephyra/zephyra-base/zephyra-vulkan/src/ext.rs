@@ -7,6 +7,12 @@ use std::rc::Rc;
 use zephyra_ext::prelude::*;
 use zephyra_ext::ExternalTextureBuilder;
 use zephyra_render_ext::capability::BackendCapabilities;
+use zephyra_render_ext::error::ImportError;
+use zephyra_render_ext::external_texture::{
+    CpuTextureDesc, CpuVideoTextureDesc, ExternalTextureDesc, ExternalTextureImporter,
+    ImportedTexture,
+};
+use zephyra_render_ext::prelude::{ExternalTextureFormat, ExternalTextureSource, FrameId};
 
 /// 已导入资源（最小元数据；可采样 VkImageView/descriptor 绑定由后续增强）。
 #[derive(Clone, Debug)]
@@ -64,6 +70,112 @@ impl VulkanExtContext {
         frame: Rc<std::cell::Cell<u64>>,
     ) -> Self {
         Self { pool, hooks, frame }
+    }
+}
+
+/// Vulkan 外部纹理导入器。
+///
+/// 与 D3D11/D3D12 一样实现 [`ExternalTextureImporter`]，让 `zephyra-media`
+/// 能把解码帧导入 Vulkan 后端。`VkImage` 句柄直接登记；CPU / 视频帧走
+/// `pending_cpu` 延迟上传路径（renderer 集成 image view/descriptor 后消费）。
+pub struct VulkanImporter {
+    pool: Rc<std::cell::RefCell<ExtPool>>,
+}
+
+impl VulkanImporter {
+    pub fn new(pool: Rc<std::cell::RefCell<ExtPool>>) -> Self {
+        Self { pool }
+    }
+
+    fn insert_cpu(
+        &mut self,
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        row_pitch: u32,
+        format: ExternalTextureFormat,
+    ) -> ImportedTexture {
+        let key = format!("vulkan-cpu-{}", FrameId(0).0);
+        let res = ExtResource {
+            key: key.clone(),
+            vk_image_raw: None,
+            vk_layout: 0,
+            vk_memory_raw: None,
+            width,
+            height,
+            pending_cpu: Some(zephyra_ext::CpuTextureDescOwned {
+                pixels,
+                width,
+                height,
+                row_pitch,
+                format,
+            }),
+            pending_updates: VecDeque::new(),
+        };
+        self.pool.borrow_mut().insert(key.clone(), res);
+        // handle 只作为标识；renderer 按 key 查 pool 取真实资源。
+        ImportedTexture::new(key, FrameId(0))
+    }
+}
+
+impl ExternalTextureImporter for VulkanImporter {
+    fn import(&mut self, desc: ExternalTextureDesc) -> Result<ImportedTexture, ImportError> {
+        match desc.source {
+            ExternalTextureSource::VkImage {
+                image,
+                layout,
+                memory,
+            } => {
+                let key = format!("vulkan-image-{}", image.0);
+                let res = ExtResource {
+                    key: key.clone(),
+                    vk_image_raw: Some(image.0 as u64),
+                    vk_layout: layout,
+                    vk_memory_raw: memory.map(|m| m.0 as u64),
+                    width: desc.size.0,
+                    height: desc.size.1,
+                    pending_cpu: None,
+                    pending_updates: VecDeque::new(),
+                };
+                self.pool.borrow_mut().insert(key.clone(), res);
+                Ok(ImportedTexture::new(key, FrameId(0)))
+            }
+            // VK_KHR_external_memory 未启用；不假装支持。
+            _ => Err(ImportError::UnsupportedSource),
+        }
+    }
+
+    fn import_cpu(&mut self, desc: CpuTextureDesc<'_>) -> Result<ImportedTexture, ImportError> {
+        let tight = desc.width as usize * 4;
+        let mut pixels = Vec::with_capacity(desc.row_pitch as usize * desc.height as usize);
+        for row in 0..desc.height as usize {
+            let start = row * desc.row_pitch as usize;
+            let end = start + tight;
+            let src = desc
+                .pixels
+                .get(start..end)
+                .ok_or(ImportError::SizeMismatch {
+                    expected: (desc.width, desc.height),
+                    actual: (0, 0),
+                })?;
+            pixels.extend_from_slice(src);
+        }
+        Ok(self.insert_cpu(pixels, desc.width, desc.height, desc.width * 4, desc.format))
+    }
+
+    fn import_video_cpu(
+        &mut self,
+        desc: CpuVideoTextureDesc<'_>,
+    ) -> Result<ImportedTexture, ImportError> {
+        let (pixels, width, height, row_pitch) =
+            desc.flatten_nv12().ok_or(ImportError::UnsupportedSource)?;
+        Ok(self.insert_cpu(
+            pixels,
+            width,
+            height,
+            row_pitch,
+            ExternalTextureFormat::Nv12,
+        ))
     }
 }
 

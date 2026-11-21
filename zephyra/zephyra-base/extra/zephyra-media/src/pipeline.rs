@@ -118,8 +118,9 @@ impl MediaPlayer {
             let tracks = tracks.clone();
             let clock = Arc::clone(&clock);
             let stop = Arc::clone(&stop);
+            let hardware = options.hardware;
             threads.push(std::thread::spawn(move || {
-                crate::decode_thread::video_loop(packets, tracks, tx, clock, stop, crx);
+                crate::decode_thread::video_loop(packets, tracks, tx, clock, stop, crx, hardware);
             }));
         }
 

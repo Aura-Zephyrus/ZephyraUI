@@ -7,34 +7,73 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 # 不进 default-members：默认构建不该拉入 demux / 解码 / 音频依赖树。
-# 所有能力按 feature 开启；基础词汇表（错误、时钟、帧队列）零依赖。
+# 所有能力按 feature 开启；基础词汇表（错误、时钟、轨道信息）零依赖。
 
 [features]
 default = []
 # 容器解复用（symphonia，纯 Rust / MPL-2.0）
 demux = ["dep:symphonia"]
-# AAC 音频（symphonia-codec-aac，MPL-2.0）；用于主流 MP4 的音频轨
+# AAC 音频（symphonia 的 codec-aac feature）；用于主流 MP4 的音频轨
 aac = ["demux"]
-# 视频解码（转发 zephyra-video 的视频后端）
-video = ["demux", "dep:zephyra-video", "zephyra-video/video"]
-# 音频解码（转发 zephyra-video 的音频后端）；同样需要 demux 打开容器
-audio = ["demux", "dep:zephyra-video", "zephyra-video/audio", "dep:cpal"]
-# DXVA2 硬件解码（Windows）
+
+# 视频基础：**不**打开任何具体 codec；只想播 H.264 的 app 不必编译其它九套 vendored C
+video = ["demux", "dep:zephyra-video"]
+video-h264 = ["video", "zephyra-video/h264"]
+video-hevc = ["video", "zephyra-video/hevc"]
+video-av1 = ["video", "zephyra-video/av1"]
+video-vp8 = ["video", "zephyra-video/vp8"]
+video-vp9 = ["video", "zephyra-video/vp9"]
+video-vvc = ["video", "zephyra-video/vvc"]
+video-evc = ["video", "zephyra-video/evc"]
+video-theora = ["video", "zephyra-video/theora"]
+video-mjpeg = ["video", "zephyra-video/mjpeg"]
+video-avs3 = ["video", "zephyra-video/uavs3d"]
+# 一次打开全部视频后端（等价于旧行为）
+video-all = [
+    "video", "zephyra-video/video",
+    "video-h264", "video-hevc", "video-av1", "video-vp8", "video-vp9",
+    "video-vvc", "video-evc", "video-theora", "video-mjpeg", "video-avs3",
+]
+
+# 音频基础（PCM 始终可用，无需额外 codec feature）
+audio = ["demux", "dep:zephyra-video", "dep:cpal"]
+audio-mp3 = ["audio", "zephyra-video/mp3"]
+audio-opus = ["audio", "zephyra-video/opus"]
+audio-vorbis = ["audio", "zephyra-video/vorbis"]
+audio-flac = ["audio", "zephyra-video/flac"]
+audio-all = ["audio", "zephyra-video/audio", "audio-mp3", "audio-opus", "audio-vorbis", "audio-flac"]
+
+# DXVA2 硬件解码（Windows），需要视频基础
 hw-dxva2 = ["video", "zephyra-video/dxva2"]
-# 转发 zephyra-video 的运行时加载，缺库报告接入播放器
+# 运行时加载共享库，缺库报告接入播放器
 dynamic = ["dep:zephyra-video", "zephyra-video/dynamic"]
 # 一次性开启全部
-full = ["demux", "aac", "video", "audio", "hw-dxva2", "dynamic"]
+full = [
+    "demux", "aac", "video-all", "audio-all", "hw-dxva2", "dynamic",
+]
 
 [dependencies]
 # 渲染契约（始终依赖，零平台 API）
 zephyra-render-ext = { path = "../../zephyra-render-ext" }
 
-# 解码库（独立仓，按需开启）
+# 解码库（独立仓；extra 层唯一一处单向 path 依赖，见根 Cargo.toml / AGENTS.md 的例外说明）
 zephyra-video = { path = "../../../../../zephyra-video", optional = true }
 
 # demux / AAC（按需开启）
 symphonia = { version = "0.5", optional = true, features = ["isomp4", "aac"] }
 
-# 音频输出（WASAPI / ALSA / CoreAudio），按需开启。
+# 音频输出（WASAPI / ALSA / CoreAudio），按需开启
 cpal = { version = "0.15", optional = true }
+
+# 各集成测试只在需要的 feature 打开时编译；否则 workspace 门禁必红。
+[[test]]
+name = "playback"
+required-features = ["video-h264", "aac"]
+
+[[test]]
+name = "stress"
+required-features = ["video-h264", "aac"]
+
+[[test]]
+name = "load_report"
+required-features = ["dynamic"]

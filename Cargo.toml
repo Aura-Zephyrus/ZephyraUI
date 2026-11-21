@@ -35,7 +35,9 @@ members = [
     "zephyra/zephyra-base/zephyra-winit-input",
     # 摄像头采集已独立成仓：https://github.com/Aura-Zephyrus/zephyra-camera
     # 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video
-    # 两者都与主仓完全解耦（零双向依赖，也不保留 path/git 依赖）。
+    # 主仓与两者零双向依赖（它们不依赖主仓）。注意唯一例外：
+    # extra/zephyra-media 单向 path 依赖 zephyra-video —— 它是可选播放桥接，
+    # 不进 default-members，默认构建连依赖解析都不做；主仓核心仍零依赖。
     # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
     # Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
     # 不进 default-members（默认构建不该编 COM 那一坨）。

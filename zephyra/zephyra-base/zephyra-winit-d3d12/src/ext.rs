@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Direct3D12::{ID3D12Device, ID3D12Resource};
 use zephyra_ext::prelude::*;
 use zephyra_ext::{BuilderParts, ExternalTextureBuilder};
 use zephyra_render_ext::capability::BackendCapabilities;
+use zephyra_render_ext::external_texture::CpuVideoTextureDesc;
 use zephyra_render_ext::types::ExternalTextureFormat;
 
 /// 已导入的外部资源。
@@ -156,6 +157,35 @@ impl ExternalTextureImporter for D3D12Importer {
     fn import_cpu(&mut self, _desc: CpuTextureDesc<'_>) -> Result<ImportedTexture, ImportError> {
         Err(ImportError::Backend(
             "D3D12 CPU ext texture import requires upload command path".into(),
+        ))
+    }
+
+    /// 视频帧（NV12）走与 `import_parts` 相同的延迟上传路径：把两个平面合并成
+    /// 一块 owned buffer，由 renderer 在下一帧建纹理/SRV。
+    fn import_video_cpu(
+        &mut self,
+        desc: CpuVideoTextureDesc<'_>,
+    ) -> Result<ImportedTexture, ImportError> {
+        let (pixels, width, height, row_pitch) =
+            desc.flatten_nv12().ok_or(ImportError::UnsupportedSource)?;
+        Ok(ImportedTexture::new(
+            ExtResource {
+                resource: None,
+                width,
+                height,
+                format: ExternalTextureFormat::Nv12,
+                srv_slot: None,
+                pending_cpu: Some(zephyra_ext::CpuTextureDescOwned {
+                    pixels,
+                    width,
+                    height,
+                    row_pitch,
+                    format: ExternalTextureFormat::Nv12,
+                }),
+                pending_updates: VecDeque::new(),
+                staging: None,
+            },
+            FrameId(0),
         ))
     }
 }

@@ -41,6 +41,7 @@ pub(crate) fn video_loop(
     _clock: Arc<Mutex<PresentationClock>>,
     stop: Arc<AtomicBool>,
     cmd_rx: Receiver<Command>,
+    hardware: bool,
 ) {
     let track = tracks.iter().find(|t| video_codec_from(&t.codec).is_some());
     let Some(track) = track else { return };
@@ -65,7 +66,7 @@ pub(crate) fn video_loop(
         #[cfg(not(feature = "video"))]
         None
     };
-    let mut decoder = make_video_decoder(codec);
+    let mut decoder = make_video_decoder(codec, hardware);
     let config = VideoDecoderConfig::new(
         codec,
         zephyra_video::VideoCodecProfile::Unknown,
@@ -142,18 +143,45 @@ fn avcc_to_annexb(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// 按 codec 与 `hardware` 选择解码器。
+///
+/// 每个后端按 feature 单独编译：只开 `video-h264` 时不会引用其它 vendored C 的
+/// 解码器类型。未启用对应 feature 的 codec 落到 `NullVideoDecoder`（不输出帧）。
 #[cfg(feature = "video")]
-fn make_video_decoder(codec: VideoCodec) -> Box<dyn VideoDecoder> {
+fn make_video_decoder(codec: VideoCodec, hardware: bool) -> Box<dyn VideoDecoder> {
+    let _ = hardware; // 仅有 hw-dxva2 + Windows 时才真正读取
     match codec {
-        VideoCodec::H264 => Box::new(zephyra_video::OpenH264Decoder::new()),
+        VideoCodec::H264 => {
+            #[cfg(all(feature = "hw-dxva2", windows))]
+            if hardware {
+                return Box::new(zephyra_video::dxva2::Dxva2H264Decoder::new());
+            }
+            #[cfg(feature = "video-h264")]
+            {
+                Box::new(zephyra_video::OpenH264Decoder::new())
+            }
+            #[cfg(not(feature = "video-h264"))]
+            {
+                Box::new(NullVideoDecoder)
+            }
+        }
+        #[cfg(feature = "video-hevc")]
         VideoCodec::HEVC => Box::new(zephyra_video::HevcDecoder::new()),
+        #[cfg(feature = "video-av1")]
         VideoCodec::AV1 => Box::new(zephyra_video::Dav1dDecoder::new()),
+        #[cfg(feature = "video-vp8")]
         VideoCodec::VP8 => Box::new(zephyra_video::Vpx8Decoder::new()),
+        #[cfg(feature = "video-vp9")]
         VideoCodec::VP9 => Box::new(zephyra_video::Vpx9Decoder::new()),
+        #[cfg(feature = "video-vvc")]
         VideoCodec::Vvc => Box::new(zephyra_video::VvdecDecoder::new()),
+        #[cfg(feature = "video-evc")]
         VideoCodec::Evc => Box::new(zephyra_video::XevdDecoder::new()),
+        #[cfg(feature = "video-theora")]
         VideoCodec::Theora => Box::new(zephyra_video::TheoraDecoder::new()),
+        #[cfg(feature = "video-mjpeg")]
         VideoCodec::Mjpeg => Box::new(zephyra_video::MjpegDecoder::new()),
+        #[cfg(feature = "video-avs3")]
         VideoCodec::Av3 => Box::new(zephyra_video::Uavs3dDecoder::new()),
         _ => Box::new(NullVideoDecoder),
     }
@@ -217,9 +245,13 @@ pub(crate) fn audio_loop(
         Vec::new(),
     );
     let mut decoder: Box<dyn AudioDecoder> = match codec {
+        #[cfg(feature = "audio-mp3")]
         AudioCodec::Mp3 => Box::new(zephyra_video::Mp3Decoder::new()),
+        #[cfg(feature = "audio-opus")]
         AudioCodec::Opus => Box::new(zephyra_video::OpusDecoder::new()),
+        #[cfg(feature = "audio-vorbis")]
         AudioCodec::Vorbis => Box::new(zephyra_video::VorbisDecoder::new()),
+        #[cfg(feature = "audio-flac")]
         AudioCodec::Flac => Box::new(zephyra_video::FlacDecoder::new()),
         AudioCodec::Pcm => Box::new(zephyra_video::PcmDecoder::new()),
         _ => return,

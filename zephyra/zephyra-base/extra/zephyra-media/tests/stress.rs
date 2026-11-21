@@ -105,23 +105,24 @@ fn cpu_video_desc_maps_all_supported_formats() {
 
     let size = zephyra_video::Size::new(64, 48);
     let rect = zephyra_video::Rect::new(0, 0, 64, 48);
+    // 所有 4:2:0 格式都必须能转成 D3D11 importer 接受的 NV12。
     let cases = [
-        (VideoPixelFormat::I420, ExternalTextureFormat::I420, 3usize),
-        (VideoPixelFormat::NV12, ExternalTextureFormat::Nv12, 2),
-        (
-            VideoPixelFormat::YUV420P10,
-            ExternalTextureFormat::I420P10,
-            3,
-        ),
-        (VideoPixelFormat::P010LE, ExternalTextureFormat::P010, 2),
+        VideoPixelFormat::I420,
+        VideoPixelFormat::NV12,
+        VideoPixelFormat::NV21,
+        VideoPixelFormat::YUV420P10,
+        VideoPixelFormat::P010LE,
     ];
-    for (fmt, expect_fmt, plane_count) in cases {
+    for fmt in cases {
         let bpp = if matches!(fmt, VideoPixelFormat::YUV420P10 | VideoPixelFormat::P010LE) {
             2
         } else {
             1
         };
-        let plane_sizes = if matches!(fmt, VideoPixelFormat::NV12 | VideoPixelFormat::P010LE) {
+        let plane_sizes = if matches!(
+            fmt,
+            VideoPixelFormat::NV12 | VideoPixelFormat::NV21 | VideoPixelFormat::P010LE
+        ) {
             vec![64 * 48 * bpp, 64 * 24 * bpp]
         } else {
             vec![64 * 48 * bpp, 32 * 24 * bpp, 32 * 24 * bpp]
@@ -136,32 +137,21 @@ fn cpu_video_desc_maps_all_supported_formats() {
             0,
         )
         .unwrap();
-        let desc = zephyra_media::video::cpu_video_desc(&frame).unwrap();
-        assert_eq!(desc.format, expect_fmt);
-        assert_eq!(
-            desc.planes[..plane_count]
-                .iter()
-                .filter(|p| p.is_some())
-                .count(),
-            plane_count
-        );
-        for (i, p) in desc.planes[..plane_count].iter().flatten().enumerate() {
-            assert_eq!(
-                p.width,
-                if i == 0 { 64 } else { 32 },
-                "{:?} plane {}",
-                fmt,
-                i
-            );
-            assert_eq!(
-                p.height,
-                if i == 0 { 48 } else { 24 },
-                "{:?} plane {}",
-                fmt,
-                i
-            );
-            assert!(p.row_pitch >= p.width * bpp as u32);
-        }
+        let source = zephyra_media::video::from_video_frame(frame);
+        let cpu = source.as_cpu_upload().expect("conversion to NV12 failed");
+        let desc = cpu.desc();
+        assert_eq!(desc.format, ExternalTextureFormat::Nv12, "{:?}", fmt);
+        assert!(desc.planes[0].is_some() && desc.planes[1].is_some());
+        let y = desc.planes[0].unwrap();
+        let uv = desc.planes[1].unwrap();
+        assert_eq!((y.width, y.height), (64, 48), "{:?}", fmt);
+        assert_eq!((uv.width, uv.height), (32, 24), "{:?}", fmt);
+        assert_eq!(y.pixels.len(), 64 * 48, "{:?}", fmt);
+        assert_eq!(uv.pixels.len(), 32 * 48, "{:?}", fmt);
+        // NV12 两平面都能被 flatten 成单缓冲（D3D12/Vulkan 路径）。
+        let (flat, fw, fh, _) = desc.flatten_nv12().unwrap();
+        assert_eq!((fw, fh), (64, 48));
+        assert_eq!(flat.len(), 64 * 48 + 32 * 48);
     }
 }
 

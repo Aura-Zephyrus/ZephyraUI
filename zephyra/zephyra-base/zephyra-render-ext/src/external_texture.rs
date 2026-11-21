@@ -30,6 +30,24 @@ pub struct CpuVideoTextureDesc<'a> {
     pub format: ExternalTextureFormat,
 }
 
+impl<'a> CpuVideoTextureDesc<'a> {
+    /// 把 NV12 的两个平面合并成一块连续缓冲（Y 在前、交错 UV 在后）。
+    ///
+    /// D3D12 / Vulkan 的延迟上传路径只接收单平面 owned buffer；这个 helper
+    /// 让它们也能消费视频帧。`row_pitch` 是 Y 平面的行距。
+    pub fn flatten_nv12(&self) -> Option<(Vec<u8>, u32, u32, u32)> {
+        if self.format != ExternalTextureFormat::Nv12 {
+            return None;
+        }
+        let y = self.planes[0]?;
+        let uv = self.planes[1]?;
+        let mut pixels = Vec::with_capacity(y.pixels.len() + uv.pixels.len());
+        pixels.extend_from_slice(y.pixels);
+        pixels.extend_from_slice(uv.pixels);
+        Some((pixels, y.width, y.height, y.row_pitch))
+    }
+}
+
 /// 跨平台统一描述符。
 pub struct ExternalTextureDesc {
     pub key: Cow<'static, str>,
@@ -94,8 +112,11 @@ pub trait ExternalTextureImporter {
     fn import(&mut self, desc: ExternalTextureDesc) -> Result<ImportedTexture, ImportError>;
     fn import_cpu(&mut self, desc: CpuTextureDesc<'_>) -> Result<ImportedTexture, ImportError>;
 
-    /// 导入多平面（YUV）CPU 帧。默认返回 `UnsupportedSource`，由支持 YUV 的
-    /// 后端（D3D11/D3D12/Vulkan）覆盖实现。
+    /// 导入多平面（YUV）CPU 帧。D3D11 / D3D12 / Vulkan 三个后端均已覆盖实现；
+    /// 未实现的第三方 importer 默认返回 `UnsupportedSource`。
+    ///
+    /// 传入的描述应是 NV12（8bit）：D3D11 直接上传，D3D12/Vulkan 走延迟上传
+    /// 路径。`CpuVideoTextureDesc::flatten_nv12()` 可把两平面合并成单缓冲。
     fn import_video_cpu(
         &mut self,
         _desc: CpuVideoTextureDesc<'_>,
