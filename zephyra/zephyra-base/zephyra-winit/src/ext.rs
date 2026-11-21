@@ -13,8 +13,11 @@ use windows::Win32::Graphics::Direct3D11::{
 use zephyra_ext::prelude::*;
 use zephyra_ext::{BuilderParts, CpuTextureDescOwned, ExternalTextureBuilder, TextureSourceInput};
 use zephyra_render_ext::capability::BackendCapabilities;
+use zephyra_render_ext::prelude::{CpuVideoTextureDesc, ExternalTextureFormat};
 
-use crate::texture::{create_rgba_texture, create_srv};
+use crate::texture::{
+    create_nv12_texture, create_rgba_texture, create_srv, create_srv_with_format,
+};
 
 /// 已导入的外部纹理资源（SRV + 底层纹理）。
 pub struct ExtResource {
@@ -150,6 +153,39 @@ impl ExternalTextureImporter for D3D11Importer {
         .map_err(|e| ImportError::Backend(format!("create_rgba_texture: {e:?}")))?;
         let srv = create_srv(&self.device, &tex)
             .map_err(|e| ImportError::Backend(format!("create_srv: {e:?}")))?;
+        Ok(ImportedTexture::new(
+            ExtResource { srv, texture: tex },
+            FrameId(0),
+        ))
+    }
+
+    fn import_video_cpu(
+        &mut self,
+        desc: CpuVideoTextureDesc<'_>,
+    ) -> Result<ImportedTexture, ImportError> {
+        // 只支持 NV12（Y + 交错 UV）；I420 / P010 需先转成 NV12。
+        let y = desc.planes[0].ok_or(ImportError::UnsupportedSource)?;
+        let uv = desc.planes[1].ok_or(ImportError::UnsupportedSource)?;
+        if desc.format != ExternalTextureFormat::Nv12 {
+            return Err(ImportError::UnsupportedSource);
+        }
+        let tex = create_nv12_texture(
+            &self.device,
+            &self.context,
+            y.pixels,
+            y.row_pitch,
+            uv.pixels,
+            uv.row_pitch,
+            y.width,
+            y.height,
+        )
+        .map_err(|e| ImportError::Backend(format!("create_nv12_texture: {e:?}")))?;
+        let srv = create_srv_with_format(
+            &self.device,
+            &tex,
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12,
+        )
+        .map_err(|e| ImportError::Backend(format!("create_srv(NV12): {e:?}")))?;
         Ok(ImportedTexture::new(
             ExtResource { srv, texture: tex },
             FrameId(0),

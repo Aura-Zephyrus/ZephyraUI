@@ -52,7 +52,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
+    DXGI_FORMAT, DXGI_FORMAT_NV12, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 
 /// 一张已注册的纹理。
@@ -248,6 +248,71 @@ pub fn create_rgba_texture(
     }
     let tex = create_rgba_texture_empty(device, width, height, D3D11_USAGE_DEFAULT)?;
     write_rows(context, &tex, pixels, width, height);
+    Ok(tex)
+}
+
+/// 从 Y + 交错 UV 两个平面创建 NV12 纹理（4:2:0 8bit）。
+///
+/// `y` / `uv` 的行距由调用方给出；`UVD3D11` 子资源 1 的行距必须是偶数。
+pub fn create_nv12_texture(
+    device: &ID3D11Device,
+    context: &ID3D11DeviceContext,
+    y: &[u8],
+    y_pitch: u32,
+    uv: &[u8],
+    uv_pitch: u32,
+    width: u32,
+    height: u32,
+) -> windows::core::Result<ID3D11Texture2D> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_NV12,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+    };
+    let mut tex: Option<ID3D11Texture2D> = None;
+    unsafe { device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }?;
+    let tex = tex.ok_or_else(|| {
+        windows::core::Error::new(windows::Win32::Foundation::E_FAIL, "null texture")
+    })?;
+
+    let y_data = D3D11_SUBRESOURCE_DATA {
+        pSysMem: y.as_ptr() as *const core::ffi::c_void,
+        SysMemPitch: y_pitch,
+        SysMemSlicePitch: 0,
+    };
+    let uv_data = D3D11_SUBRESOURCE_DATA {
+        pSysMem: uv.as_ptr() as *const core::ffi::c_void,
+        SysMemPitch: uv_pitch,
+        SysMemSlicePitch: 0,
+    };
+    unsafe {
+        context.UpdateSubresource(
+            &tex,
+            0,
+            None,
+            &y_data as *const _ as *const core::ffi::c_void,
+            0,
+            0,
+        );
+        context.UpdateSubresource(
+            &tex,
+            1,
+            None,
+            &uv_data as *const _ as *const core::ffi::c_void,
+            0,
+            0,
+        );
+    }
     Ok(tex)
 }
 

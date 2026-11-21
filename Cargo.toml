@@ -33,17 +33,17 @@ members = [
     # 不进 default-members：与其它 base crate 一致 —— 默认构建不该拉 winit 的
     # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
     "zephyra/zephyra-base/zephyra-winit-input",
-    "zephyra/zephyra-base/extra/zephyra-camera",
+    # 摄像头采集已独立成仓：https://github.com/Aura-Zephyrus/zephyra-camera
     # 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video
-    # 主仓与它完全解耦（零双向依赖，也不保留 path/git 依赖）。
+    # 两者都与主仓完全解耦（零双向依赖，也不保留 path/git 依赖）。
     # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
-    # 与 camera 同一层：Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
+    # Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
     # 不进 default-members（默认构建不该编 COM 那一坨）。
     "zephyra/zephyra-base/extra/zephyra-uia",
     "zephyra/zephyra-base/zephyra-dcomp",
     # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**
     # （可进 default-members，但暂无独立产物需要默认构建，故一并归到"按需选"）。
-    # `zephyra-platform-win` 含 Win32 API，与 dcomp/camera 同一条理由不进
+    # `zephyra-platform-win` 含 Win32 API，与 dcomp 同一条理由不进
     # default-members：默认构建不该出现 unsafe 与 COM 边界。
     "zephyra/zephyra-base/zephyra-platform",
     "zephyra/zephyra-base/zephyra-platform-win",
@@ -68,8 +68,7 @@ members = [
     #   zephyra-base/extra/     要碰平台 / 允许 unsafe 的
     #
     # 判据与 `zephyra-base/README.md` 的分层判据同源。
-    # `zephyra-camera` 原本住在 base 根目录，现已归入 base/extra/ —— 它正是
-    # 这一层的样板：`default = []`，开 `capture` 才带 nokhwa。
+    # 原住这里做样板的 `zephyra-camera` 已独立成仓（见上方注释）。
     "zephyra/zephyra-core/extra/zephyra-bezier",
     # 控件层（库）。**不依赖任何渲染后端** —— 后端由应用用 feature 选。
     # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
@@ -82,14 +81,17 @@ members = [
     # wgpu interop（可选，S5）：让用户用 wgpu 开发扩展时可转换 AdapterIdentity/类型。
     # 不进 default-members，避免默认构建拉入 wgpu 依赖树；`cargo check -p zephyra-ext-wgpu` 按需使用。
     "zephyra/zephyra-base/zephyra-ext-wgpu",
+    # 媒体播放桥接（demux + 解码线程 + A/V 同步 + 纹理/音频输出）。
+    # 单向依赖独立仓 zephyra-video；不进 default-members，默认构建零影响。
+    "zephyra/zephyra-base/extra/zephyra-media",
 ]
-# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera` / `zephyra-uia`）
+# `extra/` 下的包（`zephyra-bezier` / `zephyra-uia`）
 # 与 `zephyra-dcomp` 进 members 但**不进** default-members：
 # 它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
 # 但不会被无差别的 `cargo build` / `cargo test` 编译。这就是"选择编译"落在 Cargo
 # 层面的形式——比在源码里 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
 #
-# `zephyra-dcomp` 排除的理由比 camera 更强一层：它需要 `unsafe`（COM / DXGI），
+# `zephyra-dcomp` 排除的理由更强一层：它需要 `unsafe`（COM / DXGI），
 # 放进 default-members 会让"无差别构建"这个动作本身开始编译 unsafe 代码。
 #
 # `zephyra-winit-d3d12` 同样不在 default-members，理由基本相同：它是 D3D12 后端，与

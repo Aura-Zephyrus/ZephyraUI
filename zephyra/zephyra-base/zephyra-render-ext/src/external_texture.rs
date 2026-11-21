@@ -18,6 +18,18 @@ pub struct CpuTextureDesc<'a> {
     pub format: ExternalTextureFormat,
 }
 
+/// 多平面（YUV）CPU 纹理上传描述。
+///
+/// 视频解码器的输出通常是 I420 / NV12 / P010 这类多平面格式，单平面
+/// [`CpuTextureDesc`] 装不下；后端按 `format` 解释 `planes` 的数量与语义：
+/// - `Nv12` / `P010`：2 个平面（Y、交错 UV）
+/// - `I420`：3 个平面（Y、U、V）
+#[derive(Clone, Copy, Debug)]
+pub struct CpuVideoTextureDesc<'a> {
+    pub planes: [Option<CpuTextureDesc<'a>>; 3],
+    pub format: ExternalTextureFormat,
+}
+
 /// 跨平台统一描述符。
 pub struct ExternalTextureDesc {
     pub key: Cow<'static, str>,
@@ -81,6 +93,15 @@ impl ImportedTexture {
 pub trait ExternalTextureImporter {
     fn import(&mut self, desc: ExternalTextureDesc) -> Result<ImportedTexture, ImportError>;
     fn import_cpu(&mut self, desc: CpuTextureDesc<'_>) -> Result<ImportedTexture, ImportError>;
+
+    /// 导入多平面（YUV）CPU 帧。默认返回 `UnsupportedSource`，由支持 YUV 的
+    /// 后端（D3D11/D3D12/Vulkan）覆盖实现。
+    fn import_video_cpu(
+        &mut self,
+        _desc: CpuVideoTextureDesc<'_>,
+    ) -> Result<ImportedTexture, ImportError> {
+        Err(ImportError::UnsupportedSource)
+    }
 }
 
 #[cfg(test)]

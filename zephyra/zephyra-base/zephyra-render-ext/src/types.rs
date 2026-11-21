@@ -31,6 +31,14 @@ pub enum ExternalTextureFormat {
     Bgra8Unorm,
     Rgba16Float,
     Rgba32Float,
+    /// 三平面 4:2:0 8bit：Y、U、V 各一个平面。
+    I420,
+    /// 半平面 4:2:0 8bit：Y 平面 + 交错 UV 平面。
+    Nv12,
+    /// 半平面 4:2:0 10bit（little-endian）。
+    P010,
+    /// 三平面 4:2:0 10bit（little-endian），即 YUV420P10。
+    I420P10,
 }
 
 /// 色彩空间。

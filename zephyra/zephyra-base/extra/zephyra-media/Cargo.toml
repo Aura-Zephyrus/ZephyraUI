@@ -1,0 +1,40 @@
+[package]
+name = "zephyra-media"
+version = "0.1.0"
+edition = "2021"
+description = "Media playback bridge: demux, decode threads, A/V sync and texture/audio output for ZephyraUI"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# 不进 default-members：默认构建不该拉入 demux / 解码 / 音频依赖树。
+# 所有能力按 feature 开启；基础词汇表（错误、时钟、帧队列）零依赖。
+
+[features]
+default = []
+# 容器解复用（symphonia，纯 Rust / MPL-2.0）
+demux = ["dep:symphonia"]
+# AAC 音频（symphonia-codec-aac，MPL-2.0）；用于主流 MP4 的音频轨
+aac = ["demux"]
+# 视频解码（转发 zephyra-video 的视频后端）
+video = ["demux", "dep:zephyra-video", "zephyra-video/video"]
+# 音频解码（转发 zephyra-video 的音频后端）；同样需要 demux 打开容器
+audio = ["demux", "dep:zephyra-video", "zephyra-video/audio", "dep:cpal"]
+# DXVA2 硬件解码（Windows）
+hw-dxva2 = ["video", "zephyra-video/dxva2"]
+# 转发 zephyra-video 的运行时加载，缺库报告接入播放器
+dynamic = ["dep:zephyra-video", "zephyra-video/dynamic"]
+# 一次性开启全部
+full = ["demux", "aac", "video", "audio", "hw-dxva2", "dynamic"]
+
+[dependencies]
+# 渲染契约（始终依赖，零平台 API）
+zephyra-render-ext = { path = "../../zephyra-render-ext" }
+
+# 解码库（独立仓，按需开启）
+zephyra-video = { path = "../../../../../zephyra-video", optional = true }
+
+# demux / AAC（按需开启）
+symphonia = { version = "0.5", optional = true, features = ["isomp4", "aac"] }
+
+# 音频输出（WASAPI / ALSA / CoreAudio），按需开启。
+cpal = { version = "0.15", optional = true }

@@ -15,8 +15,8 @@ pub mod prelude {
     pub use crate::capability::{BackendCapabilities, Capability, CapabilityProvider};
     pub use crate::error::{map_hresult_to_import_error, ImportError};
     pub use crate::external_texture::{
-        CpuTextureDesc, ExternalTextureDesc, ExternalTextureImporter, ExternalTextureSource,
-        ImportedTexture,
+        CpuTextureDesc, CpuVideoTextureDesc, ExternalTextureDesc, ExternalTextureImporter,
+        ExternalTextureSource, ImportedTexture,
     };
     pub use crate::lifecycle::{LifecycleContext, RenderLifecycle};
     pub use crate::registration::{
