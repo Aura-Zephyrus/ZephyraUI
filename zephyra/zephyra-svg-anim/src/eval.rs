@@ -531,6 +531,28 @@ fn mul(a: [f32; 6], b: [f32; 6]) -> [f32; 6] {
     ]
 }
 
+/// `animation-direction`：把线性进度按迭代序号翻转。
+fn directed(t: f32, timing: &Timing, iteration: u32) -> f32 {
+    match timing.direction {
+        Direction::Normal => t,
+        Direction::Reverse => 1.0 - t,
+        Direction::Alternate => {
+            if iteration.is_multiple_of(2) {
+                t
+            } else {
+                1.0 - t
+            }
+        }
+        Direction::AlternateReverse => {
+            if iteration.is_multiple_of(2) {
+                1.0 - t
+            } else {
+                t
+            }
+        }
+    }
+}
+
 /// 公共采样状态：返回 (值, 是否仍在活跃期)。
 ///
 /// `None` 表示动画尚未开始，调用方保持基值。
@@ -543,7 +565,12 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
     };
     let local = time_ms - begin_ms;
     if local < 0.0 {
-        return None;
+        // `animation-fill-mode: backwards/both`：delay 期间取首帧值。
+        return if timing.backwards {
+            Some((directed(0.0, timing, 0), false, 0))
+        } else {
+            None
+        };
     }
     let dur = timing.dur_ms?; // indefinite ⇒ 静态采样永不结束
                               // `end` 是绝对时刻：到了就按 fill 处理，且 freeze 停在 end 那一刻的实际进度。
@@ -556,8 +583,9 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
             } else {
                 1.0
             };
+            let it = raw.floor() as u32;
             return match timing.fill {
-                FillMode::Freeze => Some((t, false, raw.floor() as u32)),
+                FillMode::Freeze => Some((directed(t, timing, it), false, it)),
                 FillMode::Remove => None,
             };
         }
@@ -575,13 +603,13 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
         // `min`：活跃期硬下限 —— dur 结束但 min 未到时，不能按 fill=remove
         // 回基值，必须继续停在终值直到 min 到期。
         if local < timing.min_ms {
-            return Some((1.0, false, 0));
+            return Some((directed(1.0, timing, 0), false, 0));
         }
         return if timing.repeat == Repeat::Count(0) {
             None
         } else {
             match timing.fill {
-                FillMode::Freeze => Some((1.0, false, 0)),
+                FillMode::Freeze => Some((directed(1.0, timing, 0), false, 0)),
                 FillMode::Remove => None,
             }
         };
@@ -591,14 +619,15 @@ fn phase(timing: &Timing, time_ms: f32) -> Option<(f32, bool, u32)> {
         if local >= max {
             // freeze 停在 max 那一刻的实际进度，不是 t=1。
             let t = (max / dur).fract().clamp(0.0, 1.0);
+            let it = (max / dur).floor() as u32;
             return match timing.fill {
-                FillMode::Freeze => Some((t, false, (max / dur).floor() as u32)),
+                FillMode::Freeze => Some((directed(t, timing, it), false, it)),
                 FillMode::Remove => None,
             };
         }
     }
     let t = raw.fract().clamp(0.0, 1.0);
-    Some((t, true, iteration))
+    Some((directed(t, timing, iteration), true, iteration))
 }
 
 /// 在 keyTimes 上定位当前段，返回 (段下标, 段内 0..1 进度)。

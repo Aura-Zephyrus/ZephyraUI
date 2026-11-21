@@ -38,6 +38,7 @@
 //! 控件**自身语义**的文案（复选框组组头的「全选」）归 [`i18n`]，自带三语言
 //! 默认译文，应用可覆盖。
 
+pub mod animation;
 pub mod catalog;
 pub mod checkbox;
 pub mod i18n;

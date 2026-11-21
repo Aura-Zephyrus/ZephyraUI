@@ -24,6 +24,7 @@ publish = false
 [dependencies]
 zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 zephyra-fx = { path = "../zephyra/zephyra-fx" }
+zephyra-svg-anim = { path = "../zephyra/zephyra-svg-anim" }
 zephyra-bezier = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 zephyra-style = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 

@@ -371,11 +371,25 @@ fn parse_timing(attrs: &str) -> Option<Timing> {
     let min_ms = attr(attrs, "min").and_then(parse_time).unwrap_or(0.0);
     let max_ms = attr(attrs, "max").and_then(parse_time);
     let access_key = attr(attrs, "accessKey").and_then(|s| s.trim().chars().next());
+    // 扩展字段：CSS animation-direction / animation-fill-mode 的语义，
+    // 让构建期导入器能把 CSS 动画无损翻译成 SMIL（见 docs/developer/syntax.md）。
+    let direction = match attr(attrs, "direction").map(str::trim) {
+        Some("reverse") => Direction::Reverse,
+        Some("alternate") => Direction::Alternate,
+        Some("alternate-reverse") => Direction::AlternateReverse,
+        _ => Direction::Normal,
+    };
+    let backwards = matches!(
+        attr(attrs, "fill-mode").map(str::trim),
+        Some("backwards") | Some("both")
+    );
     Some(Timing {
         begin,
         dur_ms,
         repeat,
         fill,
+        backwards,
+        direction,
         calc_mode,
         key_times,
         key_splines,

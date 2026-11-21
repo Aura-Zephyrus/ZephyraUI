@@ -61,6 +61,20 @@ pub enum FillMode {
     Freeze,
 }
 
+/// `animation-direction`：关键帧播放方向（对应 CSS 同名属性）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Direction {
+    /// 每次迭代都从首帧到末帧。
+    #[default]
+    Normal,
+    /// 每次迭代都从末帧到首帧。
+    Reverse,
+    /// 奇数次正向、偶数次反向（首次为正向）。
+    Alternate,
+    /// 奇数次反向、偶数次正向（首次为反向）。
+    AlternateReverse,
+}
+
 /// `calcMode` 属性：关键帧之间的插值方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalcMode {
@@ -135,6 +149,10 @@ pub struct Timing {
     pub repeat: Repeat,
     /// 结束后是否冻结。
     pub fill: FillMode,
+    /// `animation-fill-mode: backwards/both`：delay 期间取首帧值，而不是基值。
+    pub backwards: bool,
+    /// `animation-direction`：播放方向。
+    pub direction: Direction,
     /// 插值方式。
     pub calc_mode: CalcMode,
     /// `keyTimes`：每个值的时间比例（0..1，升序，与 values 等长）。
@@ -164,6 +182,8 @@ impl Default for Timing {
             dur_ms: None,
             repeat: Repeat::Count(1),
             fill: FillMode::Remove,
+            backwards: false,
+            direction: Direction::Normal,
             calc_mode: CalcMode::Linear,
             key_times: Vec::new(),
             key_splines: Vec::new(),
@@ -273,6 +293,23 @@ pub struct SetAnim {
     pub attribute_name: String,
     /// 目标值（按属性名解释）。
     pub to: String,
+}
+
+impl Animation {
+    /// 所有动画变体共有的时间参数。
+    pub fn timing(&self) -> &Timing {
+        match self {
+            Self::Set(a) => &a.timing,
+            Self::Opacity(a) => &a.timing,
+            Self::Fill(a) => &a.timing,
+            Self::Geometry(a) => &a.timing,
+            Self::Style(a) => &a.timing,
+            Self::StrokeColor(a) => &a.timing,
+            Self::Path(a) => &a.timing,
+            Self::Transform(a) => &a.timing,
+            Self::Motion(a) => &a.timing,
+        }
+    }
 }
 
 /// 一个元素上挂的全部动画。

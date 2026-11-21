@@ -1,0 +1,5 @@
+<svg viewBox="0 0 24 24">
+  <path d="M5 12L9 12L9 16L5 16Z">
+    <animate attributeName="d" values="M5 12L9 12L9 16L5 16Z;M5 12L9 16L19 6L19 6Z" dur="1000ms" fill="freeze"/>
+  </path>
+</svg>

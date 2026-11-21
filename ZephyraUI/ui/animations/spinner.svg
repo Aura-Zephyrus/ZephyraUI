@@ -1,0 +1,5 @@
+<svg viewBox="0 0 24 24">
+  <path d="M12 3L14 3L14 9L12 9Z">
+    <animateTransform type="rotate" from="0 12 12" to="360 12 12" dur="1000ms" repeatCount="indefinite"/>
+  </path>
+</svg>

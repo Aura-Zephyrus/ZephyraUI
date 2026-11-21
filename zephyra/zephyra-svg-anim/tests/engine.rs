@@ -957,3 +957,58 @@ fn restart_never_ignores_second_trigger() {
         f.paths[0].opacity
     );
 }
+
+// ============================== 能力矩阵：Tier B ==============================
+
+const ALTERNATE_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M2 2L22 2L22 22L2 22Z">
+    <animate attributeName="opacity" from="0" to="1" dur="1000ms"
+             repeatCount="indefinite" direction="alternate"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn capability_alternate_reverses_every_other_iteration() {
+    let mut tl = SvgTimeline::new(parse_animated_svg(ALTERNATE_SVG).unwrap());
+    let mut at = |t| tl.seek(t).paths[0].opacity;
+    assert!((at(0.0) - 0.0).abs() < 1e-4, "首帧 0：{}", at(0.0));
+    assert!(
+        (at(1000.0) - 1.0).abs() < 1e-4,
+        "第二次迭代反向，起点为 1：{}",
+        at(1000.0)
+    );
+    assert!(
+        (at(1500.0) - 0.5).abs() < 1e-4,
+        "反向到中点：{}",
+        at(1500.0)
+    );
+    assert!(
+        (at(2000.0) - 0.0).abs() < 1e-4,
+        "第三次迭代回正向：{}",
+        at(2000.0)
+    );
+}
+
+const BACKWARDS_SVG: &str = r#"<svg viewBox="0 0 24 24">
+  <path d="M2 2L22 2L22 22L2 22Z">
+    <animate attributeName="opacity" values="0.2;0.8" begin="500ms" dur="1000ms"
+             fill-mode="backwards"/>
+  </path>
+</svg>"#;
+
+#[test]
+fn capability_backwards_applies_first_value_during_delay() {
+    let mut tl = SvgTimeline::new(parse_animated_svg(BACKWARDS_SVG).unwrap());
+    let mut at = |t| tl.seek(t).paths[0].opacity;
+    assert!(
+        (at(100.0) - 0.2).abs() < 1e-4,
+        "delay 期应取首帧 0.2：{}",
+        at(100.0)
+    );
+    assert!((at(1000.0) - 0.5).abs() < 1e-4, "中点 0.5：{}", at(1000.0));
+    assert!(
+        (at(2000.0) - 1.0).abs() < 1e-4,
+        "播完回基值 1.0：{}",
+        at(2000.0)
+    );
+}

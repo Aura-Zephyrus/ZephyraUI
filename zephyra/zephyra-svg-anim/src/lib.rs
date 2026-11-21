@@ -31,9 +31,32 @@ pub mod smil;
 pub mod types;
 
 pub use eval::{to_dynamic_path, SvgTimeline};
+
+/// 一条 SVG 动画的总时长（毫秒）：所有动画 `dur + begin` 的最大值。
+/// 供接入层把外部 progress 0..1 映射到 `SvgTimeline::seek()` 的绝对时间。
+pub fn duration_ms(svg: &AnimatedSvg) -> f32 {
+    let mut max = 0.0f32;
+    for path in &svg.paths {
+        for anim in &path.animations {
+            let t = anim.timing();
+            let begin = match t.begin {
+                Begin::Offset(v) => v.max(0.0),
+                _ => 0.0,
+            };
+            let dur = t.dur_ms.unwrap_or(0.0);
+            let total = match t.repeat {
+                Repeat::Count(n) => dur * n as f32,
+                Repeat::Duration(d) => d,
+                Repeat::Indefinite | Repeat::Bounded { .. } => dur,
+            };
+            max = max.max(begin + total);
+        }
+    }
+    max.max(1.0)
+}
 pub use smil::parse_animated_svg;
 pub use types::{
-    AnimatedPath, AnimatedSvg, Animation, CalcMode, FillAnim, FillMode, MotionAnim, OpacityAnim,
-    PathAnim, RenderedPath, Repeat, SvgAnimError, SvgFrame, Timing, TransformAnim, TransformKind,
-    Values,
+    AnimatedPath, AnimatedSvg, Animation, Begin, CalcMode, Direction, FillAnim, FillMode,
+    MotionAnim, OpacityAnim, PathAnim, RenderedPath, Repeat, SvgAnimError, SvgFrame, Timing,
+    TransformAnim, TransformKind, Values,
 };

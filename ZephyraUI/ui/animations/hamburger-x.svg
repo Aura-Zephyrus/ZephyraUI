@@ -1,0 +1,9 @@
+<svg viewBox="0 0 24 24">
+  <!-- 两条横杠合进同一条 path 的两个子路径：接入层一节点只取一条路径，
+       拆成两个 <path> 时第二条会被静默丢弃，X 形态出不来。 -->
+  <path d="M4 8L20 8L20 10L4 10ZM4 14L20 14L20 16L4 16Z">
+    <animate attributeName="d"
+             values="M4 8L20 8L20 10L4 10ZM4 14L20 14L20 16L4 16Z;M6 11L18 13L18 15L6 13ZM6 13L18 11L18 13L6 15Z"
+             dur="1000ms" fill="freeze" direction="alternate"/>
+  </path>
+</svg>

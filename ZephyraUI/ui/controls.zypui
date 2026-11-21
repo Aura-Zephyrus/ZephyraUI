@@ -1,11 +1,10 @@
 <!-- 控件层的结构声明（.zypui 组件模板）。
 
-     这一份是 ZephyraUI/src/controls/*.rs 的结构逻辑翻译：Rust 构造器里
-     「建哪些节点、发哪些分类名、内容属性是什么」全部搬到这里；hover/variant
-     的类名扇出改为表达式。外观值一个都没有 —— 全部在 .zstyle。
+     本文件是节点树 / 分类名 / key / 资源引用的**唯一权威**（见
+     docs/developer/syntax.md 的四所有权）。Rust 控件模块只持有状态值与流转
+     规则；外观值一个都没有 —— 全部在 .zstyle；时钟归应用侧 driver。
 
-     类序即 dump 序：每个 class 属性的词序与 Rust 版 style_names() 逐一
-     对齐（parity 测试逐字节对照的另一半）。两处必须同改。
+     class 属性的词序**没有语义**：样式匹配按集合判定，门禁也按集合比对。
 
      惯例：
      - `press ? 'pressed' : (hover ? 'hovered' : '')` = state()（pressed 优先）。
