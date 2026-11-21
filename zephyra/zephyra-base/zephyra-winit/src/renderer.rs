@@ -1074,6 +1074,17 @@ impl Renderer {
         self.vertex_capacity
     }
 
+    /// 扩展池裸指针（供 `TextureTable` 一并解析 `IMAGE_TEXTURE=key`）。
+    pub fn ext_pool_ptr(&self) -> *const crate::ext::ExtPool {
+        let pool = self.ext_pool.borrow();
+        &*pool as *const crate::ext::ExtPool
+    }
+
+    /// 帧诊断计数（跨后端一致的失败可见性）。
+    pub fn ext_diagnostics(&self) -> std::sync::Arc<zephyra_render_ext::prelude::FrameDiagnostics> {
+        self.ext_pool.borrow().diagnostics().clone()
+    }
+
     /// 创建扩展上下文句柄（与本渲染器共享 ext 纹理池/Hook 表）。
     pub fn ext_handle(&self, context: &ID3D11DeviceContext) -> zephyra_ext::ExtContextHandle {
         crate::ext::new_ext_handle(
@@ -1157,6 +1168,11 @@ impl Renderer {
     pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         let next_frame = self.ext_frame.get().wrapping_add(1);
         self.ext_frame.set(next_frame);
+        // 帧边界：剔除已过期的扩展纹理。过期后 `TextureTable::srv` 返回 None，
+        // 图像命令被过滤掉并计入 `missing_textures`；本方法同时计入 `expired_frames`。
+        self.ext_pool
+            .borrow_mut()
+            .begin_frame(zephyra_render_ext::prelude::FrameId(next_frame));
         let RenderCtx {
             context,
             device,

@@ -76,7 +76,7 @@ pub mod texture;
 pub use zephyra_fx::cpu_only;
 pub use zephyra_fx::{cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{
-    from_font_file, from_system_font, create_text_engine, AtlasUploadState, Frame, InputState,
+    create_text_engine, from_font_file, from_system_font, AtlasUploadState, Frame, InputState,
     PixelRead, RenderReport, TextEngine, TextureNames, View, FONT_OVERRIDE_ENV,
 };
 pub use zephyra_fx::{srgb_bytes, write_bmp};
@@ -495,6 +495,16 @@ impl<V: View> HostWindow<V> {
         self.bridge = bridge;
     }
 
+    /// 把本窗口的 `WindowKey` 注入调试桥的 hello 帧。多窗口下每个窗口各自
+    /// 连入 MCP，MCP 靠这个 id 路由工具调用（见 `DebugBridge::set_window_id`）。
+    /// 单窗口兼容路径不调，hello 没有第三段。
+    #[cfg(debug_assertions)]
+    pub fn set_window_id(&mut self, id: u64) {
+        if let Some(bridge) = self.bridge.as_mut() {
+            bridge.set_window_id(id);
+        }
+    }
+
     /// 装一个 dev 资源热重载器。**仅 debug 构建存在**；release 没有这个方法。
     #[cfg(debug_assertions)]
     pub fn set_dev_reloader(&mut self, reloader: zephyra_fx::dev_reload::DevReloader) {
@@ -507,6 +517,12 @@ impl<V: View> HostWindow<V> {
     /// 样式表是**运行期**才加载的东西（dev 模式还要能热重载），
     /// 而窗口是启动时就得建好的。把它塞进构造器会让「起窗口」依赖
     /// 「读样式表成功」——那样一个拼错的属性名就让程序起不来。
+    /// 装一个应用侧后处理钩子（动画等）：每帧 diff + 样式之后、布局之前运行。
+    /// 钩子只能写 paint 属性，不改布局盒。
+    pub fn set_post_diff(&mut self, hook: Box<dyn FnMut(&mut zephyra_core::node::Node)>) {
+        self.cache.set_post_diff(hook);
+    }
+
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
         self.cache.set_styler(styler);
     }
@@ -592,10 +608,22 @@ impl<V: View> HostWindow<V> {
         &mut self.textures
     }
 
-    /// 扩展上下文句柄（与渲染器共享纹理池/Hook 表；D3D11 最小闭环）。
+    /// 扩展上下文句柄（与渲染器共享纹理池/Hook 表）。
+    ///
+    /// 同时把池指针注入 `TextureTable`，使 `IMAGE_TEXTURE=key` 可以解析到
+    /// `submit_frame` 提交的扩展纹理（2026-11-21「两表不通」根因修复）。
     pub fn ext_context(&self) -> zephyra_ext::ExtContextHandle {
         let gpu = lock_gpu(&self.gpu);
+        let pool_ptr = self.renderer.ext_pool_ptr();
+        self.textures.set_ext_pool(pool_ptr);
         self.renderer.ext_handle(&gpu.gpu.context)
+    }
+
+    /// 帧诊断计数（过期帧 / 缺失纹理 / 导入失败 / 不支持格式）。
+    pub fn frame_diagnostics(
+        &self,
+    ) -> std::sync::Arc<zephyra_render_ext::prelude::FrameDiagnostics> {
+        self.renderer.ext_diagnostics()
     }
 
     /// 注册一张图像纹理，返回写进 `props::IMAGE_TEXTURE` 的句柄。
@@ -1079,6 +1107,38 @@ impl<V: View> HostWindow<V> {
         }
         self.collect_routed(&out);
         changed
+    }
+
+    /// frameless 窗口的标题栏拖动 / 边缘缩放。返回是否消费了这次按下。
+    ///
+    /// 与 D3D12 宿主同款：先看边缘（缩放），再看命中节点是否标了 `WINDOW_DRAG`（拖动）。
+    pub fn try_window_interaction(&self, x: f32, y: f32) -> bool {
+        let (w, h) = self.size();
+        let (w, h) = (w as f32, h as f32);
+        if let Some(edge) = zephyra_fx::resize_edge(x, y, w, h, 4.0) {
+            use winit::window::ResizeDirection as R;
+            let dir = match edge {
+                zephyra_fx::ResizeEdge::North => R::North,
+                zephyra_fx::ResizeEdge::South => R::South,
+                zephyra_fx::ResizeEdge::East => R::East,
+                zephyra_fx::ResizeEdge::West => R::West,
+                zephyra_fx::ResizeEdge::NorthEast => R::NorthEast,
+                zephyra_fx::ResizeEdge::NorthWest => R::NorthWest,
+                zephyra_fx::ResizeEdge::SouthEast => R::SouthEast,
+                zephyra_fx::ResizeEdge::SouthWest => R::SouthWest,
+            };
+            if self.window.drag_resize_window(dir).is_ok() {
+                return true;
+            }
+        }
+        if let Some(node) = self.cache.node() {
+            if zephyra_fx::hit_drag_region(node, x, y, Context::new(self.theme))
+                && self.window.drag_window().is_ok()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// 处理一次按下：返回是否产生了路由事件。
@@ -1614,7 +1674,10 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 button: MouseButton::Left,
                 ..
             } => {
-                if self.on_pointer_down() {
+                // frameless 标题栏拖动 / 边缘缩放先于普通点击分派。
+                // winit 0.30 的 MouseInput 不带坐标，用 CursorMoved 维护的 pointer_pos。
+                let (x, y) = self.pointer_pos;
+                if !self.try_window_interaction(x, y) && self.on_pointer_down() {
                     self.dirty = true;
                 }
             }
@@ -1822,6 +1885,14 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                     f.diff.needs_layout,
                     f.hovered
                 );
+                // 扩展帧诊断：过期 / 导入失败 / 不支持格式。仅 debug 构建存在。
+                let d = self.frame_diagnostics().snapshot();
+                if d.expired_frames > 0 || d.import_failures > 0 || d.unsupported_format > 0 {
+                    eprintln!(
+                        "[zephyra] ext diagnostics: expired={} import_fail={} unsupported={}",
+                        d.expired_frames, d.import_failures, d.unsupported_format
+                    );
+                }
             }
         }
 
@@ -1922,6 +1993,8 @@ impl Backend for D3d11Backend {
         let opts = spec.resolve(&config);
         let mut host = HostWindow::new_lenient_opts(event_loop, view, opts);
         host.window_key = handle.key();
+        #[cfg(debug_assertions)]
+        host.set_window_id(host.window_key.as_u64());
         host.handle = Some(handle);
         Ok(host)
     }

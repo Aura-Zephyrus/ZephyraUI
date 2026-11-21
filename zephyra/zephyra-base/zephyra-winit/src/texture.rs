@@ -42,7 +42,10 @@
 
 #![cfg(windows)]
 
+use std::cell::Cell;
 use std::collections::HashMap;
+
+use crate::ext::ExtPool;
 
 use windows::Win32::Graphics::Direct3D::D3D_SRV_DIMENSION_TEXTURE2D;
 use windows::Win32::Graphics::Direct3D11::{
@@ -72,6 +75,12 @@ struct Entry {
 #[derive(Default)]
 pub struct TextureTable {
     entries: HashMap<String, Entry>,
+    /// 扩展纹理池（由 `HostWindow::ext_context` 注入）。
+    ///
+    /// 让 `IMAGE_TEXTURE=key` 的解析同时覆盖普通纹理与扩展帧 —— 这是 2026-11-21
+    /// 修掉「两表不通」的关键：扩展资源只进 ExtPool 时，D3D11 渲染从不查它，
+    /// 图像命令静默画空气。裸指针由宿主与渲染器同寿命保证有效。
+    ext_pool: Cell<Option<*const ExtPool>>,
 }
 
 impl std::fmt::Debug for TextureTable {
@@ -87,7 +96,22 @@ impl TextureTable {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            ext_pool: Cell::new(None),
         }
+    }
+
+    /// 注入扩展纹理池（供 `contains` / `srv` 一并解析）。
+    ///
+    /// # SAFETY
+    /// 指针必须指向活着的 `ExtPool`，且至少活到本表被销毁。宿主与渲染器同属
+    /// `HostWindow`，构造顺序保证这一点。
+    pub fn set_ext_pool(&self, pool: *const ExtPool) {
+        self.ext_pool.set(Some(pool));
+    }
+
+    fn ext(&self) -> Option<&ExtPool> {
+        // SAFETY: 见 `set_ext_pool`；本表与池同属 HostWindow，生命周期一致。
+        unsafe { self.ext_pool.get()?.as_ref() }
     }
 
     /// 登记一个名字 → 采样视图 + 纹理。
@@ -137,7 +161,7 @@ impl TextureTable {
     /// [`zephyra_fx::quad::expand`] 用它决定图像命令能否画出来 —— 没注册就跳过
     /// 并计入 `RenderReport::missing_textures`，**不静默**。
     pub fn contains(&self, name: &str) -> bool {
-        self.entries.contains_key(name)
+        self.entries.contains_key(name) || self.ext().is_some_and(|pool| pool.contains(name))
     }
 
     /// 已注册的张数。
@@ -152,7 +176,10 @@ impl TextureTable {
 
     /// 取采样视图。渲染器按批次的名字取它并 `PSSetShaderResources`。
     pub fn srv(&self, name: &str) -> Option<ID3D11ShaderResourceView> {
-        self.entries.get(name).map(|e| e.srv.clone())
+        self.entries
+            .get(name)
+            .map(|e| e.srv.clone())
+            .or_else(|| self.ext()?.srv(name).cloned())
     }
 }
 
@@ -254,6 +281,7 @@ pub fn create_rgba_texture(
 /// 从 Y + 交错 UV 两个平面创建 NV12 纹理（4:2:0 8bit）。
 ///
 /// `y` / `uv` 的行距由调用方给出；`UVD3D11` 子资源 1 的行距必须是偶数。
+#[allow(clippy::too_many_arguments)]
 pub fn create_nv12_texture(
     device: &ID3D11Device,
     context: &ID3D11DeviceContext,

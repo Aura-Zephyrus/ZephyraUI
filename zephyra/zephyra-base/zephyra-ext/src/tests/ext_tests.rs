@@ -4,11 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use zephyra_render_ext::prelude::{
-    AdapterIdentity, BackendCapabilities, DrawHook, ExternalTextureFormat, ExternalTextureSource,
-    FrameId, HookContextExt, RawHandle, Rect, RenderSource,
+    AdapterIdentity, BackendCapabilities, CpuPlanes, DrawHook, ExternalTextureFormat,
+    ExternalTextureSource, FrameDesc, FrameId, FrameSource, HookContextExt, RawHandle, Rect,
+    RegisteredTexture, RenderSource,
 };
 
-use crate::ext_context::{ExtContextHandle, ExtContextImpl, ExtError, TextureRegistration};
+use crate::ext_context::{ExtContextHandle, ExtContextImpl, ExtError};
 use crate::texture_builder::{
     CpuTextureDescOwned, ExternalTextureBuilder, SyncInput, TextureSourceInput,
 };
@@ -20,7 +21,8 @@ struct MockState {
     window_hooks: HashMap<(u64, String), ()>,
     unregister_count: Rc<Cell<u32>>,
     hook_unregister_count: Rc<Cell<u32>>,
-    updates: Vec<(String, Vec<u8>, u32)>,
+    /// 统一 submit_frame 入口收到的帧（按提交顺序）。
+    frames: Vec<(String, FrameDesc, FrameId)>,
 }
 
 struct MockExt {
@@ -46,18 +48,16 @@ impl MockExt {
 }
 
 impl ExtContextImpl for MockExt {
-    fn register_texture(
+    fn submit_frame(
         &mut self,
-        builder: ExternalTextureBuilder,
-    ) -> Result<TextureRegistration, ExtError> {
-        let (key, parts) = builder.into_parts();
+        key: Cow<'static, str>,
+        desc: FrameDesc,
+        valid_until: FrameId,
+    ) -> Result<RegisteredTexture, ExtError> {
         let mut s = self.state.borrow_mut();
-        let replaced = s.textures.insert(key.into_owned(), parts.size).is_some();
-        Ok(if replaced {
-            TextureRegistration::Replaced
-        } else {
-            TextureRegistration::Inserted
-        })
+        s.textures.insert(key.to_string(), desc.size);
+        s.frames.push((key.to_string(), desc, valid_until));
+        Ok(RegisteredTexture { key, valid_until })
     }
     fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError> {
         let mut s = self.state.borrow_mut();
@@ -66,15 +66,8 @@ impl ExtContextImpl for MockExt {
         s.textures.remove(key);
         Ok(())
     }
-    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
-        if !self.state.borrow().textures.contains_key(key) {
-            return Err(ExtError::Backend(format!("texture not registered: {key}")));
-        }
-        self.state
-            .borrow_mut()
-            .updates
-            .push((key.to_string(), pixels.to_vec(), row_pitch));
-        Ok(())
+    fn has_texture(&self, key: &str) -> bool {
+        self.state.borrow().textures.contains_key(key)
     }
     fn register_hook(
         &mut self,
@@ -120,39 +113,75 @@ fn handle(mock: MockExt) -> ExtContextHandle {
     ExtContextHandle::new(Box::new(mock))
 }
 
-/// P0.2：`update_texture` 原地更新 —— 已注册 key 成功入队、不改变注册表，
-/// 未注册 key 报错；快照的字节与行距原样送达后端。
+/// 统一 submit_frame：同 key 再提交原地替换，注册表项不增长，
+/// 帧描述与有效期原样送达后端。
 #[test]
-fn update_texture_enqueues_without_reregistering() {
+fn submit_frame_same_key_replaces_content() {
     let (mock, state) = MockExt::new();
     let h = handle(mock);
-    let b = ExternalTextureBuilder::new("cam", (640, 480)).source_cpu(CpuTextureDescOwned {
-        pixels: vec![0; 640 * 480 * 4],
-        width: 640,
-        height: 480,
-        row_pitch: 640 * 4,
-        format: ExternalTextureFormat::Rgba8UnormSrgb,
-    });
-    let _tex = h.register_texture(b).unwrap();
+    let a = FrameDesc::rgba(vec![0u8; 640 * 480 * 4], 640, 480, 640 * 4);
+    let r1 = h.submit_frame("cam", a, FrameId(10)).unwrap();
+    assert_eq!(r1.key(), "cam");
 
-    assert_eq!(
-        h.update_texture("cam", &[1, 2, 3, 4], 2560)
-            .err()
-            .map(|e| e.to_string()),
-        None
-    );
+    let b = FrameDesc::rgba(vec![1u8; 640 * 480 * 4], 640, 480, 640 * 4);
+    let _r2 = h.submit_frame("cam", b, FrameId(11)).unwrap();
+
     let s = state.borrow();
-    assert_eq!(s.textures.len(), 1, "更新不应新建/替换纹理注册表项");
-    assert_eq!(s.updates.len(), 1);
-    assert_eq!(s.updates[0].0, "cam");
-    assert_eq!(s.updates[0].1, vec![1, 2, 3, 4]);
-    assert_eq!(s.updates[0].2, 2560);
-    drop(s);
+    assert_eq!(s.textures.len(), 1, "同 key 替换不应新增注册表项");
+    assert_eq!(s.frames.len(), 2, "两次提交都必须到达后端");
+    assert_eq!(s.frames[0].0, "cam");
+    assert_eq!(s.frames[1].1.size, (640, 480));
+    assert_eq!(s.frames[1].2, FrameId(11));
+}
 
-    assert!(
-        h.update_texture("missing", &[0; 4], 4).is_err(),
-        "未注册的 key 必须报错而不是静默成功"
-    );
+/// 生命周期负向测试：`valid_until <= frame_id` 的提交必须被拒绝。
+#[test]
+fn submit_frame_rejects_already_expired_frame() {
+    let (mock, _) = MockExt::new(); // mock 当前帧 = 1
+    let h = handle(mock);
+    let err = h
+        .submit_frame("expired", FrameDesc::rgba(vec![0; 4], 1, 1, 4), FrameId(1))
+        .err()
+        .expect("expired frame must be rejected");
+    assert!(matches!(err, ExtError::ExpiredFrame { .. }), "实得 {err:?}");
+    assert!(err.to_string().contains("expired"));
+}
+
+/// 能力一致性：RGBA / NV12 / I420 三种 CPU 帧都能跨契约被后端收到，
+/// 且平面数量与格式一致（三后端共享同一 FrameDesc 词汇）。
+#[test]
+fn frame_source_consistency_for_all_formats() {
+    let (mock, state) = MockExt::new();
+    let h = handle(mock);
+    h.submit_frame("rgba", FrameDesc::rgba(vec![0; 16], 2, 2, 8), FrameId(9))
+        .unwrap();
+    h.submit_frame(
+        "nv12",
+        FrameDesc::nv12(vec![0u8; 16], vec![128u8; 8], 4, 4, 4, 4),
+        FrameId(9),
+    )
+    .unwrap();
+    h.submit_frame(
+        "i420",
+        FrameDesc::cpu(
+            (4, 4),
+            CpuPlanes::i420(vec![0u8; 16], vec![1u8; 4], vec![2u8; 4], 4, 2),
+        ),
+        FrameId(9),
+    )
+    .unwrap();
+    let s = state.borrow();
+    assert_eq!(s.frames.len(), 3);
+    assert_eq!(s.frames[0].1.format, ExternalTextureFormat::Rgba8UnormSrgb);
+    assert_eq!(s.frames[1].1.format, ExternalTextureFormat::Nv12);
+    assert_eq!(s.frames[2].1.format, ExternalTextureFormat::I420);
+    for (_, desc, _) in &s.frames {
+        match &desc.source {
+            FrameSource::Cpu(p) => assert!(p.plane(0).is_some()),
+            FrameSource::Native(_) => panic!("expected CPU source"),
+            _ => panic!("unexpected frame source variant"),
+        }
+    }
 }
 
 #[test]
@@ -179,7 +208,7 @@ fn same_key_replaces_texture() {
     h.register_texture(ExternalTextureBuilder::new("f", (2, 3)))
         .expect("replace");
     assert_eq!(state.borrow().textures.get("f"), Some(&(2, 3)));
-    tex.update(ExternalTextureBuilder::new("ignored", (4, 5)))
+    tex.update(FrameDesc::rgba(vec![0; 16], 4, 5, 16), FrameId(12))
         .expect("update");
     assert_eq!(state.borrow().textures.get("f"), Some(&(4, 5)));
 }

@@ -83,91 +83,28 @@ pub const VS_BYTECODE: &[u8] = zephyra_fx::shaders::VS_BYTECODE;
 /// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
 pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
     ("PSMain", zephyra_fx::shaders::ps::PSMain),
-    (
-        "PSOverlay",
-        zephyra_fx::shaders::ps::PSOverlay,
-    ),
-    (
-        "PSDarken",
-        zephyra_fx::shaders::ps::PSDarken,
-    ),
-    (
-        "PSLighten",
-        zephyra_fx::shaders::ps::PSLighten,
-    ),
-    (
-        "PSColorDodge",
-        zephyra_fx::shaders::ps::PSColorDodge,
-    ),
-    (
-        "PSColorBurn",
-        zephyra_fx::shaders::ps::PSColorBurn,
-    ),
-    (
-        "PSHardLight",
-        zephyra_fx::shaders::ps::PSHardLight,
-    ),
-    (
-        "PSSoftLight",
-        zephyra_fx::shaders::ps::PSSoftLight,
-    ),
-    (
-        "PSDifference",
-        zephyra_fx::shaders::ps::PSDifference,
-    ),
-    (
-        "PSExclusion",
-        zephyra_fx::shaders::ps::PSExclusion,
-    ),
-    (
-        "PSMultiply",
-        zephyra_fx::shaders::ps::PSMultiply,
-    ),
+    ("PSOverlay", zephyra_fx::shaders::ps::PSOverlay),
+    ("PSDarken", zephyra_fx::shaders::ps::PSDarken),
+    ("PSLighten", zephyra_fx::shaders::ps::PSLighten),
+    ("PSColorDodge", zephyra_fx::shaders::ps::PSColorDodge),
+    ("PSColorBurn", zephyra_fx::shaders::ps::PSColorBurn),
+    ("PSHardLight", zephyra_fx::shaders::ps::PSHardLight),
+    ("PSSoftLight", zephyra_fx::shaders::ps::PSSoftLight),
+    ("PSDifference", zephyra_fx::shaders::ps::PSDifference),
+    ("PSExclusion", zephyra_fx::shaders::ps::PSExclusion),
+    ("PSMultiply", zephyra_fx::shaders::ps::PSMultiply),
     ("PSHue", zephyra_fx::shaders::ps::PSHue),
-    (
-        "PSSaturation",
-        zephyra_fx::shaders::ps::PSSaturation,
-    ),
-    (
-        "PSColor",
-        zephyra_fx::shaders::ps::PSColor,
-    ),
-    (
-        "PSLuminosity",
-        zephyra_fx::shaders::ps::PSLuminosity,
-    ),
-    (
-        "PSBlurH",
-        zephyra_fx::shaders::ps::PSBlurH,
-    ),
-    (
-        "PSBlurV",
-        zephyra_fx::shaders::ps::PSBlurV,
-    ),
-    (
-        "PSComposite",
-        zephyra_fx::shaders::ps::PSComposite,
-    ),
-    (
-        "PSRefraction",
-        zephyra_fx::shaders::ps::PSRefraction,
-    ),
-    (
-        "PSBackdropBlur",
-        zephyra_fx::shaders::ps::PSBackdropBlur,
-    ),
-    (
-        "PSHollowShadow",
-        zephyra_fx::shaders::ps::PSHollowShadow,
-    ),
-    (
-        "PSHighlight",
-        zephyra_fx::shaders::ps::PSHighlight,
-    ),
-    (
-        "PSInnerShadow",
-        zephyra_fx::shaders::ps::PSInnerShadow,
-    ),
+    ("PSSaturation", zephyra_fx::shaders::ps::PSSaturation),
+    ("PSColor", zephyra_fx::shaders::ps::PSColor),
+    ("PSLuminosity", zephyra_fx::shaders::ps::PSLuminosity),
+    ("PSBlurH", zephyra_fx::shaders::ps::PSBlurH),
+    ("PSBlurV", zephyra_fx::shaders::ps::PSBlurV),
+    ("PSComposite", zephyra_fx::shaders::ps::PSComposite),
+    ("PSRefraction", zephyra_fx::shaders::ps::PSRefraction),
+    ("PSBackdropBlur", zephyra_fx::shaders::ps::PSBackdropBlur),
+    ("PSHollowShadow", zephyra_fx::shaders::ps::PSHollowShadow),
+    ("PSHighlight", zephyra_fx::shaders::ps::PSHighlight),
+    ("PSInnerShadow", zephyra_fx::shaders::ps::PSInnerShadow),
     ("PSLens", zephyra_fx::shaders::ps::PSLens),
 ];
 

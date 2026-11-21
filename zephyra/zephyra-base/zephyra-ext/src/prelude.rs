@@ -11,11 +11,12 @@ pub use crate::texture_builder::{
 };
 
 pub use zephyra_render_ext::prelude::{
-    AdapterIdentity, BackendCapabilities, Capability, ColorSpace, CpuTextureDesc, DrawHook,
-    ExtensionFactory, ExternalTextureDesc, ExternalTextureFormat, ExternalTextureImporter,
-    ExternalTextureSource, FrameId, GpuFence, HdrMetadata, HookContext, HookContextExt,
-    ImportError, ImportedTexture, LifecycleContext, RawHandle, Rect, RenderExtension,
-    RenderLifecycle, RenderSource, SourceBackend, SyncError,
+    AdapterIdentity, BackendCapabilities, Capability, ColorSpace, CpuPlanes, CpuTextureDesc,
+    CpuVideoTextureDesc, DrawHook, ExtensionFactory, ExternalTextureDesc, ExternalTextureFormat,
+    ExternalTextureSource, FrameDesc, FrameDiagnostics, FrameDiagnosticsSnapshot, FrameId,
+    FrameLifetime, FrameSource, GpuFence, HdrMetadata, HookContext, HookContextExt, ImportError,
+    LifecycleContext, RawHandle, Rect, RegisteredTexture, RenderExtension, RenderLifecycle,
+    RenderSource, SourceBackend, SyncError,
 };
 
 #[cfg(windows)]

@@ -65,93 +65,95 @@ pub const BUILD_COMMAND_HINT: &str = "fxc /nologo /T {vs_5_0|ps_5_0} /E <Entry>"
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
 pub const PS_VARIANTS: [(&str, &[u8]); 24] = [
     ("PSMain", zephyra_fx::shaders::ps::PSMain),
-    (
-        "PSOverlay",
-        zephyra_fx::shaders::ps::PSOverlay,
-    ),
-    (
-        "PSDarken",
-        zephyra_fx::shaders::ps::PSDarken,
-    ),
-    (
-        "PSLighten",
-        zephyra_fx::shaders::ps::PSLighten,
-    ),
-    (
-        "PSColorDodge",
-        zephyra_fx::shaders::ps::PSColorDodge,
-    ),
-    (
-        "PSColorBurn",
-        zephyra_fx::shaders::ps::PSColorBurn,
-    ),
-    (
-        "PSHardLight",
-        zephyra_fx::shaders::ps::PSHardLight,
-    ),
-    (
-        "PSSoftLight",
-        zephyra_fx::shaders::ps::PSSoftLight,
-    ),
-    (
-        "PSDifference",
-        zephyra_fx::shaders::ps::PSDifference,
-    ),
-    (
-        "PSExclusion",
-        zephyra_fx::shaders::ps::PSExclusion,
-    ),
-    (
-        "PSMultiply",
-        zephyra_fx::shaders::ps::PSMultiply,
-    ),
+    ("PSOverlay", zephyra_fx::shaders::ps::PSOverlay),
+    ("PSDarken", zephyra_fx::shaders::ps::PSDarken),
+    ("PSLighten", zephyra_fx::shaders::ps::PSLighten),
+    ("PSColorDodge", zephyra_fx::shaders::ps::PSColorDodge),
+    ("PSColorBurn", zephyra_fx::shaders::ps::PSColorBurn),
+    ("PSHardLight", zephyra_fx::shaders::ps::PSHardLight),
+    ("PSSoftLight", zephyra_fx::shaders::ps::PSSoftLight),
+    ("PSDifference", zephyra_fx::shaders::ps::PSDifference),
+    ("PSExclusion", zephyra_fx::shaders::ps::PSExclusion),
+    ("PSMultiply", zephyra_fx::shaders::ps::PSMultiply),
     ("PSHue", zephyra_fx::shaders::ps::PSHue),
-    (
-        "PSSaturation",
-        zephyra_fx::shaders::ps::PSSaturation,
-    ),
-    (
-        "PSColor",
-        zephyra_fx::shaders::ps::PSColor,
-    ),
-    (
-        "PSLuminosity",
-        zephyra_fx::shaders::ps::PSLuminosity,
-    ),
-    (
-        "PSBlurH",
-        zephyra_fx::shaders::ps::PSBlurH,
-    ),
-    (
-        "PSBlurV",
-        zephyra_fx::shaders::ps::PSBlurV,
-    ),
-    (
-        "PSComposite",
-        zephyra_fx::shaders::ps::PSComposite,
-    ),
-    (
-        "PSRefraction",
-        zephyra_fx::shaders::ps::PSRefraction,
-    ),
-    (
-        "PSBackdropBlur",
-        zephyra_fx::shaders::ps::PSBackdropBlur,
-    ),
-    (
-        "PSHollowShadow",
-        zephyra_fx::shaders::ps::PSHollowShadow,
-    ),
-    (
-        "PSHighlight",
-        zephyra_fx::shaders::ps::PSHighlight,
-    ),
-    (
-        "PSInnerShadow",
-        zephyra_fx::shaders::ps::PSInnerShadow,
-    ),
+    ("PSSaturation", zephyra_fx::shaders::ps::PSSaturation),
+    ("PSColor", zephyra_fx::shaders::ps::PSColor),
+    ("PSLuminosity", zephyra_fx::shaders::ps::PSLuminosity),
+    ("PSBlurH", zephyra_fx::shaders::ps::PSBlurH),
+    ("PSBlurV", zephyra_fx::shaders::ps::PSBlurV),
+    ("PSComposite", zephyra_fx::shaders::ps::PSComposite),
+    ("PSRefraction", zephyra_fx::shaders::ps::PSRefraction),
+    ("PSBackdropBlur", zephyra_fx::shaders::ps::PSBackdropBlur),
+    ("PSHollowShadow", zephyra_fx::shaders::ps::PSHollowShadow),
+    ("PSHighlight", zephyra_fx::shaders::ps::PSHighlight),
+    ("PSInnerShadow", zephyra_fx::shaders::ps::PSInnerShadow),
     ("PSLens", zephyra_fx::shaders::ps::PSLens),
 ];
+
+/// NV12 纹理的像素着色器变体表（15 个：`PSMainNv12` + 14 个混合模式）。
+///
+/// # 为什么与 [`PS_VARIANTS`] 的下标一一对应
+///
+/// 前 15 项（`0..=14`）与 RGBA 表的前 15 项**同序**（`PSMain` ↔ `PSMainNv12`、
+/// `PSOverlay` ↔ `PSOverlayNv12`、…）。于是渲染器只要用一个 `ps_index`（由
+/// [`ps_for_blend_mode`] 给出）就能在两张表里取到同一个模式的两份字节码 ——
+/// 选哪张由「该 draw 绑的纹理是不是 NV12」决定，RGBA 路径的行为逐字节不变。
+///
+/// 这些字节码来自 `zephyra_vector` 的 `zephyra_nv12.hlsl`（`ZEPHYRA_NV12` 宏），
+/// 默认那 24 个 RGBA 入口的字节码一字未改。
+pub const PS_NV12_VARIANTS: [(&str, &[u8]); 15] = [
+    ("PSMainNv12", zephyra_fx::shaders::ps_nv12::PSMainNv12),
+    ("PSOverlayNv12", zephyra_fx::shaders::ps_nv12::PSOverlayNv12),
+    ("PSDarkenNv12", zephyra_fx::shaders::ps_nv12::PSDarkenNv12),
+    ("PSLightenNv12", zephyra_fx::shaders::ps_nv12::PSLightenNv12),
+    (
+        "PSColorDodgeNv12",
+        zephyra_fx::shaders::ps_nv12::PSColorDodgeNv12,
+    ),
+    (
+        "PSColorBurnNv12",
+        zephyra_fx::shaders::ps_nv12::PSColorBurnNv12,
+    ),
+    (
+        "PSHardLightNv12",
+        zephyra_fx::shaders::ps_nv12::PSHardLightNv12,
+    ),
+    (
+        "PSSoftLightNv12",
+        zephyra_fx::shaders::ps_nv12::PSSoftLightNv12,
+    ),
+    (
+        "PSDifferenceNv12",
+        zephyra_fx::shaders::ps_nv12::PSDifferenceNv12,
+    ),
+    (
+        "PSExclusionNv12",
+        zephyra_fx::shaders::ps_nv12::PSExclusionNv12,
+    ),
+    (
+        "PSMultiplyNv12",
+        zephyra_fx::shaders::ps_nv12::PSMultiplyNv12,
+    ),
+    ("PSHueNv12", zephyra_fx::shaders::ps_nv12::PSHueNv12),
+    (
+        "PSSaturationNv12",
+        zephyra_fx::shaders::ps_nv12::PSSaturationNv12,
+    ),
+    ("PSColorNv12", zephyra_fx::shaders::ps_nv12::PSColorNv12),
+    (
+        "PSLuminosityNv12",
+        zephyra_fx::shaders::ps_nv12::PSLuminosityNv12,
+    ),
+];
+
+/// 按混合模式下标取 NV12 PS 变体的**表下标**。
+///
+/// 与 [`ps_for_blend_mode`] 对称：`0..=14` 走 `0`（`PSMainNv12`），`15..=28`
+/// 取 `1..=14`。返回的 `Some(k)` 同时是 [`PS_NV12_VARIANTS`] 的下标。
+/// 供契约测试钉住「RGBA 与 NV12 选到同一个混合模式」这一条。
+pub const fn nv12_ps_index_for_blend_mode(i: usize) -> Option<usize> {
+    ps_for_blend_mode(i)
+}
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
 ///

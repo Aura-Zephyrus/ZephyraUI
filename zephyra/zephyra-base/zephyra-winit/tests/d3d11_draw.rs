@@ -2866,3 +2866,104 @@ fn custom_only_list(bounds: Rect) -> DisplayList {
     );
     list
 }
+
+/// 跨契约真机像素门禁（D3D11）：1080p NV12 `FrameDesc` → `submit_frame` →
+/// `IMAGE_TEXTURE=key` → 整帧渲染 → 读回像素。钉住 2026-11-21 修掉的「两表不通」：
+/// 扩展帧必须进入纹理解析，否则 `missing_textures` 会 > 0 且画面只有清屏色。
+#[test]
+fn ext_frame_image_reaches_pixels_cross_contract() {
+    let Ok(gpu) = Gpu::new() else {
+        eprintln!("跳过：建不出 D3D11 设备");
+        return;
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+
+    // 1080p NV12：Y=200（亮）、UV=128（无色偏），Y/UV pitch = width。
+    let (w, h) = (1920u32, 1080u32);
+    let desc = zephyra_render_ext::prelude::FrameDesc::nv12(
+        vec![200u8; (w * h) as usize],
+        vec![128u8; ((w / 2) * (h / 2) * 2) as usize],
+        w,
+        h,
+        w,
+        w,
+    );
+    let ext = renderer.ext_handle(&gpu.context);
+    let until = zephyra_render_ext::prelude::FrameId(1000);
+    let reg = match ext.submit_frame("ext.video", desc, until) {
+        Ok(r) => r,
+        Err(e) => {
+            // 某些适配器（WARP / 老驱动）不支持 NV12 SRV。此时回退到同尺寸 RGBA
+            // 帧，仍完整验证「跨契约提交 → 纹理解析 → 像素上屏」这条主链；
+            // NV12 平面形状与非黑像素另由 render-ext 的 cpu_only 测试钉住。
+            eprintln!("NV12 SRV 不被本机适配器支持（{e:?}），回退 RGBA 1080p");
+            let rgba = zephyra_render_ext::prelude::FrameDesc::rgba(
+                vec![200u8; (w * h * 4) as usize],
+                w,
+                h,
+                w * 4,
+            );
+            ext.submit_frame("ext.video", rgba, until)
+                .expect("RGBA submit_frame")
+        }
+    };
+    assert_eq!(reg.key(), "ext.video");
+
+    // 把扩展池注入纹理表 —— 这是两表打通的关键一步。
+    let textures = TextureTable::new();
+    let pool_ptr = renderer.ext_pool_ptr();
+    textures.set_ext_pool(pool_ptr);
+    assert!(
+        textures.contains("ext.video"),
+        "ExtPool 的 key 必须参与 IMAGE_TEXTURE 解析"
+    );
+    assert!(textures.srv("ext.video").is_some());
+
+    let diagnostics = renderer.ext_diagnostics();
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    list.push(
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 0,
+        },
+        Command::Image {
+            texture: zephyra_core::paint::TextureRef::new("ext.video"),
+            src: None,
+            dst: Rect::new(4.0, 4.0, s - 8.0, s - 8.0),
+            radius: CornerRadius { radius: 16.0 },
+            shape: zephyra_core::core::CornerShape::ROUND,
+            tint: Color::rgb(1.0, 1.0, 1.0),
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    let report = renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: Color::rgb(1.0, 0.0, 0.0),
+        textures: &textures,
+        damage: Damage::Full,
+    });
+    assert_eq!(
+        report.missing_textures, 0,
+        "扩展纹理必须被纹理解析命中，否则画的是空气"
+    );
+    assert_eq!(report.quads, 1, "应当正好一条图像四边形");
+    let d = diagnostics.snapshot();
+    assert_eq!(d.expired_frames, 0, "valid_until=1000 本帧不应过期");
+    assert_eq!(d.import_failures, 0);
+    assert_eq!(d.unsupported_format, 0);
+
+    let px = read_back(&gpu, &tex);
+    // 只清屏时颜色数是 1；> 2 说明扩展纹理确实进了采样与光栅化。
+    assert!(
+        color_hist(&px).len() > 2,
+        "画面只有清屏色 —— 扩展纹理没真正画出来"
+    );
+}

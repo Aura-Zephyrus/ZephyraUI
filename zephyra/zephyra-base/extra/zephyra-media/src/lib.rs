@@ -28,6 +28,6 @@ pub use output::AudioSink;
 #[cfg(any(feature = "video", feature = "audio"))]
 pub use pipeline::{MediaPlayer, MediaTrackInfo, PlayerOptions};
 #[cfg(feature = "video")]
-pub use video::{VideoFrameSource, VideoTexture};
+pub use video::{import_video_frame, video_key, CpuVideoFrame, VideoFrameSource};
 #[cfg(not(feature = "video"))]
 pub use video_stub::VideoFrameSource;

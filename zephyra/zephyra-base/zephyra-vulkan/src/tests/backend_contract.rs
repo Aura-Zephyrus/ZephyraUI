@@ -35,7 +35,8 @@ mod ext_context_tests {
 
     use zephyra_ext::{CpuTextureDescOwned, ExtError, ExternalTextureBuilder};
     use zephyra_render_ext::prelude::{
-        DrawHook, ExternalTextureFormat, HookContext, RawHandle, RenderSource,
+        DrawHook, ExternalTextureFormat, ExternalTextureSource, FrameDesc, FrameId, HookContext,
+        RawHandle, RenderSource,
     };
     use zephyra_render_ext::types::Rect;
 
@@ -94,20 +95,23 @@ mod ext_context_tests {
             pixels: vec![0; 16],
         };
         let r1 = ctx
-            .register_texture(ExternalTextureBuilder::new("vk.cpu", (2, 2)).source_cpu(cpu))
+            .submit_frame(
+                Cow::Borrowed("vk.cpu"),
+                FrameDesc::rgba(cpu.pixels, 2, 2, 8),
+                FrameId(1),
+            )
             .expect("insert");
-        assert!(matches!(r1, zephyra_ext::TextureRegistration::Inserted));
-        let cpu2 = CpuTextureDescOwned {
-            width: 1,
-            height: 1,
-            row_pitch: 4,
-            format: ExternalTextureFormat::Rgba8UnormSrgb,
-            pixels: vec![1, 2, 3, 4],
-        };
+        assert_eq!(r1.valid_until, FrameId(1));
         let r2 = ctx
-            .register_texture(ExternalTextureBuilder::new("vk.cpu", (1, 1)).source_cpu(cpu2))
+            .submit_frame(
+                Cow::Borrowed("vk.cpu"),
+                FrameDesc::rgba(vec![1, 2, 3, 4], 1, 1, 4),
+                FrameId(2),
+            )
             .expect("replace");
-        assert!(matches!(r2, zephyra_ext::TextureRegistration::Replaced));
+        assert_eq!(r2.valid_until, FrameId(2));
+        assert_eq!(pool.borrow().textures.len(), 1, "同 key 替换不新增资源");
+        assert_eq!(pool.borrow().get("vk.cpu").unwrap().width, 1);
         ctx.unregister_texture("vk.cpu").expect("unregister");
         assert!(pool.borrow().get("vk.cpu").is_none());
     }
@@ -118,15 +122,19 @@ mod ext_context_tests {
         let hooks = Rc::new(RefCell::new(HookTable::default()));
         let frame = Rc::new(Cell::new(7u64));
         let mut ctx = VulkanExtContext::new(pool.clone(), hooks, frame);
-        let b = ExternalTextureBuilder::new("vk.img", (64, 32))
-            .format(ExternalTextureFormat::Bgra8Unorm)
-            .source_auto(zephyra_ext::texture_builder::TextureSourceInput::VkImage {
+        let desc = FrameDesc::native(
+            (64, 32),
+            ExternalTextureFormat::Bgra8Unorm,
+            ExternalTextureSource::VkImage {
                 image: RawHandle(0x1234),
                 layout: 5,
                 memory: Some(RawHandle(0x5678)),
-            });
-        let r = ctx.register_texture(b).expect("vk image meta");
-        assert!(matches!(r, zephyra_ext::TextureRegistration::Inserted));
+            },
+        );
+        let r = ctx
+            .submit_frame(Cow::Borrowed("vk.img"), desc, FrameId(1))
+            .expect("vk image meta");
+        assert_eq!(r.key, "vk.img");
         let p = pool.borrow();
         let res = p.get("vk.img").expect("stored");
         assert_eq!(res.vk_image_raw, Some(0x1234));
@@ -141,10 +149,17 @@ mod ext_context_tests {
         let hooks = Rc::new(RefCell::new(HookTable::default()));
         let frame = Rc::new(Cell::new(0u64));
         let mut ctx = VulkanExtContext::new(pool, hooks, frame);
-        let b = ExternalTextureBuilder::new("vk.nt", (4, 4)).source_auto(
-            zephyra_ext::texture_builder::TextureSourceInput::NtHandle(RawHandle(42)),
+        let desc = FrameDesc::native(
+            (4, 4),
+            ExternalTextureFormat::Rgba8UnormSrgb,
+            ExternalTextureSource::NtHandle {
+                handle: RawHandle(42),
+                source_backend: None,
+            },
         );
-        let err = ctx.register_texture(b).unwrap_err();
+        let err = ctx
+            .submit_frame(Cow::Borrowed("vk.nt"), desc, FrameId(1))
+            .unwrap_err();
         match err {
             ExtError::Import(zephyra_render_ext::error::ImportError::Backend(msg)) => {
                 assert!(msg.contains("VK_KHR_external_memory_win32"));

@@ -138,20 +138,16 @@ fn cpu_video_desc_maps_all_supported_formats() {
         )
         .unwrap();
         let source = zephyra_media::video::from_video_frame(frame);
-        let cpu = source.as_cpu_upload().expect("conversion to NV12 failed");
-        let desc = cpu.desc();
+        let desc = zephyra_media::import_video_frame(&source).expect("FrameDesc");
         assert_eq!(desc.format, ExternalTextureFormat::Nv12, "{:?}", fmt);
-        assert!(desc.planes[0].is_some() && desc.planes[1].is_some());
-        let y = desc.planes[0].unwrap();
-        let uv = desc.planes[1].unwrap();
-        assert_eq!((y.width, y.height), (64, 48), "{:?}", fmt);
-        assert_eq!((uv.width, uv.height), (32, 24), "{:?}", fmt);
-        assert_eq!(y.pixels.len(), 64 * 48, "{:?}", fmt);
-        assert_eq!(uv.pixels.len(), 32 * 48, "{:?}", fmt);
-        // NV12 两平面都能被 flatten 成单缓冲（D3D12/Vulkan 路径）。
-        let (flat, fw, fh, _) = desc.flatten_nv12().unwrap();
-        assert_eq!((fw, fh), (64, 48));
-        assert_eq!(flat.len(), 64 * 48 + 32 * 48);
+        assert_eq!(desc.size, (64, 48), "{:?}", fmt);
+        let planes = desc.cpu_planes().expect("CPU planes");
+        assert_eq!(planes.plane_count(), 2);
+        assert_eq!(planes.plane(0).unwrap().len(), 64 * 48, "{:?}", fmt);
+        assert_eq!(planes.plane(1).unwrap().len(), 32 * 48, "{:?}", fmt);
+        // 两平面以 Arc<[u8]> 拥有所有权交付，不再 flatten 成单缓冲。
+        assert_eq!(planes.row_pitch[0], 64);
+        assert_eq!(planes.row_pitch[1], 64);
     }
 }
 

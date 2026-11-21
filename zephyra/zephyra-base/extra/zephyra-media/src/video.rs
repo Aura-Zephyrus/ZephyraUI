@@ -1,22 +1,18 @@
-//! 视频帧 → 渲染契约描述符的转换。
+//! 视频帧 → 渲染契约描述符的转换（2026-11-21 重设计）。
 //!
-//! 软件后端输出 CPU 平面（I420 / NV12 / YUV420P10），硬件后端（DXVA2）输出
-//! 平台原生句柄。两类分别映射成 `zephyra-render-ext` 的 CPU 多平面描述符与
-//! `ExternalTextureSource::NtHandle`。
-//!
-//! **关键约束**：D3D11 importer 只接受 NV12（8bit）。因此 `CpuVideoFrame`
-//! 统一把 4:2:0 格式转换成 NV12（Y 平面 + 交错 UV），10bit 先降到 8bit。
-//! 这样 `import_video_frame()` 在所有后端都有一条真正可行的路径。
+//! 软件后端输出 CPU 平面（I420 / NV12 / YUV420P10），硬件后端输出平台原生句柄。
+//! 两类分别映射成 `zephyra-render-ext` 的 `FrameSource::Cpu(Arc<CpuPlanes>)` 与
+//! `FrameSource::Native`。**不再**产出不透明 `ImportedTexture`，也不再持有 importer：
+//! 本层只负责把解码帧变成纯数据 `FrameDesc`，由应用层 `submit_frame(key, desc, valid_until)`
+//! 提交到具体后端。这样 media 与三后端完全解耦，且 `bytes::Bytes` 让解码线程零拷贝交付。
 
-use zephyra_render_ext::external_texture::{CpuVideoTextureDesc, ImportedTexture};
+use bytes::Bytes;
+
 use zephyra_render_ext::prelude::{
-    CpuTextureDesc, ExternalTextureFormat, ExternalTextureImporter, ExternalTextureSource, FrameId,
-    ImportError, RawHandle,
+    ColorSpace, CpuPlanes, ExternalTextureFormat, ExternalTextureSource, FrameDesc, ImportError,
+    RawHandle,
 };
 use zephyra_video::{VideoFrame, VideoPixelFormat, VideoPlane};
-
-/// 一帧已导入到渲染后端的纹理。
-pub type VideoTexture = ImportedTexture;
 
 /// 视频帧来源（便于队列统一存放 CPU 与原生帧）。
 pub enum VideoFrameSource {
@@ -34,12 +30,12 @@ pub enum VideoFrameSource {
 
 /// 已转换成 NV12、可直接上传的 owned CPU 帧。
 ///
-/// 持有自己的像素缓冲，因此 `desc()` 可以安全地借出 `CpuTextureDesc`。
+/// 两个平面都是 `Bytes`：`Vec -> Bytes` 零拷贝转移分配，可跨线程交给渲染器，
+/// 也便于一帧同时被多个消费者持有（clone 只加引用计数）。契约层的 `CpuPlanes`
+/// 同样以 `Bytes` 存储平面，因此 `planes()` 是一次零拷贝的所有权交付。
 pub struct CpuVideoFrame {
-    /// Y 平面（w*h 字节）。
-    y: Vec<u8>,
-    /// 交错 UV 平面（w*h/2 字节，U/V 交替）。
-    uv: Vec<u8>,
+    y: Bytes,
+    uv: Bytes,
     width: u32,
     height: u32,
 }
@@ -51,29 +47,21 @@ impl CpuVideoFrame {
     pub fn height(&self) -> u32 {
         self.height
     }
+    pub fn y_plane(&self) -> &[u8] {
+        &self.y
+    }
+    pub fn uv_plane(&self) -> &[u8] {
+        &self.uv
+    }
 
-    /// 借用两个平面生成 D3D11 importer 可消费的多平面描述。
-    pub fn desc(&self) -> CpuVideoTextureDesc<'_> {
-        let y_pitch = self.width;
-        let uv_pitch = self.width; // 交错 UV 一行 w 字节（w/2 对）
-        let y_desc = CpuTextureDesc {
-            pixels: &self.y,
-            width: self.width,
-            height: self.height,
-            row_pitch: y_pitch,
-            format: ExternalTextureFormat::Nv12,
-        };
-        let uv_desc = CpuTextureDesc {
-            pixels: &self.uv,
-            width: self.width / 2,
-            height: self.height.div_ceil(2),
-            row_pitch: uv_pitch,
-            format: ExternalTextureFormat::Nv12,
-        };
-        CpuVideoTextureDesc {
-            planes: [Some(y_desc), Some(uv_desc), None],
-            format: ExternalTextureFormat::Nv12,
-        }
+    /// 生成拥有所有权的 NV12 平面（行距：Y = width，交错 UV = width）。
+    pub fn planes(&self) -> CpuPlanes {
+        CpuPlanes::nv12(self.y.clone(), self.uv.clone(), self.width, self.width)
+    }
+
+    /// 生成统一 `FrameDesc`。
+    pub fn frame_desc(&self) -> FrameDesc {
+        FrameDesc::cpu((self.width, self.height), self.planes())
     }
 }
 
@@ -92,7 +80,6 @@ impl VideoFrameSource {
         }
     }
 
-    /// 转成渲染层的外部纹理来源（仅原生帧有句柄）。
     pub fn as_external_source(&self) -> Option<ExternalTextureSource> {
         match self {
             VideoFrameSource::Native { handle, .. } => Some(ExternalTextureSource::NtHandle {
@@ -103,7 +90,6 @@ impl VideoFrameSource {
         }
     }
 
-    /// 把 CPU 帧转换成可直接上传的 NV12。
     pub fn as_cpu_upload(&self) -> Option<CpuVideoFrame> {
         match self {
             VideoFrameSource::Cpu(f) => to_nv12(f),
@@ -112,12 +98,17 @@ impl VideoFrameSource {
     }
 }
 
+/// 该帧建议使用的纹理 key（应用调用 `submit_frame` 时传入）。
+pub fn video_key(frame: &VideoFrameSource) -> String {
+    format!("video-{}", frame.timestamp())
+}
+
 /// 把任意 4:2:0 平面格式转换成 NV12（8bit）。
 ///
 /// - I420（Y/U/V）→ Y + 交错 UV
-/// - NV12/NV21     → 直接拷贝（NV21 交换 U/V）
-/// - YUV420P10     → 每采样右移 2 位降到 8bit，再交错
-/// - P010LE        → 16bit 交错 UV 右移 2 位降到 8bit
+/// - NV12/NV21 → 直接拷贝（NV21 交换 U/V）
+/// - YUV420P10 → 每采样右移 2 位降到 8bit，再交错
+/// - P010LE → 16bit 交错 UV 右移 2 位降到 8bit
 fn to_nv12(frame: &VideoFrame) -> Option<CpuVideoFrame> {
     let w = frame.coded_size().width as usize;
     let h = frame.coded_size().height as usize;
@@ -127,11 +118,30 @@ fn to_nv12(frame: &VideoFrame) -> Option<CpuVideoFrame> {
     let cw = w.div_ceil(2);
     let ch = h.div_ceil(2);
     let layout = frame.layout();
+
+    // 快速通道：源已是 NV12 且行距紧凑 → 把 video 的 Arc 平面经 `VideoPlane::bytes()`
+    // （内部 `Bytes::from_owner`）零拷贝交给契约，Y/UV 都不重新编码。slice 也零拷贝，
+    // 仅把可能带填充的缓冲裁到平面语义长度。
+    if frame.format() == VideoPixelFormat::NV12
+        && layout.planes()[0].stride == w
+        && layout.planes()[1].stride == w
+    {
+        let y_src = frame.planes().first()?.bytes()?;
+        let uv_src = frame.planes().get(1)?.bytes()?;
+        return Some(CpuVideoFrame {
+            y: y_src.slice(0..w * h),
+            uv: uv_src.slice(0..cw * ch * 2),
+            width: w as u32,
+            height: h as u32,
+        });
+    }
+
+    // `as_ref()` 读取 video 侧的 Arc<[u8]> 平面（无需拷贝）。
     let planes: Vec<&[u8]> = frame
         .planes()
         .iter()
         .map(|p| match p {
-            VideoPlane::Cpu { data } => Some(data.as_slice()),
+            VideoPlane::Cpu { data } => Some(data.as_ref()),
             VideoPlane::Native { .. } => None,
         })
         .collect::<Option<Vec<_>>>()?;
@@ -142,7 +152,6 @@ fn to_nv12(frame: &VideoFrame) -> Option<CpuVideoFrame> {
         VideoPixelFormat::YUV420P10 | VideoPixelFormat::P010LE => 2,
         _ => return None,
     };
-    // 16bit little-endian → 8bit：低字节的高 8 位 + 高字节的低 2 位补到高位。
     let sample = |plane: &[u8], i: usize| -> u8 {
         let lo = plane.get(i).copied().unwrap_or(128);
         if shift == 0 {
@@ -201,35 +210,39 @@ fn to_nv12(frame: &VideoFrame) -> Option<CpuVideoFrame> {
     }
 
     Some(CpuVideoFrame {
-        y: y_out,
-        uv,
+        // Vec -> Bytes 零拷贝转移分配；下游 planes() 再零拷贝交给契约层。
+        y: Bytes::from(y_out),
+        uv: Bytes::from(uv),
         width: w as u32,
         height: h as u32,
     })
 }
 
-/// 把一帧真正导入渲染后端，返回 `VideoTexture`。
+/// 把一帧解码结果变成纯数据 [`FrameDesc`]（不再导入，不再有不透明句柄）。
 ///
-/// 这是 `VideoTexture` 的生产者：原生帧走共享句柄，CPU 帧统一转 NV12 后走
-/// 多平面上传。D3D11/D3D12/Vulkan 的 importer 都实现了对应的入口。
-pub fn import_video_frame<I: ExternalTextureImporter>(
-    importer: &mut I,
-    frame: &VideoFrameSource,
-) -> Result<VideoTexture, ImportError> {
+/// 原生帧走共享句柄，CPU 帧统一转 NV12 双平面。应用随后调用
+/// `ExtContextHandle::submit_frame(video_key(&frame), desc, valid_until)`。
+pub fn import_video_frame(frame: &VideoFrameSource) -> Result<FrameDesc, ImportError> {
     if let Some(source) = frame.as_external_source() {
-        let desc = zephyra_render_ext::prelude::ExternalTextureDesc {
-            key: format!("video-{}", frame.timestamp()).into(),
-            size: (0, 0), // 句柄导入用 desc.source，尺寸由资源自身决定
-            format: ExternalTextureFormat::Nv12,
-            source,
-            sync: None,
+        let (w, h, format) = match frame {
+            VideoFrameSource::Native {
+                width,
+                height,
+                format,
+                ..
+            } => (*width, *height, *format),
+            VideoFrameSource::Cpu(_) => unreachable!(),
         };
-        return importer.import(desc);
+        let mut desc = FrameDesc::native((w, h), format, source);
+        desc.color_space = ColorSpace::Bt709;
+        return Ok(desc);
     }
     let cpu = frame
         .as_cpu_upload()
         .ok_or(ImportError::UnsupportedSource)?;
-    importer.import_video_cpu(cpu.desc())
+    let mut desc = cpu.frame_desc();
+    desc.color_space = ColorSpace::Bt709;
+    Ok(desc)
 }
 
 /// 把解码帧包装成统一的来源类型。
@@ -258,14 +271,10 @@ pub fn from_video_frame(frame: VideoFrame) -> VideoFrameSource {
     VideoFrameSource::Cpu(frame)
 }
 
-/// 帧的过期帧号。
-pub fn frame_id(n: u64) -> FrameId {
-    FrameId(n)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zephyra_render_ext::prelude::FrameSource;
     use zephyra_video::{Rect, Size};
 
     fn frame(fmt: VideoPixelFormat, w: u32, h: u32, shift: usize) -> VideoFrame {
@@ -288,22 +297,19 @@ mod tests {
     }
 
     #[test]
-    fn i420_and_10bit_become_nv12() {
+    fn i420_and_10bit_become_nv12_frame_desc() {
         for (fmt, shift) in [
             (VideoPixelFormat::I420, 0),
             (VideoPixelFormat::YUV420P10, 2),
         ] {
             let src = VideoFrameSource::Cpu(frame(fmt, 64, 48, shift));
-            let cpu = src.as_cpu_upload().unwrap();
-            assert_eq!((cpu.width(), cpu.height()), (64, 48));
-            let d = cpu.desc();
-            assert_eq!(d.format, ExternalTextureFormat::Nv12);
-            assert!(d.planes[0].is_some());
-            assert!(d.planes[1].is_some());
-            assert_eq!(d.planes[0].unwrap().pixels.len(), 64 * 48);
-            assert_eq!(d.planes[1].unwrap().pixels.len(), 32 * 48);
-            // UV 是 U,V 交替；10bit 采样右移 2 位降到 8bit。
-            let uv = d.planes[1].unwrap().pixels;
+            let desc = import_video_frame(&src).unwrap();
+            assert_eq!(desc.size, (64, 48));
+            assert_eq!(desc.format, ExternalTextureFormat::Nv12);
+            let planes = desc.cpu_planes().unwrap();
+            assert_eq!(planes.plane(0).unwrap().len(), 64 * 48);
+            assert_eq!(planes.plane(1).unwrap().len(), 32 * 48);
+            let uv = planes.plane(1).unwrap();
             let (expect_u, expect_v) = if shift == 0 {
                 (0x40u8, 0xc0u8)
             } else {
@@ -311,5 +317,65 @@ mod tests {
             };
             assert_eq!((uv[0], uv[1]), (expect_u, expect_v));
         }
+    }
+
+    /// media → 契约跨边界：产出的 FrameDesc 可被下游（mock importer）按 key 消费。
+    #[test]
+    fn media_frame_desc_crosses_contract_boundary() {
+        let src = VideoFrameSource::Cpu(frame(VideoPixelFormat::I420, 64, 48, 0));
+        let key = video_key(&src);
+        let desc = import_video_frame(&src).unwrap();
+        // mock importer：只接收 (key, FrameDesc)，断言字段跨边界完整。
+        let received: Vec<(String, FrameDesc)> = vec![(key.clone(), desc.clone())];
+        assert_eq!(received[0].0, "video-0");
+        assert_eq!(received[0].1.format, ExternalTextureFormat::Nv12);
+        match &received[0].1.source {
+            FrameSource::Cpu(p) => {
+                assert_eq!(p.plane_count(), 2);
+                assert_eq!(p.plane(0).unwrap().len(), 64 * 48);
+            }
+            FrameSource::Native(_) => panic!("CPU frame must produce CPU source"),
+            _ => panic!("unexpected source"),
+        }
+    }
+
+    /// 指针同一性钉住 media → 契约的零拷贝：NV12 紧排行距走快速通道，
+    /// video 的 Arc 平面（Bytes::from_owner）与 contract 的 plane(i) 指向同一分配。
+    #[test]
+    fn nv12_tight_passthrough_is_zero_copy_into_contract() {
+        use std::sync::Arc;
+        let (w, h) = (8usize, 8usize);
+        // 直接以 Arc<[u8]> 造帧（Vec -> Arc 会另分配并拷贝，那一步不属于本路径）。
+        let y: Arc<[u8]> = Arc::from(vec![128u8; w * h]);
+        let uv: Arc<[u8]> = Arc::from(vec![100u8; w * h / 2]);
+        let (y_ptr, uv_ptr) = (y.as_ptr(), uv.as_ptr());
+        let src = VideoFrameSource::Cpu(
+            VideoFrame::from_cpu(
+                VideoPixelFormat::NV12,
+                Size::new(w as u32, h as u32),
+                Rect::new(0, 0, w as u32, h as u32),
+                Size::new(w as u32, h as u32),
+                vec![y, uv],
+                0,
+                0,
+            )
+            .unwrap(),
+        );
+        let vframe = match &src {
+            VideoFrameSource::Cpu(f) => f,
+            _ => unreachable!(),
+        };
+        let vy_ptr = vframe.planes()[0].bytes().unwrap().as_ptr();
+        let vu_ptr = vframe.planes()[1].bytes().unwrap().as_ptr();
+        // from_owner 复用原 Vec 的分配，Arc 持有后指针仍不变。
+        assert_eq!(vy_ptr, y_ptr);
+        assert_eq!(vu_ptr, uv_ptr);
+
+        let desc = import_video_frame(&src).unwrap();
+        let planes = desc.cpu_planes().unwrap();
+        assert_eq!(planes.plane(0).unwrap().as_ptr(), vy_ptr);
+        assert_eq!(planes.plane(1).unwrap().as_ptr(), vu_ptr);
+        assert_eq!(planes.plane(0).unwrap().len(), w * h);
+        assert_eq!(planes.plane(1).unwrap().len(), w * h / 2);
     }
 }

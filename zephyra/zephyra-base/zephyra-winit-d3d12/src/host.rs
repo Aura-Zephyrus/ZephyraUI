@@ -724,10 +724,26 @@ impl<V: View> HostWindow<V> {
         self.bridge = bridge;
     }
 
+    /// 把本窗口的 `WindowKey` 注入调试桥的 hello 帧。多窗口下每个窗口各自
+    /// 连入 MCP，MCP 靠这个 id 路由工具调用（见 `DebugBridge::set_window_id`）。
+    /// 单窗口兼容路径不调，hello 没有第三段。
+    #[cfg(debug_assertions)]
+    pub fn set_window_id(&mut self, id: u64) {
+        if let Some(bridge) = self.bridge.as_mut() {
+            bridge.set_window_id(id);
+        }
+    }
+
     /// 装一个 dev 资源热重载器。**仅 debug 构建存在**；release 没有这个方法。
     #[cfg(debug_assertions)]
     pub fn set_dev_reloader(&mut self, reloader: zephyra_fx::dev_reload::DevReloader) {
         self.dev_reloader = Some(reloader);
+    }
+
+    /// 装一个应用侧后处理钩子（动画等）：每帧 diff + 样式之后、布局之前运行。
+    /// 钩子只能写 paint 属性，不改布局盒。
+    pub fn set_post_diff(&mut self, hook: Box<dyn FnMut(&mut zephyra_core::node::Node)>) {
+        self.cache.set_post_diff(hook);
     }
 
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
@@ -2110,6 +2126,42 @@ impl<V: View> HostWindow<V> {
             .0
     }
 
+    /// frameless 窗口的标题栏拖动 / 边缘缩放。返回是否消费了这次按下。
+    ///
+    /// 判定顺序：先看边缘（缩放），再看命中节点是否标了 `WINDOW_DRAG`（拖动）。
+    /// 与 Tauri 同一分工：边缘是宿主几何、标题栏是应用声明。winit 的
+    /// `drag_window` / `drag_resize_window` 必须在鼠标按下事件里调用。
+    pub fn try_window_interaction(&self, x: f32, y: f32) -> bool {
+        let (w, h) = self.client_size();
+        let (w, h) = (w as f32, h as f32);
+        // 边缘缩放（4px inset，与 Tauri 同量级）。
+        if let Some(edge) = zephyra_fx::resize_edge(x, y, w, h, 4.0) {
+            use winit::window::ResizeDirection as R;
+            let dir = match edge {
+                zephyra_fx::ResizeEdge::North => R::North,
+                zephyra_fx::ResizeEdge::South => R::South,
+                zephyra_fx::ResizeEdge::East => R::East,
+                zephyra_fx::ResizeEdge::West => R::West,
+                zephyra_fx::ResizeEdge::NorthEast => R::NorthEast,
+                zephyra_fx::ResizeEdge::NorthWest => R::NorthWest,
+                zephyra_fx::ResizeEdge::SouthEast => R::SouthEast,
+                zephyra_fx::ResizeEdge::SouthWest => R::SouthWest,
+            };
+            if self.window.drag_resize_window(dir).is_ok() {
+                return true;
+            }
+        }
+        // 标题栏拖动：命中节点带 WINDOW_DRAG 标记。
+        if let Some(node) = self.cache.node() {
+            if zephyra_fx::hit_drag_region(node, x, y, Context::new(self.theme))
+                && self.window.drag_window().is_ok()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// 处理一次按下。返回是否产生了路由事件。
     pub fn on_pointer_down(&mut self) -> bool {
         self.mark_input();
@@ -2595,7 +2647,14 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
             WEvent::MouseInput { state, .. } => {
                 match state {
                     ElementState::Pressed => {
-                        self.on_pointer_down();
+                        // frameless 标题栏拖动 / 边缘缩放先于普通点击分派。
+                        // 位置取 pointer_pos（由紧邻的 CursorMoved 维护）——
+                        // winit 0.30 的 MouseInput 事件本身不带坐标。
+                        let (x, y) = self.pointer_pos;
+                        let consumed = self.try_window_interaction(x, y);
+                        if !consumed {
+                            self.on_pointer_down();
+                        }
                     }
                     ElementState::Released => {
                         self.on_pointer_up();
@@ -2947,6 +3006,8 @@ impl Backend for D3d12Backend {
         }
         host.window_key = handle.key();
         host.targets.window_id = host.window_key.as_u64();
+        #[cfg(debug_assertions)]
+        host.set_window_id(host.window_key.as_u64());
         host.handle = Some(handle);
         Ok(host)
     }

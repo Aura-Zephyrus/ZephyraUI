@@ -284,3 +284,96 @@ fn upload_span_length_is_conserved() {
         }
     }
 }
+
+/// NV12 两平面的尺寸计算：Y 为 w×h、UV 为 (w/2)×(h/2)，tight 行宽都是 w。
+///
+/// 这条钉住 4:2:0 半平面的核心事实。写错成「UV 行宽 = w/2」会让 UV 平面整体
+/// 横向压缩一半（颜色块错位），而驱动与调试层都不报错。
+#[test]
+fn nv12_layout_computes_luma_and_chroma_planes() {
+    for (w, h) in [(2u32, 2u32), (64, 48), (1920, 1080), (3840, 2160)] {
+        let layout = nv12_layout(w, h).expect("偶数尺寸必须合法");
+        assert_eq!((layout.y_width, layout.y_height), (w, h));
+        assert_eq!((layout.uv_width, layout.uv_height), (w / 2, h / 2));
+        // UV 是 RG 对：(w/2) 个像素 × 2 字节 = w，和 Y 一样。
+        assert_eq!(layout.tight_row_bytes, w);
+    }
+}
+
+/// NV12 宽高必须是正偶数；奇数或 0 必须报错而不是静默截断。
+#[test]
+fn nv12_layout_rejects_odd_or_zero_dimensions() {
+    for (w, h) in [(0, 0), (0, 8), (8, 0), (3, 4), (4, 3), (7, 9)] {
+        assert!(
+            nv12_layout(w, h).is_err(),
+            "宽高 {w}×{h} 不是正偶数，必须报错（否则 UV 平面越界）"
+        );
+    }
+}
+
+/// 驱动 footprint + 源行距 → 上传参数：两个子资源的偏移/行距/行数各自独立。
+///
+/// 用「Y 行距 2048、UV 行距 2048、UV 偏移 6MB」这种**不相等**的数，
+/// 确保测试不会在「两平面参数恰好一样」的巧合下通过。
+#[test]
+fn nv12_footprint_plan_maps_both_subresources() {
+    let layout = nv12_layout(1920, 1080).unwrap();
+    // 驱动给的偏移按 D3D12 约定：子资源 0 在 0，子资源 1 紧随其后。
+    let y_pitch = 2048u32;
+    let uv_pitch = 2048u32;
+    let uv_offset = y_pitch as u64 * layout.y_height as u64;
+    let plan = nv12_footprint_plan(layout, [(0, y_pitch), (uv_offset, uv_pitch)], [1920, 1920])
+        .expect("合法 footprint");
+
+    assert_eq!((plan.y_offset, plan.y_dst_pitch), (0, y_pitch));
+    assert_eq!((plan.y_rows, plan.y_row_bytes), (1080, 1920));
+    assert_eq!(plan.y_src_pitch, 1920);
+    assert_eq!((plan.uv_offset, plan.uv_dst_pitch), (uv_offset, uv_pitch));
+    assert_eq!((plan.uv_rows, plan.uv_row_bytes), (540, 1920));
+    assert_eq!(plan.uv_src_pitch, 1920);
+    // 暂存总量 = UV 平面末端（较大的那个）。
+    assert_eq!(
+        plan.staging_bytes,
+        uv_offset + uv_pitch as u64 * 540,
+        "staging 必须装下 UV 平面的末端，否则 CopyTextureRegion 越界"
+    );
+}
+
+/// 源行距小于 tight 行宽时按 tight 兜底，且驱动行距不够时直接拒绝。
+#[test]
+fn nv12_footprint_plan_validates_pitches() {
+    let layout = nv12_layout(640, 480).unwrap();
+    // row_pitch 缺省为 0（例如调用方没填）时按 tight=640 读源。
+    let plan = nv12_footprint_plan(layout, [(0, 640), (640 * 480, 640)], [0, 0]).unwrap();
+    assert_eq!(plan.y_src_pitch, 640);
+    assert_eq!(plan.uv_src_pitch, 640);
+
+    // 驱动行距装不下一行 tight 像素 ⇒ 必须失败，不能静默继续（会斜着错位）。
+    assert!(
+        nv12_footprint_plan(layout, [(0, 639), (640 * 480, 640)], [640, 640]).is_err(),
+        "Y 子资源行距 639 < tight 640 必须报错"
+    );
+    assert!(
+        nv12_footprint_plan(layout, [(0, 640), (640 * 480, 512)], [640, 640]).is_err(),
+        "UV 子资源行距 512 < tight 640 必须报错"
+    );
+}
+
+/// PS 变体分派：只有 Nv12 换变体，RGBA/I420/P010 都保持原路径或显式拒绝。
+#[test]
+fn nv12_ps_dispatch_is_exact() {
+    assert!(format_uses_nv12_ps(ExternalTextureFormat::Nv12));
+    for fmt in [
+        ExternalTextureFormat::Rgba8Unorm,
+        ExternalTextureFormat::Rgba8UnormSrgb,
+        ExternalTextureFormat::Bgra8Unorm,
+        ExternalTextureFormat::Bgra8UnormSrgb,
+        ExternalTextureFormat::I420,
+        ExternalTextureFormat::P010,
+    ] {
+        assert!(
+            !format_uses_nv12_ps(fmt),
+            "{fmt:?} 不该走 NV12 PS —— RGBA 走原字节码，未支持的格式走诊断拒绝"
+        );
+    }
+}

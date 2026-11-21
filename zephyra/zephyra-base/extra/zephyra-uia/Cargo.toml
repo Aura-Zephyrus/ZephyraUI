@@ -11,6 +11,7 @@ publish = false
 #
 # 这个 crate 整段都是 Windows 的 COM 边界（VARIANT / SAFEARRAY / HWND 子类），
 # 而绝大多数应用根本不需要无障碍 —— 默认带上它，只会让「默认构建」平白多一棵
+# 依赖树。设备采集类 crate 已独立成仓，这里只留平台边界这一类可选包。
 [features]
 default = []
 

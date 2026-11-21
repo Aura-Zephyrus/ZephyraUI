@@ -310,3 +310,69 @@ fn vertex_has_no_padding_between_fields() {
         );
     }
 }
+
+/// NV12 变体全部是合法 DXBC，且入口名都带 `Nv12` 后缀。
+///
+/// 与 `all_bytecode_blobs_are_dxbc` 同理：`.bin` 是离线产物，漏提交任何一个
+/// 都会在编译期通过、运行时才炸。15 个变体一次查完。
+#[test]
+fn all_nv12_bytecode_blobs_are_dxbc() {
+    assert_eq!(PS_NV12_VARIANTS.len(), 15, "NV12 变体数应为 15");
+    for (name, b) in PS_NV12_VARIANTS {
+        assert!(name.contains("Nv12"), "{name} 缺 Nv12 后缀");
+        assert!(b.len() >= 32, "{name} 太短（{} B），大概没生成", b.len());
+        assert_eq!(&b[0..4], b"DXBC", "{name} 魔数不对");
+        let total = u32::from_le_bytes([b[24], b[25], b[26], b[27]]) as usize;
+        assert_eq!(total, b.len(), "{name} 头里的长度与实际字节数不符");
+    }
+    // RGBA 表一字未改（数量与首项都保持原样）。
+    assert_eq!(PS_VARIANTS.len(), 24);
+    assert_eq!(PS_VARIANTS[0].0, "PSMain");
+}
+
+/// RGBA 与 NV12 的前 15 项**同序**：同一个 ps_index 取到的是同一个混合模式。
+///
+/// 这条是 PSO 选择逻辑的契约基础 —— 后端用 `ps_for_blend_mode` 算出的下标
+/// 直接索引两张表。若两张表错位，某个混合模式的视频帧会用错 PS。
+#[test]
+fn nv12_variants_align_with_rgba_for_first_fifteen() {
+    for i in 0..15 {
+        let rgba = PS_VARIANTS[i].0;
+        let nv12 = PS_NV12_VARIANTS[i].0;
+        assert_eq!(
+            nv12,
+            format!("{rgba}Nv12"),
+            "下标 {i}：NV12 变体应是 RGBA 变体加 Nv12 后缀"
+        );
+        // 字节内容必须不同（否则「选 NV12」是空操作，YUV→RGB 永远不会发生）。
+        assert_ne!(
+            PS_VARIANTS[i].1, PS_NV12_VARIANTS[i].1,
+            "下标 {i}：{nv12} 的字节码不能与 {rgba} 相同"
+        );
+    }
+}
+
+/// 混合模式 → PS 变体下标：RGBA 与 NV12 共用同一套映射，共 29 种模式。
+///
+/// `nv12_ps_for_blend_mode` 是 vector 侧的权威实现；这里断言它与本端
+/// `ps_for_blend_mode` 的下标在 0..=28 上完全对齐（包括「系数模式退回 0」）。
+#[test]
+fn blend_mode_index_maps_to_same_variant_in_both_tables() {
+    for mode in 0..=28usize {
+        let rgba_idx = ps_for_blend_mode(mode).unwrap_or_default();
+        let nv12_idx = nv12_ps_index_for_blend_mode(mode).unwrap_or_default();
+        assert_eq!(rgba_idx, nv12_idx, "混合模式 {mode} 在两张表里下标不一致");
+        assert!(
+            nv12_idx < PS_NV12_VARIANTS.len(),
+            "混合模式 {mode} 的 NV12 下标 {nv12_idx} 越界"
+        );
+        // vector 侧的权威函数必须给出与下标相同的字节码 —— 端到端钉住
+        // 「选中的 NV12 PS 就是真正带 YUV→RGB 的那一份」。
+        let authoritative = zephyra_fx::shaders::nv12_ps_for_blend_mode(mode)
+            .unwrap_or_else(|| panic!("模式 {mode} 应有 NV12 PS"));
+        assert_eq!(
+            authoritative, PS_NV12_VARIANTS[nv12_idx].1,
+            "模式 {mode}：vector 权威字节码与本地 NV12 表不一致"
+        );
+    }
+}

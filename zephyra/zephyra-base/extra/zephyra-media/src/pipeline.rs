@@ -4,7 +4,7 @@
 //! demux 由 symphonia 完成（纯 Rust / MPL-2.0），裸码流交给 zephyra-video。
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -32,8 +32,6 @@ pub struct MediaTrackInfo {
 pub struct PlayerOptions {
     pub video: bool,
     pub audio: bool,
-    /// 尝试 DXVA2 硬件解码（Windows + hw-dxva2 feature）。
-    pub hardware: bool,
     /// 预加载共享库并报告失败（dynamic feature）。
     pub check_libraries: bool,
 }
@@ -43,7 +41,6 @@ impl Default for PlayerOptions {
         Self {
             video: true,
             audio: true,
-            hardware: false,
             check_libraries: true,
         }
     }
@@ -72,6 +69,8 @@ pub struct MediaPlayer {
     clock: Arc<Mutex<PresentationClock>>,
     /// 尚未到显示时间的帧；保留它而不是丢弃，否则视频会大量丢帧。
     pending_video: Mutex<Option<VideoFrameSource>>,
+    /// 锁竞争失败计数（失败可见性：旧代码 `lock().ok()?` 静默吞掉中毒/竞争）。
+    lock_failures: AtomicU32,
     tracks: Vec<MediaTrackInfo>,
     #[cfg(feature = "dynamic")]
     library_report: LibraryReport,
@@ -118,9 +117,8 @@ impl MediaPlayer {
             let tracks = tracks.clone();
             let clock = Arc::clone(&clock);
             let stop = Arc::clone(&stop);
-            let hardware = options.hardware;
             threads.push(std::thread::spawn(move || {
-                crate::decode_thread::video_loop(packets, tracks, tx, clock, stop, crx, hardware);
+                crate::decode_thread::video_loop(packets, tracks, tx, clock, stop, crx);
             }));
         }
 
@@ -146,6 +144,7 @@ impl MediaPlayer {
             threads,
             clock,
             pending_video: Mutex::new(None),
+            lock_failures: AtomicU32::new(0),
             tracks,
             #[cfg(feature = "dynamic")]
             library_report,
@@ -158,6 +157,11 @@ impl MediaPlayer {
 
     pub fn clock(&self) -> &Arc<Mutex<PresentationClock>> {
         &self.clock
+    }
+
+    /// 累计的锁竞争 / 中毒失败次数（诊断使用）。
+    pub fn lock_failures(&self) -> u32 {
+        self.lock_failures.load(Ordering::Relaxed)
     }
 
     #[cfg(feature = "dynamic")]
@@ -178,13 +182,27 @@ impl MediaPlayer {
     /// 未到显示时间的帧会留在 `pending_video` 里，下次调用再判断；不再丢弃，
     /// 避免按 PTS 播放时几乎每帧都被误丢。
     pub fn present_video_frame(&self) -> Option<VideoFrameSource> {
-        let mut pending = self.pending_video.lock().ok()?;
+        let mut pending = match self.pending_video.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                self.lock_failures.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
         let frame = match pending.take() {
             Some(f) => f,
             None => self.poll_video_frame()?,
         };
         let delta = {
-            let c = self.clock.lock().ok()?;
+            let c = match self.clock.try_lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    self.lock_failures.fetch_add(1, Ordering::Relaxed);
+                    // 帧已从 pending 取出，放回以免丢失。
+                    *pending = Some(frame);
+                    return None;
+                }
+            };
             c.delta_us(frame.timestamp())
         };
         if delta > 0 {

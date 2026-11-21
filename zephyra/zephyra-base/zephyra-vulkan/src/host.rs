@@ -146,6 +146,20 @@ pub struct HostWindow<V: View> {
     /// `ZEPHYRA_FRAME_DUMP` 是否已经写过一副图。
     #[cfg(debug_assertions)]
     dumped: bool,
+    /// 调试桥（CDP 式：应用监听，MCP 连入）。与两个 Windows 后端同形。
+    #[cfg(debug_assertions)]
+    bridge: Option<zephyra_fx::bridge::DebugBridge>,
+    #[cfg(debug_assertions)]
+    bridge_pointer_pressed: bool,
+    #[cfg(debug_assertions)]
+    last_stats: zephyra_fx::bridge::FrameStats,
+    #[cfg(debug_assertions)]
+    profiler: zephyra_fx::bridge::PerformanceProfiler,
+    #[cfg(all(debug_assertions, windows))]
+    resource_telemetry: Option<zephyra_platform_win::ProcessTelemetry>,
+    /// 最近一次呈现用的交换链图下标（截图读回用）。
+    #[cfg(debug_assertions)]
+    last_presented: Option<usize>,
     /// 窗口。**最后析构**。
     window: Arc<Window>,
 }
@@ -325,6 +339,18 @@ impl<V: View> HostWindow<V> {
             fb_extent: (0, 0),
             #[cfg(debug_assertions)]
             dumped: false,
+            #[cfg(debug_assertions)]
+            bridge: zephyra_fx::bridge::DebugBridge::from_env(),
+            #[cfg(debug_assertions)]
+            bridge_pointer_pressed: false,
+            #[cfg(debug_assertions)]
+            last_stats: zephyra_fx::bridge::FrameStats::default(),
+            #[cfg(debug_assertions)]
+            profiler: zephyra_fx::bridge::PerformanceProfiler::new(),
+            #[cfg(all(debug_assertions, windows))]
+            resource_telemetry: None,
+            #[cfg(debug_assertions)]
+            last_presented: None,
             window,
         }
     }
@@ -339,6 +365,12 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 装一个样式注入点。
+    /// 装一个应用侧后处理钩子（动画等）：每帧 diff + 样式之后、布局之前运行。
+    /// 钩子只能写 paint 属性，不改布局盒。
+    pub fn set_post_diff(&mut self, hook: Box<dyn FnMut(&mut zephyra_core::node::Node)>) {
+        self.cache.set_post_diff(hook);
+    }
+
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
         self.cache.set_styler(styler);
     }
@@ -474,6 +506,28 @@ impl<V: View> HostWindow<V> {
             }
         };
         if !redrawn {
+            #[cfg(debug_assertions)]
+            {
+                let new_stats = zephyra_fx::bridge::FrameStats {
+                    quads: self.last_stats.quads,
+                    skipped: self.last_stats.skipped,
+                    dirtied: diff.dirtied,
+                    needs_layout: diff.needs_layout,
+                    redrawn: false,
+                    hovered: self.router.hovered().map(|k| k.to_string()),
+                    damage: Some(damage),
+                    stages: Some(self.cache.timings()),
+                    frames: self.frames as u64,
+                    input_latency_us: None,
+                    render_submit_us: None,
+                    offscreen_passes: 0,
+                    backdrop_blur_passes: 0,
+                    lens_passes: 0,
+                    refraction_passes: 0,
+                };
+                self.last_stats =
+                    zephyra_fx::bridge::stats_after_skipped(&self.last_stats, &new_stats);
+            }
             return Frame {
                 diff,
                 render: zephyra_fx::quad::RenderReport::default(),
@@ -509,6 +563,33 @@ impl<V: View> HostWindow<V> {
             }
         };
         self.frames += 1;
+        #[cfg(debug_assertions)]
+        {
+            let new_stats = zephyra_fx::bridge::FrameStats {
+                quads: render.quads,
+                skipped: render.skipped,
+                dirtied: diff.dirtied,
+                needs_layout: diff.needs_layout,
+                redrawn: true,
+                hovered: self.router.hovered().map(|k| k.to_string()),
+                damage: Some(damage),
+                stages: Some(self.cache.timings()),
+                frames: self.frames as u64,
+                input_latency_us: None,
+                render_submit_us: None,
+                offscreen_passes: render.offscreen_passes,
+                backdrop_blur_passes: render.backdrop_blur_passes,
+                lens_passes: render.lens_passes,
+                refraction_passes: render.refraction_passes,
+            };
+            self.last_stats = new_stats;
+            self.profiler.record(zephyra_fx::bridge::FrameTiming {
+                update_us: 0,
+                render_submit_us: 0,
+                total_us: frame_started.elapsed().as_micros() as u64,
+                stages: Some(self.cache.timings()),
+            });
+        }
         if trace_enabled_dev() {
             eprintln!(
                 "[trace] frame {} 客户区 {:?} 顶点 {} 字节 四边形 {} 未实现混合 {}",
@@ -545,6 +626,10 @@ impl<V: View> HostWindow<V> {
             Ok(v) => v,
             Err(_) => return,
         };
+        #[cfg(debug_assertions)]
+        {
+            self.last_presented = Some(idx as usize);
+        }
         let signal_sem = unsafe {
             dev.device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
@@ -800,6 +885,38 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 处理一次按下。
+    /// frameless 窗口的标题栏拖动 / 边缘缩放。返回是否消费了这次按下。
+    ///
+    /// 与两个 Windows 后端同款：边缘是宿主几何，标题栏是应用声明。
+    pub fn try_window_interaction(&self, x: f32, y: f32) -> bool {
+        let (w, h) = self.client_size();
+        let (w, h) = (w as f32, h as f32);
+        if let Some(edge) = zephyra_fx::resize_edge(x, y, w, h, 4.0) {
+            use winit::window::ResizeDirection as R;
+            let dir = match edge {
+                zephyra_fx::ResizeEdge::North => R::North,
+                zephyra_fx::ResizeEdge::South => R::South,
+                zephyra_fx::ResizeEdge::East => R::East,
+                zephyra_fx::ResizeEdge::West => R::West,
+                zephyra_fx::ResizeEdge::NorthEast => R::NorthEast,
+                zephyra_fx::ResizeEdge::NorthWest => R::NorthWest,
+                zephyra_fx::ResizeEdge::SouthEast => R::SouthEast,
+                zephyra_fx::ResizeEdge::SouthWest => R::SouthWest,
+            };
+            if self.window.drag_resize_window(dir).is_ok() {
+                return true;
+            }
+        }
+        if let Some(node) = self.cache.node() {
+            if zephyra_fx::hit_drag_region(node, x, y, Context::new(self.theme))
+                && self.window.drag_window().is_ok()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn on_pointer_down(&mut self) -> bool {
         self.pointer = Some(0);
         let (x, y) = self.pointer_pos;
@@ -961,6 +1078,15 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
     }
 
     fn tick(&mut self) -> HostTick {
+        // 桥的 poll 放在帧判定之前：注入的 hover/click 在**本帧**就参与命中测试。
+        #[cfg(debug_assertions)]
+        {
+            if let Some(mut b) = self.bridge.take() {
+                b.poll(self);
+                self.bridge = Some(b);
+            }
+        }
+
         // ⚠ 窗口不可见（最小化 / 完全遮挡）时直接返回空帧：不 layout、不 paint、不 present。
         // 这让 CPU/GPU 在后台/遮挡时归零，符合 P3 验收标准。
         if !self.window_visible {
@@ -1013,6 +1139,19 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 self.last_present_at = Some(std::time::Instant::now());
             }
             animating = self.view.wants_frames();
+        }
+
+        #[cfg(debug_assertions)]
+        if let Some(bridge) = self.bridge.as_ref() {
+            if bridge.has_pending_work() {
+                tick.wants_poll = true;
+            } else if bridge.has_client() || bridge.is_connecting() {
+                tick.wake_at =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(10));
+            } else {
+                tick.wake_at =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(50));
+            }
         }
 
         // VSync 封顶：距上次呈现不足一个刷新周期时，这一拍**不画**，睡到点再说。
@@ -1088,7 +1227,9 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
                 ..
             } => match state {
                 ElementState::Pressed => {
-                    if self.on_pointer_down() {
+                    // frameless 标题栏拖动 / 边缘缩放先于普通点击分派。
+                    let (x, y) = self.pointer_pos;
+                    if !self.try_window_interaction(x, y) && self.on_pointer_down() {
                         self.dirty = true;
                     }
                 }
@@ -1217,6 +1358,184 @@ impl<V: View + 'static> WindowHost for HostWindow<V> {
     }
 }
 
+/// 调试桥的执行面（Vulkan）。与两个 Windows 后端同形：注入走同一套
+/// `on_cursor_moved` / `on_pointer_down` / `on_pointer_up` / `on_touch`，
+/// 于是「注入能过、真机不行」的分叉在结构上不可能出现。
+#[cfg(debug_assertions)]
+impl<V: View + 'static> zephyra_fx::bridge::BridgeHost for HostWindow<V> {
+    fn viewport(&self) -> (f32, f32) {
+        let (w, h) = self.client_size();
+        (w as f32, h as f32)
+    }
+
+    fn tree_dump(&self) -> String {
+        match self.cache.node() {
+            Some(node) => zephyra_fx::bridge::tree_dump_of(node),
+            None => "(还没有布局树——首帧尚未运行)\n".into(),
+        }
+    }
+
+    fn props_dump(&self, path: &[usize]) -> Option<String> {
+        let node = zephyra_fx::bridge::node_at_path(self.cache.node()?, path)?;
+        Some(zephyra_fx::bridge::props_dump_of(node))
+    }
+
+    fn stats(&self) -> zephyra_fx::bridge::FrameStats {
+        self.last_stats.clone()
+    }
+
+    fn root(&self) -> Option<&zephyra_core::node::Node> {
+        self.cache.node()
+    }
+
+    fn rendered_frames(&self) -> u64 {
+        self.frames as u64
+    }
+
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        use winit::dpi::LogicalSize;
+        let scale = self.window.scale_factor() as f32;
+        let logical_w = ((width as f32 / scale).round() as u32).max(1);
+        let logical_h = ((height as f32 / scale).round() as u32).max(1);
+        let _ = self
+            .window
+            .request_inner_size(LogicalSize::new(logical_w, logical_h));
+        Ok(())
+    }
+
+    fn resources(&mut self) -> Result<String, String> {
+        #[cfg(windows)]
+        {
+            let telemetry = self
+                .resource_telemetry
+                .get_or_insert_with(zephyra_platform_win::ProcessTelemetry::new);
+            let sample = telemetry.sample()?;
+            Ok(sample.to_text(telemetry.gpu_error()))
+        }
+        #[cfg(not(windows))]
+        {
+            Err("此后端未提供资源遥测（仅 Windows 支持）".into())
+        }
+    }
+
+    fn inject_hover(&mut self, x: f32, y: f32) {
+        let _ = self.on_cursor_moved(x, y);
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_click(&mut self, x: f32, y: f32) {
+        let _ = self.on_cursor_moved(x, y);
+        self.sync_input();
+        let _ = self.on_pointer_down();
+        self.dirty = true;
+        self.sync_input();
+        let _ = self.on_pointer_up();
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_pointer_down(&mut self) {
+        let _ = self.on_pointer_down();
+        self.bridge_pointer_pressed = true;
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_pointer_up(&mut self) {
+        let _ = self.on_pointer_up();
+        self.bridge_pointer_pressed = false;
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn on_bridge_disconnect(&mut self) {
+        if self.bridge_pointer_pressed {
+            let _ = self.on_pointer_up();
+            self.bridge_pointer_pressed = false;
+            self.dirty = true;
+            self.sync_input();
+        }
+    }
+
+    fn profile_start(&mut self, duration_seconds: u64) -> Result<(), String> {
+        self.profiler.start(duration_seconds)
+    }
+
+    fn profile_report(&mut self) -> Result<String, String> {
+        self.profiler.report()
+    }
+
+    fn inject_key(&mut self, key: &str) {
+        self.pending_text_events
+            .extend(zephyra_winit_input::injected_events(key));
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_text(&mut self, text: &str) {
+        self.pending_text_events
+            .extend(zephyra_winit_input::injected_text_events(text));
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_scroll(&mut self, x: f32, y: f32, delta_x: f32, delta_y: f32) {
+        let _ = self.on_cursor_moved(x, y);
+        self.pending_scroll = Some(zephyra_fx::ScrollInput {
+            x,
+            y,
+            delta_x,
+            delta_y,
+        });
+        self.dirty = true;
+        self.sync_input();
+    }
+
+    fn inject_touch(
+        &mut self,
+        phase: zephyra_fx::bridge::TouchPhase,
+        id: u64,
+        x: f32,
+        y: f32,
+    ) -> Result<(), String> {
+        use winit::event::TouchPhase as WPhase;
+        let phase = match phase {
+            zephyra_fx::bridge::TouchPhase::Down => WPhase::Started,
+            zephyra_fx::bridge::TouchPhase::Move => WPhase::Moved,
+            zephyra_fx::bridge::TouchPhase::Up => WPhase::Ended,
+            zephyra_fx::bridge::TouchPhase::Cancel => WPhase::Cancelled,
+        };
+        let _ = self.on_touch(phase, id, x, y);
+        self.dirty = true;
+        self.sync_input();
+        Ok(())
+    }
+
+    fn screenshot(&mut self, _opts: zephyra_fx::bridge::ShotOptions) -> Option<Vec<u8>> {
+        // 先真画一帧再上屏；读回刚呈现的那张交换链图（read_back 自己做布局往返）。
+        let _ = self.frame();
+        self.present();
+        let idx = self.last_presented?;
+        let (w, h) = self.surface.extent;
+        let dev = lock_device(&self.device);
+        let data = self
+            .surface
+            .read_back(&dev, *self.surface.images.get(idx)?, w, h)
+            .ok()?;
+        let px = zephyra_fx::pixels::PixelRead {
+            data,
+            order: zephyra_fx::pixels::ChannelOrder::Bgra,
+            row_pitch: w * 4,
+            width: w,
+            height: h,
+            declared_width: w,
+            declared_height: h,
+        };
+        Some(zephyra_fx::pixels::bmp_bytes(&px, true))
+    }
+}
+
 /// Vulkan 后端的 [`Backend`] 实现。
 ///
 /// 与两个 Windows 后端同形：共享设备由 `SHARED_DEVICE` 单例保证，`create`
@@ -1247,6 +1566,10 @@ impl Backend for VulkanBackend {
         let mut host = HostWindow::new_lenient_opts(event_loop, view, size, opts);
         host.window_key = handle.key();
         host.renderer.set_window_id(host.window_key.as_u64());
+        #[cfg(debug_assertions)]
+        if let Some(bridge) = host.bridge.as_mut() {
+            bridge.set_window_id(host.window_key.as_u64());
+        }
         host.handle = Some(handle);
         Ok(host)
     }

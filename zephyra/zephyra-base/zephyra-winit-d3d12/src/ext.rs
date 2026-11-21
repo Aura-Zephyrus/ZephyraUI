@@ -1,23 +1,26 @@
-//! D3D12 扩展桥接：`ExtContextImpl` + 外部纹理导入（NT handle / CPU，最小实现）。
+//! D3D12 扩展桥接：`ExtContextImpl` + 统一帧提交（NT handle / CPU / NV12）。
 #![cfg(windows)]
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Direct3D12::{ID3D12Device, ID3D12Resource};
 
 use zephyra_ext::prelude::*;
-use zephyra_ext::{BuilderParts, ExternalTextureBuilder};
 use zephyra_render_ext::capability::BackendCapabilities;
-use zephyra_render_ext::external_texture::CpuVideoTextureDesc;
-use zephyra_render_ext::types::ExternalTextureFormat;
+use zephyra_render_ext::prelude::{
+    CpuPlanes, ExternalTextureFormat, ExternalTextureSource, FrameDesc, FrameSource,
+};
 
 /// 已导入的外部资源。
 ///
 /// - 句柄导入：`resource` 已有效；`srv_slot` 由渲染器在 `record` 路径中按需分配并写回。
-/// - CPU 上传：`pending_cpu` 由 `ExtContext` 写入，渲染器在 `record` 路径中创建纹理/上传/SRV 后填充 `resource`。
+/// - CPU 导入：`pending_cpu`（RGBA）或 `cpu_planes`（NV12）由 `submit_frame` 写入，
+///   渲染器在下一帧建纹理 / 上传 / SRV 后填充 `resource`。NV12 平面**不**flatten。
 pub struct ExtResource {
     pub resource: Option<ID3D12Resource>,
     pub width: u32,
@@ -25,35 +28,74 @@ pub struct ExtResource {
     pub format: ExternalTextureFormat,
     pub srv_slot: Option<u32>,
     pub pending_cpu: Option<zephyra_ext::CpuTextureDescOwned>,
-    /// `update_texture` 排入的帧队列：渲染器在下一帧就地拷进**同一张**纹理，
-    /// 不重新分配。容量有限（3 帧），相机帧生产更快时丢中间帧 —— 对视频流正确。
+    /// NV12/I420 多平面（拥有所有权，`Arc` 跨线程零拷贝）。渲染器按 `format` 解释。
+    pub cpu_planes: Option<Arc<CpuPlanes>>,
+    /// 兼容保留（新 API 不再写入）：旧相机帧更新队列。
     pub pending_updates: VecDeque<zephyra_ext::CpuTextureDescOwned>,
-    /// 保持上传堆存活至 GPU 完成拷贝。替换/卸载时移入 `ExtPool::retired`，由渲染器在 GPU 空闲点释放。
+    /// 保持上传堆存活至 GPU 完成拷贝。
     pub(crate) staging: Option<crate::renderer::UploadBuffer>,
 }
 
 #[derive(Default)]
 pub struct ExtPool {
     pub textures: HashMap<String, ExtResource>,
-    /// 已卸载/替换的资源（含 staging/资源/SRV 账本信息由调用方处理）。仅在 GPU 已确认空闲时释放。
     retired: Vec<ExtResource>,
+    valid_until: HashMap<String, FrameId>,
+    current_frame: Cell<FrameId>,
+    diagnostics: Arc<FrameDiagnostics>,
 }
 
 impl ExtPool {
+    pub fn diagnostics(&self) -> &Arc<FrameDiagnostics> {
+        &self.diagnostics
+    }
+
+    /// 帧边界：剔除过期纹理。
+    pub fn begin_frame(&mut self, frame: FrameId) {
+        self.current_frame.set(frame);
+        let mut expired = 0u32;
+        self.valid_until.retain(|key, until| {
+            if *until > frame {
+                true
+            } else {
+                self.textures.remove(key);
+                expired += 1;
+                false
+            }
+        });
+        if expired > 0 {
+            self.diagnostics.note_expired(expired);
+        }
+    }
+
+    fn live(&self, key: &str) -> bool {
+        self.valid_until
+            .get(key)
+            .is_some_and(|until| *until > self.current_frame.get())
+    }
+
     pub fn get(&self, key: &str) -> Option<&ExtResource> {
-        self.textures.get(key)
+        if self.live(key) {
+            self.textures.get(key)
+        } else {
+            None
+        }
     }
     pub fn srv_slot(&self, key: &str) -> Option<u32> {
+        if !self.live(key) {
+            return None;
+        }
         self.textures.get(key).and_then(|r| r.srv_slot)
     }
-    /// 快照：key → SRV 槽位（用于渲染期间避免与 `&mut WindowTargets` 冲突的借用）。
-    pub fn srv_slots_snapshot(&self) -> std::collections::HashMap<String, u32> {
+    pub fn srv_slots_snapshot(&self) -> HashMap<String, u32> {
         self.textures
             .iter()
+            .filter(|(k, _)| self.live(k))
             .filter_map(|(k, v)| v.srv_slot.map(|s| (k.clone(), s)))
             .collect()
     }
     pub fn remove(&mut self, key: &str) -> bool {
+        self.valid_until.remove(key);
         if let Some(old) = self.textures.remove(key) {
             self.retired.push(old);
             true
@@ -61,16 +103,20 @@ impl ExtPool {
             false
         }
     }
-    pub fn insert(&mut self, key: String, res: ExtResource) -> TextureRegistration {
-        if let Some(old) = self.textures.insert(key, res) {
-            self.retired.push(old);
+    pub fn insert(
+        &mut self,
+        key: String,
+        res: ExtResource,
+        valid_until: FrameId,
+    ) -> TextureRegistration {
+        let replaced = self.textures.insert(key.clone(), res).is_some();
+        self.valid_until.insert(key, valid_until);
+        if replaced {
             TextureRegistration::Replaced
         } else {
             TextureRegistration::Inserted
         }
     }
-
-    /// 在 GPU 已空闲（如 `begin_frame` 的 `wait_gpu()` 之后）的安全点释放已退役资源。
     pub fn release_retired(&mut self) {
         self.retired.clear();
     }
@@ -82,6 +128,7 @@ pub struct HookTable {
     pub window: HashMap<(u64, String), Box<DrawHook>>,
 }
 
+/// D3D12 导入器：按来源直接产出强类型 [`ExtResource`]（无 `Box<dyn Any>`）。
 pub struct D3D12Importer {
     device: ID3D12Device,
 }
@@ -91,102 +138,34 @@ impl D3D12Importer {
         Self { device }
     }
 
-    pub fn import_parts(
+    pub fn import_frame(
         &mut self,
-        key: Cow<'static, str>,
-        parts: &BuilderParts,
-    ) -> Result<(String, ExtResource), ExtError> {
-        if let Some(cpu) = parts.cpu_owned() {
-            let cpu = cpu.clone();
-            return Ok((
-                key.into_owned(),
-                ExtResource {
-                    resource: None,
-                    width: cpu.width,
-                    height: cpu.height,
-                    format: cpu.format,
-                    srv_slot: None,
-                    pending_cpu: Some(cpu),
-                    pending_updates: VecDeque::new(),
-                    staging: None,
-                },
-            ));
-        }
-        let Some(desc) = parts.try_into_handle_desc(key.clone()) else {
-            return Err(ExtError::UnsupportedSource);
-        };
-        let imported = self.import(desc).map_err(ExtError::from)?;
-        let res = imported
-            .handle
-            .downcast::<ExtResource>()
-            .map_err(|_| ExtError::Backend("unexpected imported handle type".into()))?;
-        Ok((key.into_owned(), *res))
-    }
-}
-
-impl ExternalTextureImporter for D3D12Importer {
-    fn import(&mut self, desc: ExternalTextureDesc) -> Result<ImportedTexture, ImportError> {
-        match desc.source {
+        source: &ExternalTextureSource,
+        size: (u32, u32),
+        format: ExternalTextureFormat,
+    ) -> Result<ExtResource, ExtError> {
+        match source {
             ExternalTextureSource::NtHandle { handle, .. } => {
                 let h = HANDLE(handle.0 as *mut core::ffi::c_void);
                 let mut resource: Option<ID3D12Resource> = None;
                 unsafe { self.device.OpenSharedHandle(h, &mut resource) }
-                    .map_err(|e| ImportError::Backend(format!("OpenSharedHandle: {e:?}")))?;
+                    .map_err(|e| ExtError::Backend(format!("OpenSharedHandle: {e:?}")))?;
                 let resource = resource
-                    .ok_or_else(|| ImportError::Backend("OpenSharedHandle returned null".into()))?;
-                Ok(ImportedTexture::new(
-                    ExtResource {
-                        resource: Some(resource),
-                        width: desc.size.0,
-                        height: desc.size.1,
-                        format: desc.format,
-                        srv_slot: None,
-                        pending_cpu: None,
-                        pending_updates: VecDeque::new(),
-                        staging: None,
-                    },
-                    FrameId(0),
-                ))
+                    .ok_or_else(|| ExtError::Backend("OpenSharedHandle returned null".into()))?;
+                Ok(ExtResource {
+                    resource: Some(resource),
+                    width: size.0,
+                    height: size.1,
+                    format,
+                    srv_slot: None,
+                    pending_cpu: None,
+                    cpu_planes: None,
+                    pending_updates: VecDeque::new(),
+                    staging: None,
+                })
             }
-            #[cfg(target_os = "linux")]
-            ExternalTextureSource::Dmabuf { .. } => Err(ImportError::UnsupportedSource),
-            ExternalTextureSource::VkImage { .. } | _ => Err(ImportError::UnsupportedSource),
+            _ => Err(ExtError::UnsupportedSource),
         }
-    }
-
-    fn import_cpu(&mut self, _desc: CpuTextureDesc<'_>) -> Result<ImportedTexture, ImportError> {
-        Err(ImportError::Backend(
-            "D3D12 CPU ext texture import requires upload command path".into(),
-        ))
-    }
-
-    /// 视频帧（NV12）走与 `import_parts` 相同的延迟上传路径：把两个平面合并成
-    /// 一块 owned buffer，由 renderer 在下一帧建纹理/SRV。
-    fn import_video_cpu(
-        &mut self,
-        desc: CpuVideoTextureDesc<'_>,
-    ) -> Result<ImportedTexture, ImportError> {
-        let (pixels, width, height, row_pitch) =
-            desc.flatten_nv12().ok_or(ImportError::UnsupportedSource)?;
-        Ok(ImportedTexture::new(
-            ExtResource {
-                resource: None,
-                width,
-                height,
-                format: ExternalTextureFormat::Nv12,
-                srv_slot: None,
-                pending_cpu: Some(zephyra_ext::CpuTextureDescOwned {
-                    pixels,
-                    width,
-                    height,
-                    row_pitch,
-                    format: ExternalTextureFormat::Nv12,
-                }),
-                pending_updates: VecDeque::new(),
-                staging: None,
-            },
-            FrameId(0),
-        ))
     }
 }
 
@@ -214,13 +193,68 @@ impl D3D12ExtContext {
 }
 
 impl ExtContextImpl for D3D12ExtContext {
-    fn register_texture(
+    fn submit_frame(
         &mut self,
-        builder: ExternalTextureBuilder,
-    ) -> Result<TextureRegistration, ExtError> {
-        let (key, parts) = builder.into_parts();
-        let (k, res) = self.importer.import_parts(key, &parts)?;
-        Ok(self.pool.borrow_mut().insert(k, res))
+        key: Cow<'static, str>,
+        desc: FrameDesc,
+        valid_until: FrameId,
+    ) -> Result<RegisteredTexture, ExtError> {
+        let resource = match &desc.source {
+            FrameSource::Native(source) => {
+                self.importer.import_frame(source, desc.size, desc.format)?
+            }
+            FrameSource::Cpu(planes) => {
+                let is_rgba = matches!(
+                    planes.format,
+                    ExternalTextureFormat::Rgba8Unorm
+                        | ExternalTextureFormat::Rgba8UnormSrgb
+                        | ExternalTextureFormat::Bgra8Unorm
+                        | ExternalTextureFormat::Bgra8UnormSrgb
+                );
+                let pending_cpu = if is_rgba {
+                    let px = planes.plane(0).ok_or(ExtError::UnsupportedSource)?;
+                    Some(zephyra_ext::CpuTextureDescOwned {
+                        pixels: px.to_vec(),
+                        width: desc.size.0,
+                        height: desc.size.1,
+                        row_pitch: planes.row_pitch[0],
+                        format: planes.format,
+                    })
+                } else {
+                    None
+                };
+                // NV12 / I420：保留完整平面，不 flatten 成 RGBA。
+                if !is_rgba
+                    && !matches!(
+                        planes.format,
+                        ExternalTextureFormat::Nv12 | ExternalTextureFormat::I420
+                    )
+                {
+                    self.pool.borrow().diagnostics().note_unsupported_format();
+                    return Err(ExtError::UnsupportedSource);
+                }
+                ExtResource {
+                    resource: None,
+                    width: desc.size.0,
+                    height: desc.size.1,
+                    format: planes.format,
+                    srv_slot: None,
+                    pending_cpu,
+                    cpu_planes: Some(planes.clone()),
+                    pending_updates: VecDeque::new(),
+                    staging: None,
+                }
+            }
+            _ => return Err(ExtError::UnsupportedSource),
+        };
+        let k = key.into_owned();
+        self.pool
+            .borrow_mut()
+            .insert(k.clone(), resource, valid_until);
+        Ok(RegisteredTexture {
+            key: Cow::Owned(k),
+            valid_until,
+        })
     }
 
     fn unregister_texture(&mut self, key: &str) -> Result<(), ExtError> {
@@ -228,33 +262,8 @@ impl ExtContextImpl for D3D12ExtContext {
         Ok(())
     }
 
-    fn update_texture(&mut self, key: &str, pixels: &[u8], row_pitch: u32) -> Result<(), ExtError> {
-        let mut pool = self.pool.borrow_mut();
-        let res = pool
-            .textures
-            .get_mut(key)
-            .ok_or_else(|| ExtError::Backend(format!("texture not registered: {key}")))?;
-        // 只排一帧的像素；渲染器按注册时的 width/height/format 就地上传。
-        let needed = (res.width as usize) * (res.height as usize) * 4;
-        if pixels.len() < needed {
-            return Err(ExtError::Backend(format!(
-                "update pixels too small: {} < {needed}",
-                pixels.len()
-            )));
-        }
-        let cpu = zephyra_ext::CpuTextureDescOwned {
-            pixels: pixels.to_vec(),
-            width: res.width,
-            height: res.height,
-            row_pitch,
-            format: res.format,
-        };
-        // 相机帧生产可能快于渲染帧：只留最近 3 帧，旧的直接丢（视频流语义）。
-        res.pending_updates.push_back(cpu);
-        while res.pending_updates.len() > 3 {
-            res.pending_updates.pop_front();
-        }
-        Ok(())
+    fn has_texture(&self, key: &str) -> bool {
+        self.pool.borrow().textures.contains_key(key)
     }
 
     fn register_hook(

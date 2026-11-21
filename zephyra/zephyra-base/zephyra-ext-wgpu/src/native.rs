@@ -6,8 +6,9 @@
 //!   wgpu 公共 API 不保证分配共享资源；能否导出 NT handle / external memory 取决于纹理创建方式与后端。
 //! - **wgpu-hal API 随版本变化**：本模块按 wgpu/wgpu-hal 24 系列的常见形态编写；若编译失败，
 //!   请对照实际 `wgpu-hal` 版本调整 `as_hal`/原生类型访问。
-//! - 提取到的句柄/图像用于 [`zephyra_render_ext::ExternalTextureSource`]，再由 Zephyra 后端
-//!   [`ExternalTextureImporter`](zephyra_render_ext::external_texture::ExternalTextureImporter) 导入。
+//! - 提取到的句柄/图像用于 [`zephyra_render_ext::ExternalTextureSource`]，由应用组装成
+//!   `FrameDesc::native(...)`，再经扩展门面的统一入口 submit_frame(key, desc, valid_until)
+//!   提交到具体后端。
 
 use zephyra_render_ext::external_texture::ExternalTextureSource;
 use zephyra_render_ext::types::{RawHandle, SourceBackend};

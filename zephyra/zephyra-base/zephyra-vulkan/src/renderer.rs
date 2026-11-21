@@ -27,6 +27,7 @@
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use ash::vk;
 use zephyra_core::core::Rect;
@@ -37,6 +38,7 @@ use zephyra_core::paint::{
     RenderSource,
 };
 use zephyra_fx::quad::{self, RenderReport, Scratch, Vertex};
+use zephyra_render_ext::prelude::{CpuPlanes, ExternalTextureFormat};
 use zephyra_render_ext::registration::HookContext;
 use zephyra_render_ext::types::Rect as ExtRect;
 
@@ -223,6 +225,53 @@ fn ps_blend_index(mode: BlendMode) -> Option<usize> {
     PS_BLEND_ENTRIES.iter().position(|(m, _)| *m == mode)
 }
 
+/// 纯逻辑的管线槽位（不碰 GPU，供单测钉住 NV12/RGBA 分派）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectedPipeline {
+    /// 系数混合主管线（数组下标）。
+    Fixed(usize),
+    /// PS 变体管线（数组下标）。
+    Ps(usize),
+}
+
+/// 管线族（纯逻辑，供单测钉住「NV12 格式选到 NV12 管线」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PipelineFamily {
+    Rgba,
+    Nv12,
+}
+
+/// 纹理格式 → 管线族。除 NV12 外一律走原 RGBA 管线 —— 保证原 WGSL 入口与
+/// RGBA 路径的任何行为都不受影响。
+pub(crate) fn pipeline_family(format: ExternalTextureFormat) -> PipelineFamily {
+    match format {
+        ExternalTextureFormat::Nv12 => PipelineFamily::Nv12,
+        _ => PipelineFamily::Rgba,
+    }
+}
+
+/// 纹理格式 → 是否走 NV12 管线族。
+pub(crate) fn uses_nv12_pipeline(format: ExternalTextureFormat) -> bool {
+    pipeline_family(format) == PipelineFamily::Nv12
+}
+
+/// 混合模式 + 纹理格式 → 完整管线选择（族 + 槽位，纯逻辑）。
+///
+/// ⚠ 这里**不能**先 `blend_mode_index(blend)?`：那会把「不在系数表里」当成
+/// 「模式完全不可用」直接返回，14 档 PS 变体就永远走不到（画面静默退化成
+/// 默认混合）。
+pub(crate) fn choose_pipeline(
+    blend: BlendMode,
+    format: ExternalTextureFormat,
+) -> Option<(PipelineFamily, SelectedPipeline)> {
+    let slot = if let Some(i) = blend_mode_index(blend) {
+        SelectedPipeline::Fixed(i)
+    } else {
+        SelectedPipeline::Ps(ps_blend_index(blend)?)
+    };
+    Some((pipeline_family(format), slot))
+}
+
 /// 一张离屏目标（单采样）：图像 + 视图 + 内存 + 尺寸。
 #[derive(Debug)]
 struct Rt {
@@ -343,8 +392,35 @@ pub(crate) struct ImageTexture {
     name: String,
     #[allow(dead_code)]
     pub(crate) image: vk::Image,
+    /// 绑定 0 的视图。RGBA = 唯一平面视图；NV12 = Y(plane 0) 视图。
     pub(crate) view: vk::ImageView,
+    /// 绑定 3 的视图（NV12 的 UV/plane 1）。`None` = RGBA 单平面。
+    ///
+    /// 有它才走 NV12 管线（binding 2/3 + fragment YUV→RGB）。
+    pub(crate) nv12_uv_view: Option<vk::ImageView>,
     pub(crate) memory: vk::DeviceMemory,
+    /// 像素格式（驱动管线族选择）。
+    pub(crate) format: ExternalTextureFormat,
+    /// 像素尺寸（原地更新时判尺寸是否变化）。
+    pub(crate) size: (u32, u32),
+}
+
+impl ImageTexture {
+    /// 是 NV12 多平面纹理（需要 NV12 管线 + binding 2/3）。
+    pub(crate) fn is_nv12(&self) -> bool {
+        self.nv12_uv_view.is_some()
+    }
+    /// 释放本纹理持有的全部 Vulkan 句柄（视图不延长图像/内存寿命）。
+    pub(crate) fn destroy(&self, device: &ash::Device) {
+        unsafe {
+            if let Some(uv) = self.nv12_uv_view {
+                device.destroy_image_view(uv, None);
+            }
+            device.destroy_image_view(self.view, None);
+            device.destroy_image(self.image, None);
+            device.free_memory(self.memory, None);
+        }
+    }
 }
 
 impl TextureTable {
@@ -360,10 +436,10 @@ impl TextureTable {
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
     }
-    /// 名字 → 纹理视图（record_draws 逐 run 绑定时用）。
-    fn view_of(&self, name: &str) -> Option<vk::ImageView> {
+    /// 名字 → 纹理元信息（NV12 还要拿 UV 视图与格式）。
+    fn info_of(&self, name: &str) -> Option<&ImageTexture> {
         let slot = *self.index.get(name)?;
-        self.slots.get(slot as usize)?.as_ref().map(|t| t.view)
+        self.slots.get(slot as usize)?.as_ref()
     }
     pub fn remove(&mut self, name: &str) -> Option<u32> {
         self.take(name).map(|_| 0)
@@ -403,18 +479,28 @@ pub struct Renderer {
     /// 本窗口交换链的颜色格式。管线把它烤进 `VkPipeline`，所以从 [`Device`]
     /// 移到这里（见 `Surface::format` 的文档）。
     format: vk::Format,
-    /// 描述符集布局：{ binding 0 = texture, binding 1 = sampler }。
+    /// 描述符集布局：{ binding 0 = texture, binding 1 = sampler }。RGBA 路径专用。
     desc_layout: vk::DescriptorSetLayout,
+    /// NV12 描述符集布局：{ 0 = Y(g_tex), 1 = sampler, 2 = Y(g_tex_y), 3 = UV(g_tex_uv) }。
+    /// 与 WGSL `00_common.wgsl.part` 的 group 0 声明逐条对应；RGBA 布局不含 2/3，
+    /// 这样旧管线完全不受影响（它们的 shader 不静态引用这两格）。
+    desc_layout_nv12: vk::DescriptorSetLayout,
     /// 描述符集布局（set 1：目标副本）。只在 PS 变体管线上被静态使用。
     desc_layout_dst: vk::DescriptorSetLayout,
-    /// 14 档 PS 变体管线（与 [`PS_BLEND_ENTRIES`] 同序）。
+    /// 14 档 PS 变体管线（与 [`PS_BLEND_ENTRIES`] 同序）。RGBA 路径。
     ps_pipelines: Vec<vk::Pipeline>,
+    /// 15 档 NV12 主管线（系数混合，`fs_main_nv12`，与 `blend_modes()` 同序）。
+    nv12_pipelines: Vec<vk::Pipeline>,
+    /// 14 档 NV12 PS 变体管线（与 [`PS_BLEND_ENTRIES`] 同序）。
+    nv12_ps_pipelines: Vec<vk::Pipeline>,
     /// 目标副本：PS 变体要采样「当前目标」，而目标正在被当附件写 ——
     /// 所以先把 MSAA resolve 到这张 RT，再拿它当 `g_dst`。
     dst_rt: Option<Rt>,
-    /// 管线布局：[desc_layout]。
+    /// 管线布局：[desc_layout, desc_layout_dst]。RGBA 路径。
     pipeline_layout: vk::PipelineLayout,
-    /// 混合模式 → 管线（按采样数索引）。
+    /// NV12 管线布局：[desc_layout_nv12, desc_layout_dst]。
+    pipeline_layout_nv12: vk::PipelineLayout,
+    /// 混合模式 → 管线（按采样数索引）。RGBA 路径。
     pipelines: Vec<vk::Pipeline>,
     /// 采样数。
     pub samples: u32,
@@ -636,6 +722,45 @@ impl Renderer {
             )
         }
         .map_err(|e| SurfaceError::new("descriptor set layout", e.to_string()))?;
+        // NV12 专用 set 0：binding 0/2/3 都是 SAMPLED_IMAGE，1 是 sampler。
+        // 与 RGBA 分开建布局，是为了让旧管线**完全不变**（它们不静态使用 2/3，
+        // 多出来的 binding 不会让旧路径的 descriptor 绑定失效）。
+        let desc_layout_nv12 = unsafe {
+            device.create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 1,
+                        descriptor_type: vk::DescriptorType::SAMPLER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 2,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 3,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                ]),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("nv12 descriptor set layout", e.to_string()))?;
         // set 1 = 目标副本（WGSL 的 `@group(1) @binding(0) var g_dst`）。
         let desc_layout_dst = unsafe {
             device.create_descriptor_set_layout(
@@ -660,6 +785,14 @@ impl Renderer {
             )
         }
         .map_err(|e| SurfaceError::new("pipeline layout", e.to_string()))?;
+        let pipeline_layout_nv12 = unsafe {
+            device.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&[desc_layout_nv12, desc_layout_dst]),
+                None,
+            )
+        }
+        .map_err(|e| SurfaceError::new("nv12 pipeline layout", e.to_string()))?;
 
         // ── 采样器（与 wgpu 版同一参数）──
         let sampler = unsafe {
@@ -708,19 +841,21 @@ impl Renderer {
         let desc_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::builder()
-                    // ⚠ 1024 而不是 256：每个 draw 现在要占**两套**描述符集
+                    // ⚠ 2048 而不是 256：每个 draw 现在要占**两套**描述符集
                     // （set 0 + set 1），一帧几百个 draw 时 256 就不够 ——
                     // 而「不够」的失败形状是 `allocate_descriptor_sets` 返回错误、
                     // 那一个 draw 被 `continue` 跳过，画面少一块且零报错。
-                    .max_sets(1024)
+                    // NV12 的 set 0 额外占 3 个 SAMPLED_IMAGE（binding 0/2/3），
+                    // 所以采样图像描述符预算按 3× 估计（2048×3=6144）。
+                    .max_sets(2048)
                     .pool_sizes(&[
                         vk::DescriptorPoolSize {
                             ty: vk::DescriptorType::SAMPLED_IMAGE,
-                            descriptor_count: 1024,
+                            descriptor_count: 6144,
                         },
                         vk::DescriptorPoolSize {
                             ty: vk::DescriptorType::SAMPLER,
-                            descriptor_count: 1024,
+                            descriptor_count: 2048,
                         },
                     ]),
                 None,
@@ -838,6 +973,35 @@ impl Renderer {
             )?);
         }
 
+        // ── NV12 变体管线 ──
+        // 15 档系数混合（`fs_main_nv12`）+ 14 档 PS 变体（`fs_*_nv12`），
+        // 全部用 `pipeline_layout_nv12`（set 0 带 binding 2/3 的 Y/UV plane view）。
+        // NV12 入口只在图像分支多一次 YUV→RGB，其余几何路径与 RGBA 共用同一份
+        // `shade_source`，所以顶点输入 / 混合状态与原管线逐项一致。
+        let mut nv12_pipelines = Vec::new();
+        for mode in blend_modes() {
+            nv12_pipelines.push(create_entry_pipeline(
+                device,
+                samples,
+                pipeline_layout_nv12,
+                msaa_render_pass,
+                "fs_main_nv12",
+                blend_state_for(&mode),
+            )?);
+        }
+        let mut nv12_ps_pipelines = Vec::new();
+        for (_mode, entry) in PS_BLEND_ENTRIES {
+            let nv12_entry = format!("{entry}_nv12");
+            nv12_ps_pipelines.push(create_entry_pipeline(
+                device,
+                samples,
+                pipeline_layout_nv12,
+                msaa_render_pass,
+                &nv12_entry,
+                src_blend(),
+            )?);
+        }
+
         // ── 混合模式管线 ──
         let mut pipelines = Vec::new();
         for mode in blend_modes() {
@@ -857,10 +1021,14 @@ impl Renderer {
             window_id: 0,
             format,
             desc_layout,
+            desc_layout_nv12,
             desc_layout_dst,
             pipeline_layout,
+            pipeline_layout_nv12,
             pipelines,
             ps_pipelines,
+            nv12_pipelines,
+            nv12_ps_pipelines,
             dst_rt: None,
             samples,
             vertex_buffer,
@@ -953,7 +1121,51 @@ impl Renderer {
         &self.textures
     }
 
-    /// 注册 / 重传一张图像纹理。
+    /// 把一组已上传的 Vulkan 句柄装进纹理表（同名覆盖时销毁旧句柄）。
+    ///
+    /// 覆盖写入时销毁旧句柄 —— 不销毁就是显存泄漏，而 demo 会反复注册同名纹理。
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "纹理安装一次收齐全部句柄与元数据"
+    )]
+    fn install_texture(
+        &mut self,
+        name: &str,
+        image: vk::Image,
+        view: vk::ImageView,
+        nv12_uv_view: Option<vk::ImageView>,
+        memory: vk::DeviceMemory,
+        format: ExternalTextureFormat,
+        size: (u32, u32),
+    ) {
+        let slot = if let Some(&s) = self.textures.index.get(name) {
+            s
+        } else {
+            let s = self.textures.slots.len() as u32;
+            self.textures.index.insert(name.to_string(), s);
+            self.textures.slots.push(None);
+            s
+        };
+        if let Some(old) = self
+            .textures
+            .slots
+            .get_mut(slot as usize)
+            .and_then(|s| s.take())
+        {
+            old.destroy(&self.device);
+        }
+        self.textures.slots[slot as usize] = Some(ImageTexture {
+            name: name.to_string(),
+            image,
+            view,
+            nv12_uv_view,
+            memory,
+            format,
+            size,
+        });
+    }
+
+    /// 注册 / 重传一张图像纹理（RGBA 单平面，行为不变）。
     pub fn upload_texture(
         &mut self,
         dev: &Device,
@@ -972,36 +1184,127 @@ impl Renderer {
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         )?;
         if !pixels.is_empty() {
-            upload_image(dev, image, pixels, (width, height))?;
-        }
-        let slot = if let Some(&s) = self.textures.index.get(name) {
-            s
-        } else {
-            let s = self.textures.slots.len() as u32;
-            self.textures.index.insert(name.to_string(), s);
-            self.textures.slots.push(None);
-            s
-        };
-        // 覆盖写入时销毁旧句柄 —— 不销毁就是显存泄漏，而 demo 会反复注册同名纹理。
-        if let Some(old) = self
-            .textures
-            .slots
-            .get_mut(slot as usize)
-            .and_then(|s| s.take())
-        {
-            unsafe {
-                self.device.destroy_image_view(old.view, None);
-                self.device.destroy_image(old.image, None);
-                self.device.free_memory(old.memory, None);
+            if let Err(e) = upload_image(dev, image, pixels, (width, height)) {
+                unsafe {
+                    self.device.destroy_image_view(view, None);
+                    self.device.destroy_image(image, None);
+                    self.device.free_memory(memory, None);
+                }
+                return Err(e);
             }
         }
-        self.textures.slots[slot as usize] = Some(ImageTexture {
-            name: name.to_string(),
+        self.install_texture(
+            name,
             image,
             view,
+            None,
             memory,
-        });
+            ExternalTextureFormat::Rgba8UnormSrgb,
+            (width, height),
+        );
         Ok(())
+    }
+
+    /// 注册 / 重传一张 NV12 多平面纹理：一张 `G8_B8R8_2PLANE_420_UNORM` 图像，
+    /// Y(plane 0, R8) 与交错 UV(plane 1, RG8) 分别上传，各建一个 plane view。
+    pub(crate) fn upload_nv12_texture(
+        &mut self,
+        dev: &Device,
+        name: &str,
+        planes: &CpuPlanes,
+        (width, height): (u32, u32),
+    ) -> Result<(), SurfaceError> {
+        let y = planes
+            .plane(0)
+            .ok_or_else(|| SurfaceError::new("NV12 frame", "missing Y plane"))?;
+        let uv = planes
+            .plane(1)
+            .ok_or_else(|| SurfaceError::new("NV12 frame", "missing UV plane"))?;
+        let plan = nv12_upload_plan((width, height), planes.row_pitch[0], planes.row_pitch[1])?;
+        let (image, y_view, uv_view, memory) =
+            create_nv12_texture(&self.device, dev, width, height)?;
+        let upload = (|| -> Result<(), SurfaceError> {
+            upload_plane_from_layout(
+                dev,
+                image,
+                y,
+                plan[0].extent,
+                vk::ImageLayout::UNDEFINED,
+                nv12_plane_aspect(plan[0].plane),
+                plan[0].row_length_texels,
+            )?;
+            upload_plane_from_layout(
+                dev,
+                image,
+                uv,
+                plan[1].extent,
+                vk::ImageLayout::UNDEFINED,
+                nv12_plane_aspect(plan[1].plane),
+                plan[1].row_length_texels,
+            )
+        })();
+        if let Err(e) = upload {
+            unsafe {
+                self.device.destroy_image_view(uv_view, None);
+                self.device.destroy_image_view(y_view, None);
+                self.device.destroy_image(image, None);
+                self.device.free_memory(memory, None);
+            }
+            return Err(e);
+        }
+        self.install_texture(
+            name,
+            image,
+            y_view,
+            Some(uv_view),
+            memory,
+            ExternalTextureFormat::Nv12,
+            (width, height),
+        );
+        Ok(())
+    }
+
+    /// 原地更新已注册的 NV12 纹理（同尺寸帧复用 image + 两个 plane view）。
+    pub(crate) fn update_nv12_texture_in_place(
+        &mut self,
+        dev: &Device,
+        name: &str,
+        planes: &CpuPlanes,
+        size: (u32, u32),
+    ) -> Result<(), SurfaceError> {
+        let image = self
+            .textures
+            .info_of(name)
+            .filter(|t| t.is_nv12() && t.size == size)
+            .map(|t| t.image)
+            .ok_or_else(|| {
+                SurfaceError::new("update_nv12_texture_in_place", "no matching NV12 texture")
+            })?;
+        let y = planes
+            .plane(0)
+            .ok_or_else(|| SurfaceError::new("NV12 frame", "missing Y plane"))?;
+        let uv = planes
+            .plane(1)
+            .ok_or_else(|| SurfaceError::new("NV12 frame", "missing UV plane"))?;
+        let plan = nv12_upload_plan(size, planes.row_pitch[0], planes.row_pitch[1])?;
+        upload_plane_from_layout(
+            dev,
+            image,
+            y,
+            plan[0].extent,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            nv12_plane_aspect(plan[0].plane),
+            plan[0].row_length_texels,
+        )?;
+        upload_plane_from_layout(
+            dev,
+            image,
+            uv,
+            plan[1].extent,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            nv12_plane_aspect(plan[1].plane),
+            plan[1].row_length_texels,
+        )
     }
 
     /// 原地更新已注册纹理的像素（P0.2）：复用同一张 `VkImage` / SRV，
@@ -1307,19 +1610,54 @@ impl Renderer {
     /// 屏幕尺寸缩放，σ 直接缩水一个数量级。
     /// 消费 ext pool 中的 CPU 挂起纹理并同步卸载（132：使 `resource_key` 走通用采样路径）。
     fn sync_ext_cpu_textures(&mut self, dev: &Device) -> Result<(), SurfaceError> {
-        // bool = 是否为 `update_texture` 的原地更新（首次注册为 false）。
-        let (pending, live_keys): (
-            Vec<(String, zephyra_ext::CpuTextureDescOwned, bool)>,
-            HashSet<String>,
-        ) = {
+        // 帧边界：剔除过期的扩展纹理，令其采样表项在本帧被回收。
+        self.ext_pool
+            .borrow_mut()
+            .begin_frame(zephyra_render_ext::prelude::FrameId(self.ext_frame.get()));
+        // NV12 帧**绝不能**走下面 RGBA 的 `cpu.width * 4` 打包路径 —— 那个式子会把
+        // 每帧两个平面误当一张 RGBA 图，色度全丢。两条路径在这里显式分叉。
+        enum PendingCpu {
+            Rgba(zephyra_ext::CpuTextureDescOwned),
+            Nv12 {
+                planes: Arc<CpuPlanes>,
+                size: (u32, u32),
+            },
+        }
+        // bool = 是否为原地更新（首次注册为 false）。
+        let (pending, live_keys): (Vec<(String, PendingCpu, bool)>, HashSet<String>) = {
             let mut pool = self.ext_pool.borrow_mut();
+            // 先 clone 出诊断句柄：下面的 `iter_mut()` 持有 pool 的可变借用，
+            // 循环体内再 `pool.diagnostics()` 会被借用检查器拒绝。
+            let diag = pool.diagnostics().clone();
             let live = pool.textures.keys().cloned().collect();
             let mut out = Vec::new();
             for (k, res) in pool.textures.iter_mut() {
                 if let Some(cpu) = res.pending_cpu.take() {
-                    out.push((k.clone(), cpu, false));
+                    // RGBA 帧的 cpu_planes 字段也被填过（见 ext.rs）。清掉它，
+                    // 否则下一帧没有 pending_cpu 时会被误认成 NV12 平面。
+                    res.cpu_planes = None;
+                    out.push((k.clone(), PendingCpu::Rgba(cpu), false));
+                } else if let Some(planes) = res.cpu_planes.take() {
+                    match planes.format {
+                        ExternalTextureFormat::Nv12 => {
+                            let is_update = self
+                                .textures
+                                .info_of(k)
+                                .is_some_and(|t| t.is_nv12() && t.size == (res.width, res.height));
+                            out.push((
+                                k.clone(),
+                                PendingCpu::Nv12 {
+                                    planes,
+                                    size: (res.width, res.height),
+                                },
+                                is_update,
+                            ));
+                        }
+                        // I420 / P010 等本后端尚无管线：计入诊断，不静默空白。
+                        _ => diag.note_unsupported_format(),
+                    }
                 } else if let Some(cpu) = res.pending_updates.drain(..).next_back() {
-                    out.push((k.clone(), cpu, true));
+                    out.push((k.clone(), PendingCpu::Rgba(cpu), true));
                 }
             }
             (out, live)
@@ -1332,36 +1670,51 @@ impl Renderer {
             .collect();
         for k in stale {
             if let Some(old) = self.textures.take(&k) {
-                unsafe {
-                    self.device.destroy_image_view(old.view, None);
-                    self.device.destroy_image(old.image, None);
-                    self.device.free_memory(old.memory, None);
-                }
+                old.destroy(&self.device);
             }
             self.ext_texture_keys.remove(&k);
         }
-        for (key, cpu, is_update) in pending {
-            let pixels = if cpu.row_pitch == cpu.width.saturating_mul(4) {
-                cpu.pixels
-            } else {
-                // 紧密打包 RGBA 行。
-                let tight = (cpu.width as usize) * 4;
-                let mut out = vec![0u8; tight * (cpu.height as usize)];
-                for row in 0..cpu.height as usize {
-                    let src = row * (cpu.row_pitch as usize);
-                    let dst = row * tight;
-                    let copy = tight.min(cpu.pixels.len().saturating_sub(src));
-                    if copy > 0 {
-                        out[dst..dst + copy].copy_from_slice(&cpu.pixels[src..src + copy]);
+        for (key, pending, is_update) in pending {
+            match pending {
+                PendingCpu::Rgba(cpu) => {
+                    let pixels = if cpu.row_pitch == cpu.width.saturating_mul(4) {
+                        cpu.pixels
+                    } else {
+                        // 紧密打包 RGBA 行（原路径行为完全不变）。
+                        let tight = (cpu.width as usize) * 4;
+                        let mut out = vec![0u8; tight * (cpu.height as usize)];
+                        for row in 0..cpu.height as usize {
+                            let src = row * (cpu.row_pitch as usize);
+                            let dst = row * tight;
+                            let copy = tight.min(cpu.pixels.len().saturating_sub(src));
+                            if copy > 0 {
+                                out[dst..dst + copy].copy_from_slice(&cpu.pixels[src..src + copy]);
+                            }
+                        }
+                        out
+                    };
+                    if is_update {
+                        // P0.2：原地更新 —— 复用同一张 VkImage，不新建资源。
+                        self.update_texture_in_place(dev, &key, &pixels, (cpu.width, cpu.height))?;
+                    } else {
+                        self.upload_texture(dev, &key, &pixels, (cpu.width, cpu.height))?;
                     }
                 }
-                out
-            };
-            if is_update {
-                // P0.2：原地更新 —— 复用同一张 VkImage，不新建资源。
-                self.update_texture_in_place(dev, &key, &pixels, (cpu.width, cpu.height))?;
-            } else {
-                self.upload_texture(dev, &key, &pixels, (cpu.width, cpu.height))?;
+                PendingCpu::Nv12 { planes, size } => {
+                    let result = if is_update {
+                        self.update_nv12_texture_in_place(dev, &key, &planes, size)
+                    } else {
+                        self.upload_nv12_texture(dev, &key, &planes, size)
+                    };
+                    if let Err(e) = result {
+                        // 上传失败（设备不支持多平面 / 平面数据非法）必须可见。
+                        self.ext_pool
+                            .borrow()
+                            .diagnostics()
+                            .note_unsupported_format();
+                        return Err(e);
+                    }
+                }
             }
             self.ext_texture_keys.insert(key);
         }
@@ -2445,24 +2798,45 @@ impl Renderer {
         if draws.is_empty() {
             return;
         }
-        // 先只读地解析出 (视图, 管线, 索引起点, 数量)：`&self.textures` /
+        // 先只读地解析出 (视图, 格式, 管线, 索引起点, 数量)：`&self.textures` /
         // `&self.pipelines` 的借用期间不能调 `&mut self` 的 `update_descriptor`
         // （E0502），所以分两遍。
-        let mut resolved: Vec<(vk::ImageView, DrawPipeline, u32, u32)> = Vec::new();
+        struct ResolvedDraw {
+            /// binding 0 视图（NV12 时是 Y plane）。
+            view: vk::ImageView,
+            /// binding 3 视图（UV plane）；`Some` 表示这条 draw 要绑 NV12 set。
+            uv_view: Option<vk::ImageView>,
+            format: ExternalTextureFormat,
+            pipeline: DrawPipeline,
+            index_start: u32,
+            index_count: u32,
+        }
+        let mut resolved: Vec<ResolvedDraw> = Vec::new();
         for d in draws {
-            let tex_view = match &d.texture {
-                Some(name) => self.textures.view_of(name).unwrap_or(self.atlas_view),
-                None => self.atlas_view,
+            let (view, uv_view, format) = match d
+                .texture
+                .as_deref()
+                .and_then(|name| self.textures.info_of(name))
+            {
+                Some(info) => (info.view, info.nv12_uv_view, info.format),
+                None => (self.atlas_view, None, ExternalTextureFormat::Rgba8UnormSrgb),
             };
-            let pipeline = match self.pipeline_for_blend(d.blend) {
+            let pipeline = match self.pipeline_for_format(d.blend, format) {
                 Some(p) => p,
                 None => {
                     *unimplemented += 1;
-                    self.pipeline_for_blend(default_blend)
+                    self.pipeline_for_format(default_blend, format)
                         .expect("default 必有管线")
                 }
             };
-            resolved.push((tex_view, pipeline, d.index_start, d.index_count));
+            resolved.push(ResolvedDraw {
+                view,
+                uv_view,
+                format,
+                pipeline,
+                index_start: d.index_start,
+                index_count: d.index_count,
+            });
         }
         let vertex_offsets = [0u64];
         unsafe {
@@ -2471,7 +2845,16 @@ impl Renderer {
             self.device
                 .cmd_bind_index_buffer(cmd, self.index_buffer, 0, vk::IndexType::UINT16);
         }
-        for (tex_view, pipeline, index_start, index_count) in resolved {
+        for draw in resolved {
+            let ResolvedDraw {
+                view: tex_view,
+                uv_view,
+                format,
+                pipeline,
+                index_start,
+                index_count,
+            } = draw;
+            let nv12 = uv_view.is_some() && uses_nv12_pipeline(format);
             let is_ps = matches!(pipeline, DrawPipeline::Ps(_));
             // 目标此刻是附件 —— 必须先结束通道、拷出副本、再重开。
             // 两条通道的快照方式不同：主通道 resolve MSAA，RT 通道 copy RT 内容
@@ -2508,9 +2891,18 @@ impl Renderer {
                     self.begin_main_pass(cmd, framebuffer, false);
                 }
             }
-            let desc_set = match self.update_descriptor(tex_view) {
-                Ok(s) => s,
-                Err(_) => continue,
+            // NV12 draw 用带 binding 2/3 的 set 0 布局 + 对应管线布局；
+            // RGBA draw 完全走原路径（包括描述符池分配与布局）。
+            let (desc_set, layout) = if nv12 {
+                match self.update_nv12_descriptor(tex_view, uv_view.unwrap()) {
+                    Ok(s) => (s, self.pipeline_layout_nv12),
+                    Err(_) => continue,
+                }
+            } else {
+                match self.update_descriptor(tex_view) {
+                    Ok(s) => (s, self.pipeline_layout),
+                    Err(_) => continue,
+                }
             };
             // set 1 始终绑：管线布局有两套 set，`fs_main` 虽然静态不用 set 1，
             // 但绑上它比赌「驱动只校验用到的」便宜得多。PS 变体缺这一绑就是
@@ -2530,7 +2922,7 @@ impl Renderer {
                 self.device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
-                    self.pipeline_layout,
+                    layout,
                     0,
                     &sets,
                     &[],
@@ -2586,17 +2978,85 @@ impl Renderer {
         Ok(desc_set)
     }
 
-    /// 混合模式 → 管线索引。
-    fn pipeline_for_blend(&self, blend: BlendMode) -> Option<DrawPipeline> {
-        // ⚠ 这里**不能**写 `blend_mode_index(blend)?`：`?` 会把「不在系数表里」
-        // 当成「这个模式完全不可用」直接从函数返回，于是 14 档 PS 变体永远走不到
-        // 下面那次 `ps_blend_index` —— 症状恰好是「PS 变体全部退回默认混合」，
-        // 而画面里看不出任何异常。
-        if let Some(p) = blend_mode_index(blend).and_then(|i| self.pipelines.get(i).copied()) {
-            return Some(DrawPipeline::Fixed(p));
+    /// 更新 NV12 描述符集：binding 0/2 = Y plane 视图（binding 0 在 NV12 图像
+    /// 分支不被采样，但字形/矩形分支仍静态引用它，必须绑有效视图），
+    /// binding 3 = UV plane 视图，binding 1 = 采样器。
+    fn update_nv12_descriptor(
+        &mut self,
+        y_view: vk::ImageView,
+        uv_view: vk::ImageView,
+    ) -> Result<vk::DescriptorSet, SurfaceError> {
+        let desc_set = unsafe {
+            self.device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::builder()
+                    .descriptor_pool(self.desc_pool)
+                    .set_layouts(&[self.desc_layout_nv12]),
+            )
         }
-        let p = ps_blend_index(blend).and_then(|i| self.ps_pipelines.get(i).copied())?;
-        Some(DrawPipeline::Ps(p))
+        .map_err(|e| SurfaceError::new("allocate nv12 descriptor set", e.to_string()))?[0];
+        let y_infos = [vk::DescriptorImageInfo {
+            sampler: vk::Sampler::null(),
+            image_view: y_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        }];
+        let uv_infos = [vk::DescriptorImageInfo {
+            sampler: vk::Sampler::null(),
+            image_view: uv_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        }];
+        let sampler_infos = [vk::DescriptorImageInfo {
+            sampler: self.sampler,
+            image_view: vk::ImageView::null(),
+            image_layout: vk::ImageLayout::UNDEFINED,
+        }];
+        let writes = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&y_infos)
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .image_info(&sampler_infos)
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(2)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&y_infos)
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&uv_infos)
+                .build(),
+        ];
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+        Ok(desc_set)
+    }
+
+    /// 混合模式 + 纹理格式 → 实际管线。NV12 纹理取 `nv12_*` 数组，其余取原数组。
+    fn pipeline_for_format(
+        &self,
+        blend: BlendMode,
+        format: ExternalTextureFormat,
+    ) -> Option<DrawPipeline> {
+        let (family, slot) = choose_pipeline(blend, format)?;
+        let (fixed, ps) = if family == PipelineFamily::Nv12 {
+            (&self.nv12_pipelines, &self.nv12_ps_pipelines)
+        } else {
+            (&self.pipelines, &self.ps_pipelines)
+        };
+        match slot {
+            SelectedPipeline::Fixed(i) => fixed.get(i).copied().map(DrawPipeline::Fixed),
+            SelectedPipeline::Ps(i) => ps.get(i).copied().map(DrawPipeline::Ps),
+        }
     }
 
     /// 目标副本 RT（PS 变体的 `g_dst`），按 MSAA 尺寸惰性建。
@@ -3560,6 +4020,31 @@ fn upload_image_from_layout(
     (w, h): (u32, u32),
     old_layout: vk::ImageLayout,
 ) -> Result<(), SurfaceError> {
+    upload_plane_from_layout(
+        dev,
+        image,
+        pixels,
+        (w, h),
+        old_layout,
+        vk::ImageAspectFlags::COLOR,
+        0,
+    )
+}
+
+/// 上传一个**平面**：单平面图像 = COLOR；NV12 的 Y = PLANE_0 / UV = PLANE_1。
+///
+/// `row_length_texels` 是 staging buffer 每行的**纹素**数（0 = 紧打包，即 `w`）：
+/// R8 的 Y 平面 pitch 直接以字节计；RG8 的 UV 平面 pitch 必须除以 2 才是纹素数
+/// （见 [`nv12_upload_plan`]）。
+fn upload_plane_from_layout(
+    dev: &Device,
+    image: vk::Image,
+    pixels: &[u8],
+    (w, h): (u32, u32),
+    old_layout: vk::ImageLayout,
+    aspect: vk::ImageAspectFlags,
+    row_length_texels: u32,
+) -> Result<(), SurfaceError> {
     let device = &dev.device;
     let byte_len = pixels.len() as vk::DeviceSize;
     let buffer = unsafe {
@@ -3608,7 +4093,7 @@ fn upload_image_from_layout(
     }
     .map_err(|e| SurfaceError::new("upload cmd", e.to_string()))?[0];
     let range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
+        aspect_mask: aspect,
         base_mip_level: 0,
         level_count: 1,
         base_array_layer: 0,
@@ -3635,9 +4120,10 @@ fn upload_image_from_layout(
         .subresource_range(range)
         .build();
     let regions = [vk::BufferImageCopy::builder()
+        .buffer_row_length(row_length_texels)
         .image_subresource(
             vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .aspect_mask(aspect)
                 .base_array_layer(0)
                 .layer_count(1)
                 .build(),
@@ -3709,9 +4195,161 @@ fn upload_image_from_layout(
     Ok(())
 }
 
+/// NV12 多平面图像格式（core Vulkan 1.0，无需扩展）。
+pub(crate) const NV12_IMAGE_FORMAT: vk::Format = vk::Format::G8_B8R8_2PLANE_420_UNORM;
+/// Y 平面视图格式：单通道 8bit，shader 从 `.r` 取亮度。
+pub(crate) const NV12_Y_VIEW_FORMAT: vk::Format = vk::Format::R8_UNORM;
+/// UV 平面视图格式：双通道 8bit 交错，shader 从 `.rg` 取 (U,V)。
+pub(crate) const NV12_UV_VIEW_FORMAT: vk::Format = vk::Format::R8G8_UNORM;
+
+/// plane 序号 → Vulkan aspect mask（0 = PLANE_0/Y，1 = PLANE_1/UV）。
+pub(crate) fn nv12_plane_aspect(plane: u8) -> vk::ImageAspectFlags {
+    match plane {
+        0 => vk::ImageAspectFlags::PLANE_0,
+        1 => vk::ImageAspectFlags::PLANE_1,
+        _ => unreachable!("NV12 只有两个平面"),
+    }
+}
+
+/// 单个平面的上传参数（纯数据，不碰 GPU，供单测钉住）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Nv12PlaneCopy {
+    /// 0 = Y(PLANE_0)，1 = UV(PLANE_1)。
+    pub(crate) plane: u8,
+    /// staging buffer 每行纹素数：R8 的 Y = pitch；RG8 的 UV = pitch/2。
+    pub(crate) row_length_texels: u32,
+    /// buffer↔image copy 的平面尺寸：多平面格式的每个平面用自己的尺寸。
+    pub(crate) extent: (u32, u32),
+}
+
+/// 校验 NV12 双平面的尺寸 / pitch，产出两个平面的上传参数。
+///
+/// # 为什么必须偶数尺寸
+///
+/// 4:2:0 的色度平面是 `width/2 × height/2`；奇数尺寸会让色度平面向上取整而与
+/// Y 平面错开半像素，纹理采样时整行色度偏移。
+pub(crate) fn nv12_upload_plan(
+    (width, height): (u32, u32),
+    y_pitch: u32,
+    uv_pitch: u32,
+) -> Result<[Nv12PlaneCopy; 2], SurfaceError> {
+    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(SurfaceError::new(
+            "NV12 frame",
+            "size must be non-zero and even",
+        ));
+    }
+    let half_w = width / 2;
+    if y_pitch < width || uv_pitch < half_w * 2 || !uv_pitch.is_multiple_of(2) {
+        return Err(SurfaceError::new(
+            "NV12 frame",
+            "pitch too small or UV pitch not even",
+        ));
+    }
+    Ok([
+        Nv12PlaneCopy {
+            plane: 0,
+            row_length_texels: y_pitch,
+            extent: (width, height),
+        },
+        Nv12PlaneCopy {
+            plane: 1,
+            row_length_texels: uv_pitch / 2,
+            extent: (half_w, height / 2),
+        },
+    ])
+}
+
+/// 建 NV12 多平面图像 + 两个 plane view（Y=R8/PLANE_0，UV=RG8/PLANE_1）。
+#[allow(clippy::type_complexity)]
+fn create_nv12_texture(
+    device: &ash::Device,
+    dev: &Device,
+    width: u32,
+    height: u32,
+) -> Result<(vk::Image, vk::ImageView, vk::ImageView, vk::DeviceMemory), SurfaceError> {
+    let image = unsafe {
+        device.create_image(
+            &vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(NV12_IMAGE_FORMAT)
+                .extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                // 注：VK_IMAGE_CREATE_MULTIPLANAR_BIT 在 Vulkan 1.1 已废弃/移除
+                // （ash 0.37 的 ImageCreateFlags 也不再有该位）—— 多平面由 format
+                // 自身决定，不必（也不能）显式置位。
+                .build(),
+            None,
+        )
+    }
+    .map_err(|e| SurfaceError::new("nv12 image", e.to_string()))?;
+    let req = unsafe { device.get_image_memory_requirements(image) };
+    let mem = unsafe {
+        device.allocate_memory(
+            &vk::MemoryAllocateInfo::builder()
+                .allocation_size(req.size)
+                .memory_type_index(crate::surface::pick_type(
+                    &dev.instance,
+                    dev.physical,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                )?)
+                .build(),
+            None,
+        )
+    }
+    .map_err(|e| SurfaceError::new("nv12 image memory", e.to_string()))?;
+    unsafe { device.bind_image_memory(image, mem, 0) }
+        .map_err(|e| SurfaceError::new("bind nv12 image memory", e.to_string()))?;
+    let mk_view = |format: vk::Format, aspect: vk::ImageAspectFlags| unsafe {
+        device.create_image_view(
+            &vk::ImageViewCreateInfo::builder()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: aspect,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build(),
+            None,
+        )
+    };
+    let y_view = mk_view(NV12_Y_VIEW_FORMAT, vk::ImageAspectFlags::PLANE_0)
+        .map_err(|e| SurfaceError::new("nv12 Y image view", e.to_string()))?;
+    let uv_view = match mk_view(NV12_UV_VIEW_FORMAT, vk::ImageAspectFlags::PLANE_1) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe {
+                device.destroy_image_view(y_view, None);
+                device.destroy_image(image, None);
+                device.free_memory(mem, None);
+            }
+            return Err(SurfaceError::new("nv12 UV image view", e.to_string()));
+        }
+    };
+    Ok((image, y_view, uv_view, mem))
+}
+
 // offset_of! 宏（stable Rust 1.77+ 有 std::mem::offset_of!）。
 use std::mem::offset_of;
 
 #[cfg(test)]
 #[path = "tests/wgsl_refraction_gate.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/nv12_contract.rs"]
+mod nv12_tests;

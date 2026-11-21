@@ -55,6 +55,8 @@ full = [
 [dependencies]
 # 渲染契约（始终依赖，零平台 API）
 zephyra-render-ext = { path = "../../zephyra-render-ext" }
+# Bytes 平面：纯 Rust、零平台依赖，用于把解码帧零拷贝交给契约层
+bytes = "1"
 
 # 解码库（独立仓；extra 层唯一一处单向 path 依赖，见根 Cargo.toml / AGENTS.md 的例外说明）
 zephyra-video = { path = "../../../../../zephyra-video", optional = true }
@@ -68,11 +70,11 @@ cpal = { version = "0.15", optional = true }
 # 各集成测试只在需要的 feature 打开时编译；否则 workspace 门禁必红。
 [[test]]
 name = "playback"
-required-features = ["video-h264", "aac"]
+required-features = ["video-h264", "aac", "audio"]
 
 [[test]]
 name = "stress"
-required-features = ["video-h264", "aac"]
+required-features = ["video-h264", "aac", "audio"]
 
 [[test]]
 name = "load_report"

@@ -8,9 +8,8 @@ rust-version.workspace = true
 
 # 为什么是独立 crate，且**不在 default-members 里**
 #
-# 这是本仓第二个"可选子包"（第一个是 zephyra-camera）。放在 workspace
-# `members` 但排除出 `default-members`，理由与 camera 一致：无差别的
-# `cargo build` / `cargo test` 不该编译设备相关代码。
+# 本仓的"可选子包"之一。放在 workspace `members` 但排除出 `default-members`，
+# 理由：无差别的 `cargo build` / `cargo test` 不该编译设备相关代码。
 #
 # 但理由更强一层 —— 本 crate 用了 `unsafe`（COM / DXGI），而 `zephyra/zephyra-core`
 # 与 `zephyra/zephyra-core-winit` 都是 `unsafe_code = "forbid"`。放进 default-members

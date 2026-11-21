@@ -26,12 +26,13 @@ use std::rc::Rc;
 use windows::core::Interface;
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, RECT};
 use windows::Win32::Graphics::Direct3D12::*;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_FORMAT_R16_UINT};
 
 use crate::quad::{self, RenderReport, Vertex};
 use crate::shader::{self, ShaderError, Shaders};
 use crate::surface::{create_resource, heap_props, texture_desc, DescriptorHeap, SurfaceError};
 use zephyra_core::filter::{BlendMode, Coeff};
+use zephyra_render_ext::prelude::ExternalTextureFormat;
 use zephyra_render_ext::{registration::HookContext, types::Rect as ExtRect};
 
 /// 一张已上传的图像纹理。
@@ -53,6 +54,108 @@ struct UploadedTexture {
     _staging: UploadBuffer,
     /// 它在 `srv_heap` 里的槽位。槽位用尽时据此说清「一共要几张」。
     _slot: u32,
+}
+
+/// 该外部像素格式是否必须选 NV12 PS 变体（采样后做 YUV→RGB）。
+///
+/// 只有 `Nv12`：其余格式要么走原 RGBA PS（`Rgba*` / `Bgra*`），要么在上传
+/// 路径里被显式判为不支持并计入 `FrameDiagnostics`（`I420` / `P010` …），
+/// 绝不会带着错误字节码画出来。做成自由函数是为了让契约测试无需 GPU 即可钉住
+/// 「RGBA 仍走原 PS、NV12 才换变体」这一条。
+pub(crate) fn format_uses_nv12_ps(fmt: ExternalTextureFormat) -> bool {
+    fmt == ExternalTextureFormat::Nv12
+}
+
+/// NV12 两平面的 tight 布局（纯计算，无设备、无 GPU）。
+///
+/// NV12 是 4:2:0 半平面：Y 平面 `w×h` 每像素 1 字节；UV 平面 `(w/2)×(h/2)`
+/// 个交错 `RG` 对，每像素 2 字节 —— 所以两个平面的 tight 行宽**恰好都是 w**。
+/// 宽高必须为偶数，否则 UV 尺寸无法整除，采样会越界且没有报错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Nv12Layout {
+    pub y_width: u32,
+    pub y_height: u32,
+    pub uv_width: u32,
+    pub uv_height: u32,
+    /// 两个平面共同的 tight 行宽（字节）。
+    pub tight_row_bytes: u32,
+}
+
+/// 计算 NV12 布局；宽高非正偶数时失败（不静默向下取整）。
+pub(crate) fn nv12_layout(w: u32, h: u32) -> Result<Nv12Layout, SurfaceError> {
+    if w == 0 || h == 0 || !w.is_multiple_of(2) || !h.is_multiple_of(2) {
+        return Err(SurfaceError::new(
+            "NV12 纹理布局",
+            windows::core::Error::new(E_INVALIDARG, format!("NV12 宽高必须是正偶数，实得 {w}×{h}")),
+        ));
+    }
+    Ok(Nv12Layout {
+        y_width: w,
+        y_height: h,
+        uv_width: w / 2,
+        uv_height: h / 2,
+        tight_row_bytes: w,
+    })
+}
+
+/// 驱动 footprint + 源行距 → 两平面上传参数（纯计算，供无 GPU 单测钉住）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Nv12FootprintPlan {
+    pub y_offset: u64,
+    pub y_dst_pitch: u32,
+    pub y_rows: u32,
+    pub y_row_bytes: u32,
+    pub y_src_pitch: u32,
+    pub uv_offset: u64,
+    pub uv_dst_pitch: u32,
+    pub uv_rows: u32,
+    pub uv_row_bytes: u32,
+    pub uv_src_pitch: u32,
+    /// 两平面摆进同一块暂存后需要的最小字节数（不含驱动可能在尾部加的填充）。
+    pub staging_bytes: u64,
+}
+
+/// 把 `GetCopyableFootprints` 的两个子资源结果折算成逐行拷贝参数。
+///
+/// `driver` / `src_pitches` 的顺序都是 `[0]=Y, [1]=UV`。驱动给的行距必须
+/// 装得下一行 tight 像素，否则图像会横向错位且只报调试层消息。
+pub(crate) fn nv12_footprint_plan(
+    layout: Nv12Layout,
+    driver: [(u64, u32); 2],
+    src_pitches: [u32; 2],
+) -> Result<Nv12FootprintPlan, SurfaceError> {
+    let tight = layout.tight_row_bytes;
+    for (sub, (_, pitch)) in driver.iter().enumerate() {
+        if *pitch < tight {
+            return Err(SurfaceError::new(
+                "NV12 上传",
+                windows::core::Error::new(
+                    E_FAIL,
+                    format!("子资源 {sub} 行距 {pitch} < tight 行宽 {tight}"),
+                ),
+            ));
+        }
+    }
+    let rows = [layout.y_height, layout.uv_height];
+    let staging_bytes = driver
+        .iter()
+        .zip(rows)
+        .map(|((offset, pitch), r)| offset + *pitch as u64 * r as u64)
+        .max()
+        .unwrap_or(0);
+    Ok(Nv12FootprintPlan {
+        y_offset: driver[0].0,
+        y_dst_pitch: driver[0].1,
+        y_rows: rows[0],
+        y_row_bytes: tight,
+        y_src_pitch: src_pitches[0].max(tight),
+        uv_offset: driver[1].0,
+        uv_dst_pitch: driver[1].1,
+        uv_rows: rows[1],
+        uv_row_bytes: tight,
+        uv_src_pitch: src_pitches[1].max(tight),
+        staging_bytes,
+    })
 }
 
 /// 渲染器：持有 D3D12 管线状态与常驻资源。
@@ -130,11 +233,17 @@ fn dst_copy_desc(size: (u32, u32)) -> D3D12_RESOURCE_DESC {
 
 pub struct Renderer {
     root_signature: ID3D12RootSignature,
-    /// PSO 缓存，键 = (PS 变体下标, 混合模式下标, MSAA 采样数)。
+    /// PSO 缓存，键 = (PS 变体下标, 混合模式下标, MSAA 采样数, 是否 NV12)。
     ///
     /// D3D12 的混合状态烤在 PSO 里，所以换混合模式必然换 PSO。懒建：
     /// 绝大多数帧只用默认那一个，全量预建是纯粹的启动开销。
-    psos: std::cell::RefCell<std::collections::HashMap<(usize, usize, u32), ID3D12PipelineState>>,
+    ///
+    /// 末位 `bool` 区分 RGBA / NV12 两套字节码：**同一个 ps_index 在两张表里
+    /// 取到的是同一个混合模式的不同 PS**（RGBA 采样得到 RGBA，NV12 采样得到
+    /// YUV 再在 PS 里转 RGB）。不把它放进 key 会让先画的纹理类型「污染」后画的。
+    psos: std::cell::RefCell<
+        std::collections::HashMap<(usize, usize, u32, bool), ID3D12PipelineState>,
+    >,
     /// shader 可见的 CBV/SRV 堆。着色器的 `t0` 绑到其中第 0 号。
     srv_heap: DescriptorHeap,
     /// 图集的 SRV 在 `srv_heap` 里的位置（恒为 0）。
@@ -861,6 +970,12 @@ struct CmdEnv<'a> {
     textures: &'a TextureTable,
     /// 扩展纹理 `resource_key` → SRV 槽位快照（避免与 `&mut WindowTargets` 冲突）。
     ext_slots: Option<&'a std::collections::HashMap<String, u32>>,
+    /// 扩展纹理 `resource_key` → 像素格式快照。
+    ///
+    /// `replay` 用它判断「这条 draw 绑的纹理是不是 NV12」：是则选 NV12 PS
+    /// 变体（采样后做 YUV→RGB），否则逐字节走原来的 RGBA 路径。
+    /// 与 `ext_slots` 同帧取自同一个 pool，不会漂移。
+    ext_formats: Option<&'a std::collections::HashMap<String, ExternalTextureFormat>>,
     /// 目标的**资源**（`refresh_dst_copy` 拿它当拷贝**源**）。
     ///
     /// # 它**不**用于发目标的状态屏障
@@ -1111,6 +1226,7 @@ impl Renderer {
             0,
             zephyra_core::filter::BlendMode::SrcOver as usize,
             samples,
+            false,
         )
         .map_err(|e| ShaderError::Create("建 PSO", e))?;
         let psos = std::collections::HashMap::from([(
@@ -1118,6 +1234,7 @@ impl Renderer {
                 0usize,
                 zephyra_core::filter::BlendMode::SrcOver as usize,
                 samples,
+                false,
             ),
             pso.clone(),
         )]);
@@ -1342,6 +1459,7 @@ impl Renderer {
         ps_index: usize,
         mode: usize,
         samples: u32,
+        nv12: bool,
     ) -> Result<ID3D12PipelineState, SurfaceError> {
         // 混合状态与 D3D11 版**逐项一致**（两边各写一份，所以这里必须同步改）。
         //
@@ -1349,12 +1467,24 @@ impl Renderer {
         // `SrcOver` 的颜色因子是 `ONE` —— 再乘一次 `SRC_ALPHA` 就是双重预乘，
         // 表现为半透明区域整体发暗。
         let blend = blend_desc_for(mode).unwrap_or_else(src_blend_desc);
-        let (name, ps_bytes) = shader::PS_VARIANTS.get(ps_index).unwrap_or_else(|| {
-            panic!(
-                "ps_index {ps_index} 越界（表长 {}）",
-                shader::PS_VARIANTS.len()
-            )
-        });
+        // NV12 与 RGBA 的前 15 项同序，所以同一个 `ps_index` 在两张表里取到的是
+        // 同一个混合模式的两份字节码。选错表的症状是「视频帧画出来是花屏」（用
+        // RGBA PS 去采样 NV12 SRV，读到的是 Y/U/V 而非 RGB），且没有报错。
+        let (name, ps_bytes) = if nv12 {
+            shader::PS_NV12_VARIANTS.get(ps_index).unwrap_or_else(|| {
+                panic!(
+                    "ps_index {ps_index} 越界（NV12 表长 {}）",
+                    shader::PS_NV12_VARIANTS.len()
+                )
+            })
+        } else {
+            shader::PS_VARIANTS.get(ps_index).unwrap_or_else(|| {
+                panic!(
+                    "ps_index {ps_index} 越界（表长 {}）",
+                    shader::PS_VARIANTS.len()
+                )
+            })
+        };
 
         // 光栅化：关背面剔除 —— 圆角 SDF 在边缘产生的三角形可能退化，剔除会让圆角
         // 出现缺口（表现为四边形的角被啃掉一块）。
@@ -1797,8 +1927,9 @@ impl Renderer {
         ps_index: usize,
         mode: usize,
         samples: u32,
+        nv12: bool,
     ) -> Result<ID3D12PipelineState, SurfaceError> {
-        let key = (ps_index, mode, samples);
+        let key = (ps_index, mode, samples, nv12);
         if let Some(p) = self.psos.borrow().get(&key) {
             return Ok(p.clone());
         }
@@ -1809,6 +1940,7 @@ impl Renderer {
             ps_index,
             mode,
             samples,
+            nv12,
         )?;
         self.psos.borrow_mut().insert(key, pso.clone());
         Ok(pso)
@@ -2199,6 +2331,158 @@ impl Renderer {
         Ok(slot)
     }
 
+    /// 把 `CpuPlanes` 的 Y + UV 两个平面上传为一张 `DXGI_FORMAT_NV12` 纹理。
+    ///
+    /// # 子资源布局
+    ///
+    /// NV12 有 2 个子资源：`0` = Y（`w×h`，1 字节/像素），`1` = UV
+    /// (`w/2 × h/2`，2 字节/像素的 RG 对)。`GetCopyableFootprints` 一次取两个，
+    /// 两块数据按各自 `Offset` 摆进**同一块**上传堆缓冲，再用两次
+    /// `CopyTextureRegion`（`SubresourceIndex` 0 / 1）拷进默认堆纹理。
+    ///
+    /// # 为什么 SRV 不在本函数里建
+    ///
+    /// 与 RGBA 路径一样由 `sync_ext_texture_srvs` 用 `CreateShaderResourceView(
+    /// resource, None, …)` 建：隐式派生格式，避免手写 desc 与资源格式失 sync
+    /// （D3D11 的 NV12 经验是显式 desc 会被部分驱动以 `0x80070057` 拒绝）。
+    ///
+    /// # 原地更新
+    ///
+    /// `resource` 已存在时先发 `PIXEL_SHADER_RESOURCE → COPY_DEST` 屏障；
+    /// 首发时资源本就是 `COPY_DEST`。拷完统一转回 `PIXEL_SHADER_RESOURCE`。
+    /// staging 挂在 `res.staging` 上，由 `begin_frame` 的 `wait_gpu` 后在下一帧替换。
+    fn stage_ext_nv12_upload(
+        &self,
+        list: &ID3D12GraphicsCommandList,
+        res: &mut crate::ext::ExtResource,
+        planes: &zephyra_render_ext::prelude::CpuPlanes,
+    ) -> Result<(), SurfaceError> {
+        let layout = nv12_layout(res.width, res.height)?;
+        let y = planes.plane(0).ok_or_else(|| {
+            SurfaceError::new("NV12 上传", windows::core::Error::new(E_FAIL, "缺 Y 平面"))
+        })?;
+        let uv = planes.plane(1).ok_or_else(|| {
+            SurfaceError::new("NV12 上传", windows::core::Error::new(E_FAIL, "缺 UV 平面"))
+        })?;
+
+        let first = res.resource.is_none();
+        if first {
+            let mut desc = texture_desc((res.width, res.height), D3D12_RESOURCE_FLAG_NONE);
+            desc.Format = DXGI_FORMAT_NV12;
+            res.resource = Some(create_resource(
+                &self.device,
+                &heap_props(D3D12_HEAP_TYPE_DEFAULT),
+                &desc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+            )?);
+        }
+        let texture = res.resource.as_ref().expect("just ensured");
+
+        // 与创建时同形：GetCopyableFootprints 必须拿到 NV12 格式与 2 个子资源，
+        // 否则行距按 RGBA 算，UV 平面整片错位。
+        let mut nv12_desc = texture_desc((res.width, res.height), D3D12_RESOURCE_FLAG_NONE);
+        nv12_desc.Format = DXGI_FORMAT_NV12;
+        let mut footprints = [D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default(); 2];
+        let mut total = 0u64;
+        unsafe {
+            self.device.GetCopyableFootprints(
+                &nv12_desc,
+                0,
+                2,
+                0,
+                Some(footprints.as_mut_ptr()),
+                None,
+                None,
+                Some(&mut total),
+            );
+        }
+        let plan = nv12_footprint_plan(
+            layout,
+            [
+                (footprints[0].Offset, footprints[0].Footprint.RowPitch),
+                (footprints[1].Offset, footprints[1].Footprint.RowPitch),
+            ],
+            [planes.row_pitch[0], planes.row_pitch[1]],
+        )?;
+
+        // 源平面每行的字节数不足就提前报错；直接按 src_pitch 读会越界。
+        for (name, data, pitch, rows) in [
+            ("Y", y, plan.y_src_pitch, plan.y_rows),
+            ("UV", uv, plan.uv_src_pitch, plan.uv_rows),
+        ] {
+            let need = pitch as u64 * rows as u64;
+            if (data.len() as u64) < need {
+                return Err(SurfaceError::new(
+                    "NV12 上传",
+                    windows::core::Error::new(
+                        E_FAIL,
+                        format!("{name} 平面需要 {need} 字节，实收 {}", data.len()),
+                    ),
+                ));
+            }
+        }
+
+        let staging = UploadBuffer::new(&self.device, total.max(plan.staging_bytes))?;
+        unsafe {
+            for row in 0..plan.y_rows as usize {
+                std::ptr::copy_nonoverlapping(
+                    y.as_ptr().add(row * plan.y_src_pitch as usize),
+                    staging
+                        .mapped
+                        .add(plan.y_offset as usize + row * plan.y_dst_pitch as usize),
+                    plan.y_row_bytes as usize,
+                );
+            }
+            for row in 0..plan.uv_rows as usize {
+                std::ptr::copy_nonoverlapping(
+                    uv.as_ptr().add(row * plan.uv_src_pitch as usize),
+                    staging
+                        .mapped
+                        .add(plan.uv_offset as usize + row * plan.uv_dst_pitch as usize),
+                    plan.uv_row_bytes as usize,
+                );
+            }
+            if !first {
+                crate::surface::Gpu::barrier(
+                    list,
+                    texture,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_COPY_DEST,
+                );
+            }
+            for (sub, footprint) in footprints.iter().enumerate() {
+                list.CopyTextureRegion(
+                    &D3D12_TEXTURE_COPY_LOCATION {
+                        pResource: std::mem::ManuallyDrop::new(Some(texture.clone())),
+                        Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                            SubresourceIndex: sub as u32,
+                        },
+                    },
+                    0,
+                    0,
+                    0,
+                    &D3D12_TEXTURE_COPY_LOCATION {
+                        pResource: std::mem::ManuallyDrop::new(Some(staging.resource.clone())),
+                        Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                            PlacedFootprint: *footprint,
+                        },
+                    },
+                    None,
+                );
+            }
+            crate::surface::Gpu::barrier(
+                list,
+                texture,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            );
+        }
+        res.staging = Some(staging);
+        Ok(())
+    }
+
     /// 把一份 CPU 像素拷进 `res.resource`（`resource` 为空时先创建纹理）。
     ///
     /// P0.2：`register_texture` 的首次上传与 `update_texture` 的逐帧更新共用这条
@@ -2330,11 +2614,37 @@ impl Renderer {
             }
         }
 
+        // 诊断计数在循环外取一次：循环内 `res` 是对 `ext_pool.textures` 的可变借用，
+        // 再借 `ext_pool` 会被借用检查拒绝。
+        let diagnostics = ext_pool.diagnostics().clone();
         let keys: Vec<String> = ext_pool.textures.keys().cloned().collect();
         for key in keys {
             let Some(res) = ext_pool.textures.get_mut(&key) else {
                 continue;
             };
+            // NV12/I420 多平面帧：平面不 flatten 成 RGBA，走双子资源上传。
+            // `cpu_planes` 对所有 CPU 帧都写入，所以这里必须按 format 分派；
+            // RGBA 帧的平面留给下面的 `pending_cpu` 路径（不重复上传）。
+            if let Some(planes) = res.cpu_planes.take() {
+                if format_uses_nv12_ps(res.format) {
+                    if let Err(e) = self.stage_ext_nv12_upload(list, res, &planes) {
+                        diagnostics.note_unsupported_format();
+                        zephyra_ext::debug::log_fallback(&format!(
+                            "d3d12 NV12 upload failed for {key}: {e}"
+                        ));
+                        continue;
+                    }
+                } else {
+                    // I420 / P010 等尚无对应 PS 变体 —— 明确记账并跳过，绝不用
+                    // RGBA PS 去采样多平面 SRV（那会画出花屏且不报任何错）。
+                    diagnostics.note_unsupported_format();
+                    zephyra_ext::debug::log_fallback(&format!(
+                        "d3d12 ext format {:?} unsupported for {key}",
+                        res.format
+                    ));
+                    continue;
+                }
+            }
             // CPU 首次上传 / 逐帧原地更新共用同一条 staging 路径。每帧只取队列里
             // 最新的一份更新 —— 相机帧生产快于渲染帧时丢中间帧是正确语义。
             let pending = res
@@ -2378,6 +2688,13 @@ impl Renderer {
         targets
             .ext_frame
             .set(targets.ext_frame.get().wrapping_add(1));
+        // 帧边界：剔除过期的扩展纹理，令其 SRV 槽位从解析中消失。
+        targets
+            .ext_pool
+            .borrow_mut()
+            .begin_frame(zephyra_render_ext::prelude::FrameId(
+                targets.ext_frame.get(),
+            ));
         // ★ 新的一帧 ⇒ 上一帧留下的 `g_dst` 副本作废。
         //
         // 不推进它的话，「内容没变就不重拷」那条捷径会在**跨帧**时误判：
@@ -2402,11 +2719,20 @@ impl Renderer {
         } = ctx;
 
         let ext_slots = targets.ext_pool.borrow().srv_slots_snapshot();
+        let ext_formats: std::collections::HashMap<String, ExternalTextureFormat> = targets
+            .ext_pool
+            .borrow()
+            .textures
+            .iter()
+            .filter(|(k, _)| ext_slots.contains_key(*k))
+            .map(|(k, r)| (k.clone(), r.format))
+            .collect();
         let env = CmdEnv {
             rtv,
             size,
             textures,
             ext_slots: Some(&ext_slots),
+            ext_formats: Some(&ext_formats),
             rt,
             damage,
             // 离屏那条命令的 `SortKey` 由 `plan_segments` 按下标给出并覆盖它；这个默认值
@@ -2941,7 +3267,22 @@ impl Renderer {
                     },
                 }
             };
-            let pso = self.pso_for(device, self.elements.descs(), ps_idx, pso_mode, samples)?;
+            // ★ NV12 判定：只有 ext 资源带外部像素格式，`TextureTable` 里的都是 RGBA。
+            // 判错时 RGBA 帧会被当成 YUV（颜色全错），或 NV12 帧被当成 RGBA（花屏）。
+            // 纯函数实现见 `format_uses_nv12_ps`，契约测试钉住「RGBA 仍走原 PS」。
+            let nv12 = run
+                .texture
+                .as_ref()
+                .and_then(|name| env.ext_formats.and_then(|m| m.get(name.as_ref())))
+                .is_some_and(|fmt| format_uses_nv12_ps(*fmt));
+            let pso = self.pso_for(
+                device,
+                self.elements.descs(),
+                ps_idx,
+                pso_mode,
+                samples,
+                nv12,
+            )?;
             // 纹理绑定。只有 `Command::Image` 逐段换；矩形 / 字形 / 多边形记 `None`，
             // 绑图集兜住（`g_tex` 在 PS 里被声明，`t0` 悬空会让某些驱动解除引用并崩溃）。
             let slot = match &run.texture {
@@ -3109,6 +3450,7 @@ impl Renderer {
             size: rt_size,
             textures: cmd_env.textures,
             ext_slots: cmd_env.ext_slots,
+            ext_formats: cmd_env.ext_formats,
             rt: Some(&a.resource),
             damage: zephyra_core::frame::Damage::Full,
             key: cmd_env.key,
@@ -3532,7 +3874,16 @@ impl Renderer {
             .index
             .record_upload(list, bytemuck::cast_slice(&idx))?;
 
-        let pso = self.pso_for(device, self.elements.descs(), ps, blend as usize, samples)?;
+        // pass 四边形采样的是离屏 RT / 目标副本（都是 RGBA8），不是 NV12 源纹理 ——
+        // 这里恒走 RGBA 表，保持原行为。
+        let pso = self.pso_for(
+            device,
+            self.elements.descs(),
+            ps,
+            blend as usize,
+            samples,
+            false,
+        )?;
         unsafe {
             list.SetPipelineState(&pso);
             // `t0` 是 pass 四边形要采样的源。`t1` 默认也绑同一个：模糊 / 合成 PS 在

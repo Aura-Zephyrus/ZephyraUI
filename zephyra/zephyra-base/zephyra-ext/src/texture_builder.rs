@@ -4,8 +4,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use zephyra_render_ext::prelude::{
-    ColorSpace, ExternalTextureDesc, ExternalTextureFormat, ExternalTextureSource, GpuFence,
-    HdrMetadata, RawHandle,
+    ColorSpace, CpuPlanes, ExternalTextureDesc, ExternalTextureFormat, ExternalTextureSource,
+    FrameDesc, FrameSource, GpuFence, HdrMetadata, RawHandle,
 };
 
 /// 构建器层 CPU 描述（持有，便于延迟注册）。
@@ -136,7 +136,69 @@ pub struct BuilderParts {
 }
 
 impl BuilderParts {
-    /// 解析为契约层 `ExternalTextureDesc`（CPU 源需后端走 `import_cpu`；此处仅映射句柄源）。
+    /// 解析为统一的 [`FrameDesc`]（新 `submit_frame` 入口使用）。
+    ///
+    /// CPU 源转成拥有所有权的 `CpuPlanes`；句柄源直接映射。同步栅栏沿用
+    /// `SyncInput::Fence`。`Auto` 无法解析，返回 `None`。
+    pub fn into_frame_desc(self) -> Option<FrameDesc> {
+        let (source, sync) = match self.source {
+            TextureSourceInput::CpuOwned(c) => {
+                let planes = CpuPlanes {
+                    // Vec -> Bytes 零拷贝转移分配（字段类型推断出 Into<Bytes>）。
+                    planes: [Some(c.pixels.into()), None, None],
+                    format: c.format,
+                    row_pitch: [c.row_pitch, 0, 0],
+                };
+                (FrameSource::Cpu(Arc::new(planes)), None)
+            }
+            TextureSourceInput::NtHandle(h) => (
+                FrameSource::Native(ExternalTextureSource::NtHandle {
+                    handle: h,
+                    source_backend: None,
+                }),
+                self.sync_fence(),
+            ),
+            TextureSourceInput::VkImage {
+                image,
+                layout,
+                memory,
+            } => (
+                FrameSource::Native(ExternalTextureSource::VkImage {
+                    image,
+                    layout,
+                    memory,
+                }),
+                self.sync_fence(),
+            ),
+            #[cfg(target_os = "linux")]
+            TextureSourceInput::Dmabuf {
+                fd,
+                modifier,
+                planes,
+                offsets,
+                strides,
+            } => (
+                FrameSource::Native(ExternalTextureSource::Dmabuf {
+                    fd,
+                    modifier,
+                    planes,
+                    offsets,
+                    strides,
+                }),
+                self.sync_fence(),
+            ),
+            TextureSourceInput::Auto => return None,
+        };
+        Some(FrameDesc {
+            size: self.size,
+            format: self.format,
+            source,
+            sync,
+            color_space: self.color_space.unwrap_or(ColorSpace::Srgb),
+        })
+    }
+
+    /// 解析为契约层 `ExternalTextureDesc`（兼容视图；仅映射句柄源）。
     pub fn try_into_handle_desc(&self, key: Cow<'static, str>) -> Option<ExternalTextureDesc> {
         let (source, fence) = match &self.source {
             TextureSourceInput::NtHandle(h) => (

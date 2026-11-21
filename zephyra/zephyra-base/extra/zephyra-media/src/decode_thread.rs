@@ -41,7 +41,6 @@ pub(crate) fn video_loop(
     _clock: Arc<Mutex<PresentationClock>>,
     stop: Arc<AtomicBool>,
     cmd_rx: Receiver<Command>,
-    hardware: bool,
 ) {
     let track = tracks.iter().find(|t| video_codec_from(&t.codec).is_some());
     let Some(track) = track else { return };
@@ -66,7 +65,7 @@ pub(crate) fn video_loop(
         #[cfg(not(feature = "video"))]
         None
     };
-    let mut decoder = make_video_decoder(codec, hardware);
+    let mut decoder = make_video_decoder(codec);
     let config = VideoDecoderConfig::new(
         codec,
         zephyra_video::VideoCodecProfile::Unknown,
@@ -143,19 +142,14 @@ fn avcc_to_annexb(data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// 按 codec 与 `hardware` 选择解码器。
+/// 按 codec 选择解码器。
 ///
 /// 每个后端按 feature 单独编译：只开 `video-h264` 时不会引用其它 vendored C 的
 /// 解码器类型。未启用对应 feature 的 codec 落到 `NullVideoDecoder`（不输出帧）。
 #[cfg(feature = "video")]
-fn make_video_decoder(codec: VideoCodec, hardware: bool) -> Box<dyn VideoDecoder> {
-    let _ = hardware; // 仅有 hw-dxva2 + Windows 时才真正读取
+fn make_video_decoder(codec: VideoCodec) -> Box<dyn VideoDecoder> {
     match codec {
         VideoCodec::H264 => {
-            #[cfg(all(feature = "hw-dxva2", windows))]
-            if hardware {
-                return Box::new(zephyra_video::dxva2::Dxva2H264Decoder::new());
-            }
             #[cfg(feature = "video-h264")]
             {
                 Box::new(zephyra_video::OpenH264Decoder::new())
