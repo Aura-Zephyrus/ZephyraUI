@@ -20,8 +20,8 @@ name = "zstyle_compile"
 path = "src/lib.rs"
 
 [dependencies]
-zephyra-style = { path = "../zephyra/zephyra-style", version = "0.1.0" }
-zephyra-core = { path = "../zephyra/zephyra-core", version = "0.1.0" }
+zephyra-style = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0", version = "0.1.0" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0", version = "0.1.0" }
 
 # 只给 tokenizer + parser，AST 自己搭。语义归我们，没有要对抗的 Web 预设。
 cssparser = "0.35"

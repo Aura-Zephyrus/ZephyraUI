@@ -23,7 +23,7 @@ publish = false
 # 编译产物从运行时换成构建期（naga → SPIR-V），等价于 Windows 侧用 fxc 构建期编 HLSL。
 
 [dependencies]
-zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 zephyra-platform = { path = "../zephyra-platform" }

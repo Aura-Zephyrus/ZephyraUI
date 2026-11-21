@@ -33,7 +33,7 @@ publish = false
 
 [dependencies]
 # IR 的终点是 `zephyra_core::Element` —— 实例化就是把声明树喂给核心。
-zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 
 [lib]
 name = "zypui"

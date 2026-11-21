@@ -11,14 +11,13 @@ publish = false
 #
 # 这个 crate 整段都是 Windows 的 COM 边界（VARIANT / SAFEARRAY / HWND 子类），
 # 而绝大多数应用根本不需要无障碍 —— 默认带上它，只会让「默认构建」平白多一棵
-# 依赖树。与 `zephyra-camera` 同一理由。
 [features]
 default = []
 
 [dependencies]
 # 只用它的**几何**类型（`Rect`）与节点树 —— 模型与规则那一半是平台中立的，
 # 于是「这棵树长什么样」在任何机器上都能断言（Linux CI 上跑不了屏读器）。
-zephyra-core = { path = "../../../zephyra-core" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 
 [target.'cfg(windows)'.dependencies]
 # `#[implement]` 宏生成的代码里写的是 `::windows_core::…` 的绝对路径 ——

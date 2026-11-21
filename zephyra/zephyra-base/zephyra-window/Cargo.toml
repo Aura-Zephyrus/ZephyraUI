@@ -23,7 +23,7 @@ description = "窗口集合（WindowSet）：每线程一个协调者，持有�
 #   WindowHandle     ≈ Microsoft::UI::Xaml::Window（应用侧句柄，线程亲和）
 #   ShutdownMode     ≈ DispatcherShutdownMode（OnLastWindowClose / OnExplicitShutdown）
 [dependencies]
-zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 winit = "0.30"

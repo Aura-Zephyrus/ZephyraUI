@@ -45,7 +45,7 @@ rust-version.workspace = true
 # 「宿主迁移时不必搬核心」的前提。见 zephyra/zephyra-base/README.md。
 
 [dependencies]
-zephyra-core = { path = "../../zephyra-core" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 # winit 事件 → core 文本事件的翻译。三后端共用这一份（见该 crate 的模块文档）。

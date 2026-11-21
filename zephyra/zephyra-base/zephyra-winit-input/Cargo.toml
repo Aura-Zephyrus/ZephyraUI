@@ -22,7 +22,7 @@ publish = false
 # Vulkan 宿主则直接把 key_events 写死成空值 —— 键盘与滚轮在那条链路上从未接通。
 # 翻译只有一份，是让「三个后端行为一致」变成结构事实而不是纪律要求的唯一办法。
 [dependencies]
-zephyra-core = { path = "../../zephyra-core" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 winit = "0.30"
 
 [lints.rust]

@@ -13,20 +13,15 @@ resolver = "2"
 # 绘制库与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
 # 并列处相同：绘制**描述与展开**是纯数据、零系统依赖，而真正的**执行**才需要 GPU。
 members = [
-    "zephyra/zephyra-core",
     # 后端无关的矢量绘制库：core 与 fx 都依赖它；它自己不依赖任何 workspace crate。
     # SVG SMIL 动画引擎：解析 + 时间线 + 插值，只依赖 vector 与零依赖 bezier。
     "zephyra/zephyra-svg-anim",
     "zephyra/zephyra-fx",
-    "zephyra/zephyra-style",
-    "zstyle-compile",
     # `.zypui` 的编译核心（对位 zephyra-style）：
     #   zypui    运行时：同一份 IR 的解码 + 表达式求值 + 实例化成 Element
     #   zypui-compile  编译期：XML 子集解析器 + 校验 + 二进制编码（文本 → RawUi → .bin）
     # 与 zypui 共享同一份 IR —— zephyra-style 的「同一份 IR
     # 是命门」结论在这里同样成立，dev/release 漂移在结构上不可能。
-    "zypui",
-    "zypui-compile",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
     # winit → core 的输入翻译，三个后端共用一份（winit 类型住这里，core 装不下）。
@@ -71,7 +66,6 @@ members = [
     #
     # 判据与 `zephyra-base/README.md` 的分层判据同源。
     # 原住这里做样板的 `zephyra-camera` 已独立成仓（见上方注释）。
-    "zephyra/zephyra-core/extra/zephyra-bezier",
     # 控件层（库）。**不依赖任何渲染后端** —— 后端由应用用 feature 选。
     # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
     "ZephyraUI",
@@ -100,13 +94,7 @@ members = [
 # `zephyra-winit`（D3D11）是**两个独立 crate**，同一个二进制里只应有一个后端。
 # 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
 default-members = [
-    "zephyra/zephyra-core",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-base/zephyra-winit",
 ]
 
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-rust-version = "1.87"

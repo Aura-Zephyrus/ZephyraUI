@@ -12,7 +12,7 @@ publish = false
 # 产物是路径段 / 变换 / 颜色，应用层自己决定怎么送进 DisplayList。
 [dependencies]
 zephyra-vector = { git = "https://github.com/Aura-Zephyrus/zephyra-vector.git", branch = "main" }
-zephyra-bezier = { path = "../zephyra-core/extra/zephyra-bezier" }
+zephyra-bezier = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 
 [lib]
 name = "zephyra_svg_anim"

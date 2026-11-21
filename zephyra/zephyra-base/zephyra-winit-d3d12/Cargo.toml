@@ -38,7 +38,7 @@ description = "ZephyraUI 的 D3D12 渲染后端"
 [dependencies]
 # 只依赖核心与共享渲染层。`DisplayList`、`Color`、`Rect` 来自 `zephyra-core`；
 # 顶点展开、字形图集、纹理名字表、CPU 光栅器来自 `zephyra-fx`。
-zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
 zephyra-app-config = { path = "../zephyra-app-config" }
 # winit 事件 → core 文本事件的翻译。三后端共用这一份 —— 每个宿主各抄一份

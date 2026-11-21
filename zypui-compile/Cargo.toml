@@ -25,9 +25,9 @@ publish = false
 
 [dependencies]
 # 只依赖 IR 与运行时值类型 —— 编码/解码同源的另一半在 zypui::decode。
-zypui = { path = "../zypui" }
+zypui = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 # NodeTag（裸元素标签的合法性表）来自核心；与 zstylec 依赖 core 同一条理由。
-zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.1.0" }
 
 [lib]
 name = "zypui_compile"
