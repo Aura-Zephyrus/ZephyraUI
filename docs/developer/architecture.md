@@ -133,14 +133,14 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 | 位置 | 判据 | 现有成员 |
 | --- | --- | --- |
 | `zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
-| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera` |
+| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-uia` |
 
 它们在 workspace `members` 里但排除在 `default-members` 之外 —— 于是无差别的
 `cargo build` / `cargo test` **连依赖解析都不做**。这是"选择编译"落在 Cargo
 层面的形式，比在源码里 `#[cfg]` 一大块更细。
 
-`zephyra-camera`（默认 `feature` 为空，开 `capture` 才带 nokhwa）原本住在
-`zephyra-base/` 根目录，已归入 `zephyra-base/extra/`：它正是这一层的样板。
+原住这里做样板的 `zephyra-camera` 已独立成仓（`E:\zephyra-camera`，
+https://github.com/Aura-Zephyrus/zephyra-camera.git），主仓与它零双向依赖。
 
 `zephyra-winit-d3d12` 同样不在 `default-members`，理由与 extra 不同：同一个二进制
 只应有一个后端，无差别构建时两个都编既慢，又让"这次改动影响了哪个后端"不清楚。

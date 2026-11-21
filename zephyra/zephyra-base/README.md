@@ -95,18 +95,18 @@ base 不依赖 `zephyra-controls`（将来若有）。它只依赖核心，或�
 | 位置 | 判据 | 现有成员 |
 | --- | --- | --- |
 | `zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
-| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera`、`zephyra-uia` |
+| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-uia` |
 
 「选择编译」在这里是 Cargo 层面的事实，不是源码里的 `#[cfg(feature=...)]`：
 这些包在 `members` 里但**不在** `default-members` 里，于是无差别构建**连依赖解析
 都不做**。这比在源码里 gate 更细，也让"哪些代码默认进产物"成为 workspace 配置的
 一条可读记录，而不是散落各处的 feature 转发。
 
-`zephyra-camera`（默认 `feature` 为空，开 `capture` 才带 nokhwa）原本在本目录根下，
-现已归入 `extra/` —— 它是这一层的样板。
+原住这里做样板的 `zephyra-camera` 已独立成仓（`E:\zephyra-camera`，
+https://github.com/Aura-Zephyrus/zephyra-camera.git），主仓与它零双向依赖。
 
-`zephyra-uia`（无障碍 / UI Automation）也在这一层：它整段是 Windows 的 COM 边界
-（原始提供者 + 窗口过程子类），与 camera 同一理由不进 `default-members`。
+`zephyra-uia`（无障碍 / UI Automation）在这一层：它整段是 Windows 的 COM 边界
+（原始提供者 + 窗口过程子类），与设备采集类 crate 同一理由不进 `default-members`。
 
 ```bash
 cargo test -p zephyra-dcomp --lib           # 纯逻辑断言，不需要窗口

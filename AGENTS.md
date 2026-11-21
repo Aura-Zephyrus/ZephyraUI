@@ -15,8 +15,11 @@
 | [`zephyra/zephyra-base/README.md`](zephyra/zephyra-base/README.md) | 三层结构、base 的三条禁令、这一层还缺什么 |
 
 ⚠ 文档里有一批路径还是上次搬家前的写法：`docs/win/…` 现为 `docs/developer/win/…`，
-`docs/portability.md` 现为 `docs/developer/portability.md`。
-`ZephyraUI/README.md` 顶部那两条 Markdown 链接是真断的，别照着改错位置。
+`docs/portability.md` 现为 `docs/developer/portability.md`。旧路径已不存在，别照着改错位置。
+
+**语法权威**：[`docs/developer/syntax.md`](docs/developer/syntax.md) 是唯一语法权威（四所有权 /
+决策过程 / 各语言语法 / 动画能力清单）。下面第三节只放摘要，细节以该文件为准。
+**未经登记的新语法一律拒绝**，旧语法不保留兼容层。
 
 ---
 
@@ -26,7 +29,7 @@
 |---|---|
 | 格式 | `cargo fmt --all -- --check` |
 | 代码规范 | `cargo clippy --workspace --all-targets -- -D warnings` |
-| 测试 | `cargo test --workspace` —— 1171 通过 / 0 失败 / 73 ignored（vector 294 条已独立成仓）（本机 2026-11-19；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
+| 测试 | `cargo test --workspace` —— 1175 通过 / 0 失败 / 72 ignored（vector 294 条、camera 10 条已独立成仓）（本机 2026-11-21；视频解码、CLI、gallery 均已独立成仓，不再计入；各仓门禁见对应 README） |
 | 隔离门禁 | vector 已独立成仓（`E:\zephyra-vector`）：其 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`；主仓通过 git 依赖它。camera / video 也已独立成仓（`E:\zephyra-camera` / `E:\zephyra-video`），主仓与它们**零双向依赖**（它们不依赖主仓）。唯一例外：`zephyra-base/extra/zephyra-media` 单向 path 依赖 zephyra-video；它是可选播放桥接、不进 default-members，默认构建连依赖解析都不做。主仓核心仍零依赖 |
 | 文档 | `cargo doc --no-deps --workspace` —— 退出 0。**警告数取决于重编范围**（warm 全量实测 43 条，全部来自 `zephyra-ui` / `zephyra-fx` / `zephyra-style` / `zephyra-winit-d3d12` 的既有链接；判据是「本轮有没有**新增**」而不是总数）。bin 目标不受门禁保护 |
 
@@ -46,19 +49,22 @@ cargo run --manifest-path ../zephyra-gallery/Cargo.toml -p zephyra-gallery --bin
 cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zephyra-cli -- <子命令>
 cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zstylec -- fmt [--check] <file.zstyle>
 cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zypuic -- fmt [--check] <file.zypui>
+# CSS @keyframes → 运行时 SMIL（构建期导入；输出是普通 SVG，与手写 SMIL 同路）
+cargo run --manifest-path ../ZephyraCLI/Cargo.toml -p zanim -- import <file.css> [-o <out.svg>]
 ```
 
 ### `--workspace` 不是可选项
 
 `default-members` 只有 core / fx / zephyra-winit，所以裸 `cargo test`
-只跑 **754 条**（本机 2026-11-12 实测）。另外这些 crate 在 `members` 里但**不在**
+只跑 **493 通过 / 18 ignored**（本机 2026-11-20 实测）。另外这些 crate 在 `members` 里但**不在**
 `default-members`，
 无差别的 `cargo build` / `cargo test` 连编都不编（这是有意的：默认构建不该编译
-unsafe 与设备代码）：`zstyle-compile`、`zephyra-style`、
-`zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
-`zephyra-platform-win`、`zephyra-platform-linux`、`zephyra-winit-d3d12`、
-`zephyra-vulkan`、`zephyra-winit-input`、`zephyra-ui`，以及两个 `extra/` 下的全部包
-（`zephyra-core/extra/zephyra-bezier`、`zephyra-base/extra/zephyra-camera`）。
+unsafe 与设备代码）。23 个成员里有 **20 个**不在 `default-members`：
+`zephyra-svg-anim`、`zephyra-style`、`zstyle-compile`、`zypui`、`zypui-compile`、
+`zephyra-winit-d3d12`、`zephyra-winit-input`、`zephyra-uia`、
+`zephyra-dcomp`、`zephyra-platform`、`zephyra-platform-win`、`zephyra-app-config`、
+`zephyra-window`、`zephyra-platform-linux`、`zephyra-vulkan`、`zephyra-bezier`、
+`ZephyraUI`、`zephyra-render-ext`、`zephyra-ext`、`zephyra-ext-wgpu`。
 要跑要编就 `-p` 点名。
 
 ### `extra/` —— 「不是所有项目都需要」的包
@@ -78,9 +84,11 @@ unsafe 与设备代码）：`zstyle-compile`、`zephyra-style`、
 比"子模块"更硬：extra 里带依赖，core 完全看不见（`cargo tree -p zephyra-core --depth 1`
 只有 core 与 `zephyra-vector` 两行）。
 
-那 21 条 `ignored` 全在 `zephyra-winit/` 与 `zephyra-winit-d3d12/` 的测试里（诊断探针：
-`d3d12_draw.rs` / `sweep.rs` / `pso_bisect.rs` 之类），它们会开真窗口、历史上真把设备
-拖进过 TDR，所以默认 `#[ignore]`。**别为了让计数好看去删 `--ignore`。**
+`--workspace` 当前共 **72 条 `ignored`**，散落在三个后端与诊断 / 桩测试里
+（`command_validation.rs` / `swapchain_draw.rs` / `ext_contract_stubs.rs` /
+`d3d12_draw.rs` / `sweep.rs` / `pso_bisect.rs` 等），不是集中在某一个 crate。
+它们开真窗口或碰真设备，历史上真把设备拖进过 TDR，所以默认 `#[ignore]`。
+**别为了让计数好看去删 `--ignore`。**
 
 注意 `--workspace` 会把需要**真窗口 + 真 GPU** 的套件也跑起来（`zephyra-dcomp` 的
 `smoke` 3 条不在 ignore 之列）。要在无显示器的机器上只验逻辑，退回 `cargo test`
@@ -117,10 +125,10 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
    只给 `--features linux-vk` 而**不**给 `--no-default-features` 会把 d3d12 也编进来：
    能跑（`#[cfg]` 选中的那个出画面），但多编一遍 D3D12 的依赖链。
 
-2. **Linux 上测试数比 Windows 少 ~100 条**，因为 Windows-only 的套件
+2. **Linux 上测试数比 Windows 少一截**，因为 Windows-only 的套件
    （`zephyra-winit` / `zephyra-winit-d3d12` / `zephyra-dcomp` /
-   `zephyra-platform-win` 的 `tests/`，以及那 18 条 `ignored` 诊断探针）在那边根本不存在。
-   **不是**少跑了什么。
+   `zephyra-platform-win` 的 `tests/` 和它们的 `ignored` 探针）在那边根本不存在。
+   **不是**少跑了什么；具体数字见各自 README 的实测记录。
 
 3. **`cargo doc --workspace` 在 Linux 上必然失败**，失败的是三个 Windows-only crate
    （`zephyra-winit` / `zephyra-winit-d3d12` / `zephyra-dcomp`）：它们在 Linux 上是
@@ -129,7 +137,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
    （那三个 crate 的 `src/` 本轮一行没动）。Linux 侧改用逐 crate：
 
    ```bash
-   cargo doc --no-deps -p zephyra-platform-linux -p zephyra-winit-vk \
+   cargo doc --no-deps -p zephyra-platform-linux -p zephyra-vulkan \
        -p zephyra-core -p zephyra-fx -p zephyra-platform      # 退出 0
    ```
 
@@ -143,8 +151,8 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 |---|---|---|
 | `CARGO_TARGET_DIR` 指到 ext4 | `export CARGO_TARGET_DIR=~/zephyra-target` | 仓库在 `/mnt/e`（NTFS）上，Linux 构建绝不能写进 `E:\ZephyraUI\target`（那是 Windows 产物） |
 | crates.io 走镜像 | `~/.cargo/config.toml` 里 `replace-with = 'rsproxy-sparse'` | 实测直连 `static.crates.io` 约 170 KB/s，`static.rust-lang.org` 约 37 KB/s，rsproxy 约 7 MB/s |
-| 编译并发 | `-j 6` | WSL 常见 4 GB 内存；wgpu 依赖树并行编译容易 OOM |
-| **不需要** `apt install` | 什么都不装也能构建 | wgpu / ash 都 dlopen `libvulkan`；实测在**没有** `pkg-config`、没有 vulkan 头文件的机器上 45 s 编完 255 个依赖 |
+| 编译并发 | `-j 6` | WSL 常见 4 GB 内存；图形栈依赖树并行编译容易 OOM |
+| **不需要** `apt install` | 什么都不装也能构建 | ash 直接 dlopen `libvulkan`；实测在**没有** `pkg-config`、没有 vulkan 头文件的机器上也能编过（naga 是纯 Rust，不依赖系统 glslang） |
 
 ---
 
@@ -157,23 +165,38 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 2. **绘制库已独立成仓**：`zephyra-vector` 在 `E:\zephyra-vector`（https://github.com/Aura-Zephyrus/zephyra-vector.git），主仓通过 Cargo.toml 的 git 依赖引用（不写 path）。依赖严格单向（主仓 → vector），vector 不依赖任何主仓 crate。`cargo tree -p zephyra-core --depth 1` 里 vector 以 git 源出现；vector 仓自己的 `cargo tree -p zephyra-vector --depth 1` 只出现 `ab_glyph` / `bytemuck`。vector 拥有全部后端无关的矢量绘制（几何 / 图标 / 文本 / 图集 / 顶点展开 / 光栅）。
    core 与 fx `forbid(unsafe_code)`；unsafe 只许出现在 `zephyra-base/`。
 3. **外观不进源码**：控件只发 `key`（事件身份）与分类名（选择器），颜色 / 尺寸 /
-   圆角全在 `.zstyle`，颜色走 `@令牌` → `Theme::role()`。`ZephyraUI/tests/gates.rs`
-   按**整棵树**判（遍历全部页面 × 全部交互态），比你想的更容易红。
+   圆角全在 `.zstyle`，颜色走 `@令牌` → `Theme::role()`。整树门禁现居
+   `E:\zephyra-gallery\tests\gates.rs`（遍历全部页面 × 全部交互态），比你想的更容易红。
 4. **三个渲染后端互不依赖**：`zephyra-winit`（D3D11）/ `zephyra-winit-d3d12` /
-   `zephyra-winit-vk`（wgpu）只共同依赖 `zephyra-core` + `zephyra-fx`。**不要**把
-   Linux 后端并进 Windows 那两个，也不要在宿主里写 `#[cfg(windows)]` 分支挑后端 ——
+   `zephyra-vulkan`（raw ash，**不用 wgpu**）只共同依赖 `zephyra-core` + `zephyra-fx`。
+   **不要**把 Linux 后端并进 Windows 那两个，也不要在宿主里写 `#[cfg(windows)]` 分支挑后端 ——
    D3D11 / D3D12 / Vulkan 是三套词汇，揉进一处后「画面一空时是哪个后端的问题」
    就没法回答了。后端由**特性开关**选，同一个二进制只会有一个。
    跨后端共享的只有「后端无关的那一半」，它住在 `zephyra-fx`
    （`DisplayList → 顶点流` / 字形图集 / 纹理表 / CPU 光栅器）。
-   ⚠ `shaders/` 的 WGSL 与 HLSL 是**手抄的两份**，不是自动同步的 ——
-   对应关系写在 `zephyra-winit-vk/shaders/zephyra.wgsl` 的文件头，靠纯逻辑测试 +
-   `--dump-cpu` 对照钉住。
+   着色器同源：Windows 用 `zephyra_fx::shaders` 里编译好的 DXBC，Vulkan 在
+   `zephyra-vulkan/build.rs` 里用 naga 把 `zephyra_vector::shaders::wgsl_source()`
+   编成 SPIR-V。仓库里**没有**独立的 `.wgsl` / `.hlsl` 文件了，别去找那份「手抄双份」。
+
+### 语法宪法摘要（全文见 `docs/developer/syntax.md`）
+
+四所有权：状态值与流转规则在 Rust 控件模块；节点树 / 分类名 / key / 资源引用在
+`.zypui`；颜色尺寸圆角在 `.zstyle`（颜色走 `@token`）；状态存在在宿主；时间归应用侧
+driver。`core::theme::roles` 是 token 唯一权威。
+
+新增可声明之物按顺序问：① 外观→`.zstyle`；② 结构/引用→`.zypui`；③ 状态/规则→Rust
+控件；④ 时间/程序化→应用 driver；⑤ 部署配置→JSON/env；⑥ 都不是→先用现有「引用」
+表达，确实装不下才去 syntax.md 登记新表面。**未经登记一律拒绝，旧语法不做兼容层。**
+
+动画语法：运行时只有 SMIL（`zephyra-svg-anim`），CSS `@keyframes` 仅作构建期 `zanim`
+导入工具的输入；`.zypui` 的 `animation` 只引用 id / 路径；颜色必须 `@token`；时钟归
+应用；`FrameCache` 只新增 `set_post_diff` 钩子，不改 diff 决策。能力清单
+（Tier A/B/C）见 syntax.md 第 6 节，清单外明确不支持。
 
 ### 加一个属性要动两处
 
-`zephyra-core/src/props.rs` → `zstylec/src/props_map.rs`（kebab-case 映射表，
-`.zstyle` 侧**唯一**入口）。
+`zephyra/zephyra-core/src/props.rs` → `zstyle-compile/src/props_map.rs`（kebab-case
+映射表，`.zstyle` 侧**唯一**入口；`zstylec` 二进制已迁至 CLI 仓，主仓只留编译库）。
 
 - `affects_layout` 有门禁兜底：`layout_classification_tests.rs` 会因漏声明而红。
   漏声明的后果是「只改颜色」也触发全树重排。
@@ -181,18 +204,15 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   但那条测试并不存在。所以漏加映射的症状是——那个属性在样式表里**永远设不了，
   且没有任何提示**。加属性时自己核对，别指望测试喊你。
 
+`.zypui` 的裸属性另走一条：`zypui/src/ir.rs` 的 `BARE_ATTRS`（zypuic 校验白名单）
+**和** `zypui/src/instantiate.rs` 的 `match` 分支，两处都要加。只加前者能通过校验、
+但 `instantiate.rs` 里落进 `_ => el_el` 被静默丢弃，症状同样是「设了没反应」。
+
 ---
 
 ## 四、注释与代码
 
-### 1. 核心原则
-
-1. **注释解释 WHY，不解释 WHAT** —— 设计意图、原因、边界情况。
-2. **代码自解释优先** —— 靠命名与结构减少注释需求，注释是补充手段。
-3. **注释必须准确、简洁、有用** —— 废话、误导、冗余都不要。
-4. **注释需与代码同步更新** —— 过期注释比没有注释更糟。
-
-### 2. 模块文档（`//!`）与函数文档（`///`）
+### 1. 模块文档（`//!`）与函数文档（`///`）
 
 模块文档超过一屏就搬去 `docs/`，源码只留三行摘要加一个链接。
 
@@ -204,7 +224,7 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
 // ↑ 数字 + 条件 + 规模，缺一不可
 ```
 
-### 3. 本仓硬约定
+### 2. 本仓硬约定
 
 1. **行内 `//`：写「不这样写就一定会错」的东西**，例如某个 API 要求 `flush` 之前
    不能改描述符、某段顺序被 spec 钉死、某处漏了会 panic。解释结构的搬进 `///`。
@@ -293,8 +313,11 @@ cargo test --workspace                                      # 672 / 0 / 3 ignore
   `docs/developer/win/07-window-transparent.md`）。
   `--dump-cpu` 走 `zephyra-fx::cpu_only::CpuHost`（**仅 debug 构建**）：
   不开窗口、不碰 GPU，出 BMP——**无显示器的环境也能验整条链**。
-- `#![deny(rustdoc::broken_intra_doc_links)]` 只在 12 个 `lib.rs` 里。**bin 目标不受
+- `#![deny(rustdoc::broken_intra_doc_links)]` 只写在部分 `lib.rs` 里。**bin 目标不受
   门禁保护**（`text_probe.rs` 那 2 条警告就是这么漏过去的）。
+- SVG 动画只走 SMIL（`zephyra/zephyra-svg-anim`，`<animate>` / `<animateTransform>`
+  / `<animateMotion>`），**不实现 CSS 动画**；该 crate 只依赖 `zephyra-vector` 与零依赖
+  的 `zephyra-bezier`，不依赖 core，产物是纯数据。
 
 ---
 

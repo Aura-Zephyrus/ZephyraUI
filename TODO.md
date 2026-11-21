@@ -5,7 +5,7 @@
 
 ## 进行中（收尾与待验收）
 
-### important：调整base与core架构，组件化管理
+### important：调整base与core架构，组件化管理，规范化extra的base接入，严格选择编译
 
 ### 1. Vulkan：渲染源钩子与命令校验（实现完成，待物理 GPU 复核）
 

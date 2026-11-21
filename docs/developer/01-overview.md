@@ -69,8 +69,10 @@ zephyra/
     zephyra-platform/    平台无关的 Win32 抽象
     zephyra-platform-win/  Win32 API（unsafe + COM）
     extra/            「不是所有项目都需要」的包（可选子包，不进 default-members）
-      zephyra-camera/    摄像头采集与像素格式
+      zephyra-uia/       无障碍 / UI Automation
   zephyra-core/extra/   同上，但零依赖 + 无 GPU 可单测的纯逻辑
+zephyra-camera/         已独立仓：https://github.com/Aura-Zephyrus/zephyra-camera
+                        （摄像头采集与像素格式，主仓零依赖）
     zephyra-bezier/      可配置三次方贝塞尔缓动
 zstyle-compile/      .zstyle 编译器（解析 + 检查）
 ZephyraCLI/            已迁出为独立仓：https://github.com/Aura-Zephyrus/ZephyraCLI
