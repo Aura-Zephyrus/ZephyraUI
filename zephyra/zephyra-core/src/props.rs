@@ -448,10 +448,8 @@ pub static TEXT_LINE_HEIGHT: PropertyKey =
     PropertyKey::inheritable_layout("Text.LineHeight", PropertyValue::float(f32::NAN));
 
 /// 字体族名（继承）。空串表示交给字体回退链决定。
-pub static FONT_FAMILY: PropertyKey = PropertyKey::inheritable(
-    "Font.Family",
-    PropertyValue::static_str(""),
-);
+pub static FONT_FAMILY: PropertyKey =
+    PropertyKey::inheritable("Font.Family", PropertyValue::static_str(""));
 
 /// 字重（继承，400 = Regular）。`NaN` 表示 400。
 pub static FONT_WEIGHT: PropertyKey =
@@ -476,7 +474,8 @@ pub static TEXT_PARAGRAPH_SPACING: PropertyKey =
     PropertyKey::inheritable_layout("Text.ParagraphSpacing", PropertyValue::float(f32::NAN));
 
 /// 水平对齐。值为 `TextAlign`。
-pub static TEXT_ALIGN: PropertyKey = PropertyKey::inheritable("Text.Align", PropertyValue::float(f32::NAN));
+pub static TEXT_ALIGN: PropertyKey =
+    PropertyKey::inheritable("Text.Align", PropertyValue::float(f32::NAN));
 
 /// 段落基准方向。值为 `TextDirection`。
 pub static TEXT_DIRECTION: PropertyKey =
@@ -515,34 +514,24 @@ pub static FONT_FEATURES: PropertyKey =
     PropertyKey::inheritable_layout("Font.Features", PropertyValue::float(f32::NAN));
 
 /// 装饰线位标志。值为 `TextDecoration`。
-pub static TEXT_DECORATION: PropertyKey = PropertyKey::inheritable(
-    "Text.Decoration",
-    PropertyValue::float(f32::NAN),
-);
+pub static TEXT_DECORATION: PropertyKey =
+    PropertyKey::inheritable("Text.Decoration", PropertyValue::float(f32::NAN));
 
 /// 装饰线样式。值为 `TextDecorationStyle`。
-pub static TEXT_DECORATION_STYLE: PropertyKey = PropertyKey::inheritable(
-    "Text.DecorationStyle",
-    PropertyValue::float(f32::NAN),
-);
+pub static TEXT_DECORATION_STYLE: PropertyKey =
+    PropertyKey::inheritable("Text.DecorationStyle", PropertyValue::float(f32::NAN));
 
 /// 装饰线与墨迹的相交方式。值为 `TextDecorationMode`。
-pub static TEXT_DECORATION_MODE: PropertyKey = PropertyKey::inheritable(
-    "Text.DecorationMode",
-    PropertyValue::float(f32::NAN),
-);
+pub static TEXT_DECORATION_MODE: PropertyKey =
+    PropertyKey::inheritable("Text.DecorationMode", PropertyValue::float(f32::NAN));
 
 /// 装饰线粗细（DIP，`NaN` 用字体建议值）。
-pub static TEXT_DECORATION_THICKNESS: PropertyKey = PropertyKey::inheritable(
-    "Text.DecorationThickness",
-    PropertyValue::float(f32::NAN),
-);
+pub static TEXT_DECORATION_THICKNESS: PropertyKey =
+    PropertyKey::inheritable("Text.DecorationThickness", PropertyValue::float(f32::NAN));
 
 /// 下划线相对基线的偏移（DIP，`NaN` 用字体建议值，可为负）。
-pub static TEXT_DECORATION_OFFSET: PropertyKey = PropertyKey::inheritable(
-    "Text.DecorationOffset",
-    PropertyValue::float(f32::NAN),
-);
+pub static TEXT_DECORATION_OFFSET: PropertyKey =
+    PropertyKey::inheritable("Text.DecorationOffset", PropertyValue::float(f32::NAN));
 
 /// 装饰线粗细倍率。`NaN` 表示 1.0。
 pub static TEXT_DECORATION_THICKNESS_MULTIPLIER: PropertyKey = PropertyKey::inheritable(
@@ -559,14 +548,16 @@ pub static TEXT_SHADOW: PropertyKey =
     PropertyKey::inheritable("Text.Shadow", PropertyValue::float(f32::NAN));
 
 /// LCD 子像素排列。值为 `LcdOrder`。
-pub static TEXT_LCD: PropertyKey = PropertyKey::inheritable("Text.Lcd", PropertyValue::float(f32::NAN));
+pub static TEXT_LCD: PropertyKey =
+    PropertyKey::inheritable("Text.Lcd", PropertyValue::float(f32::NAN));
 
 /// 字形绕自身中心旋转（弧度）。
 pub static TEXT_ROTATION: PropertyKey =
     PropertyKey::inheritable("Text.Rotation", PropertyValue::float(f32::NAN));
 
 /// 文字路径。值为 `TextPath`。
-pub static TEXT_PATH: PropertyKey = PropertyKey::inheritable_layout("Text.Path", PropertyValue::float(f32::NAN));
+pub static TEXT_PATH: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Path", PropertyValue::float(f32::NAN));
 
 /// 光标位置（字节下标，DIP）。由 `TextField` / `TextArea` 控件写入，供 `.zypui`
 /// 模板的 `translate-x` 绑定读取，把光标定位到对应字符位置。
@@ -576,6 +567,27 @@ pub static CURSOR: PropertyKey = PropertyKey::new("Text.Cursor", PropertyValue::
 
 /// 是否可交互。`false` 的节点只作为事件路径的一部分返回，不接收指针。
 pub static INTERACTIVE: PropertyKey = PropertyKey::new("Interactive", PropertyValue::bool(false));
+
+/// 是否为窗口拖动区（frameless 应用自绘标题栏用）。
+///
+/// 宿主在指针按下时命中测试：若命中节点此属性为真，调用窗口系统的
+/// `drag_window()` 让系统接管拖动 —— 与 Tauri 的 `data-tauri-drag-region`
+/// 同一语义。只标在标题栏容器上；其内的按钮等交互子节点**不**标，于是
+/// 子元素豁免自然成立（命中的是按钮而非标题栏）。
+pub static WINDOW_DRAG: PropertyKey = PropertyKey::new("Window.Drag", PropertyValue::bool(false));
+
+/// 动画资源 id 或路径（`.zypui` 的 `animation` 属性写入）。
+///
+/// 只存引用，不存语法串：运行时动画语法只有 SMIL（见 docs/developer/syntax.md）。
+pub static ANIMATION: PropertyKey = PropertyKey::new("Animation", PropertyValue::StaticStr(""));
+
+/// 动画进度 0..1（`animation-progress`）。由应用绑定驱动，时钟归应用。
+pub static ANIMATION_PROGRESS: PropertyKey =
+    PropertyKey::new("Animation.Progress", PropertyValue::float(0.0));
+
+/// 动画播放状态（`animation-play-state`）：`true` = running。
+pub static ANIMATION_PLAY_STATE: PropertyKey =
+    PropertyKey::new("Animation.PlayState", PropertyValue::bool(true));
 
 /// 是否处于选中态（控件层据此换用 `control_fill_pressed` 之类的资源）。
 ///

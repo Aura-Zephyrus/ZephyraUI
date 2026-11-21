@@ -11,9 +11,11 @@
 //! 算合成，都直接调即可。把它们藏起来只会逼出"复制一份读取逻辑"的代码，那份副本
 //! 会在资源键解析上与本模块产生细微不一致。
 
+use std::any::Any;
+
 use crate::context::Context;
 use crate::node::Node;
-use crate::property::PropertyValue;
+use crate::property::{PropertyKey, PropertyValue};
 
 impl Node {
     /// 是否被折叠（不占位、不绘制）。
@@ -73,7 +75,8 @@ impl Node {
 
     /// 字体族名（继承），空串表示未设置。
     pub fn font_family(&self) -> Option<&str> {
-        let (raw, _source) = crate::property::resolve(self.props(), &crate::props::FONT_FAMILY, None);
+        let (raw, _source) =
+            crate::property::resolve(self.props(), &crate::props::FONT_FAMILY, None);
         let s: &str = match raw {
             PropertyValue::StaticStr(s) => s,
             PropertyValue::Str(s) => s.as_ref(),
@@ -124,7 +127,7 @@ impl Node {
             // 字号缺省不写死：0.0 会被宿主当成"非法"，由宿主回落到自己的默认字号。
             size: self.number_or(&p::TEXT_SIZE, 14.0, ctx).max(1.0),
             weight: finite(self.number_or(&p::FONT_WEIGHT, f32::NAN, ctx))
-                .map(|w| w.round().max(1.0).min(1000.0) as u16)
+                .map(|w| w.round().clamp(1.0, 1000.0) as u16)
                 .unwrap_or(400),
             family: self.font_family().map(str::to_string),
             line_height: finite(self.number_or(&p::TEXT_LINE_HEIGHT, f32::NAN, ctx)),
@@ -149,7 +152,9 @@ impl Node {
             font_features: self
                 .prop::<Vec<(u32, u32)>>(&p::FONT_FEATURES, ctx)
                 .unwrap_or_default(),
-            text_align: self.prop::<TextAlign>(&p::TEXT_ALIGN, ctx).unwrap_or_default(),
+            text_align: self
+                .prop::<TextAlign>(&p::TEXT_ALIGN, ctx)
+                .unwrap_or_default(),
             paragraph_spacing: self.num_or_default(&p::TEXT_PARAGRAPH_SPACING, 0.0, ctx),
             scale: self.num_or_default(&p::TEXT_SCALE, 1.0, ctx),
             direction: self
@@ -165,8 +170,11 @@ impl Node {
                 .prop::<TextDecorationMode>(&p::TEXT_DECORATION_MODE, ctx)
                 .unwrap_or_default(),
             decoration_thickness: self.opt_num(&p::TEXT_DECORATION_THICKNESS, ctx),
-            decoration_thickness_multiplier: self
-                .num_or_default(&p::TEXT_DECORATION_THICKNESS_MULTIPLIER, 1.0, ctx),
+            decoration_thickness_multiplier: self.num_or_default(
+                &p::TEXT_DECORATION_THICKNESS_MULTIPLIER,
+                1.0,
+                ctx,
+            ),
             decoration_offset: self.opt_num(&p::TEXT_DECORATION_OFFSET, ctx),
             embolden: self.opt_num(&p::TEXT_EMBOLDEN, ctx),
             shadow: self.prop::<TextShadow>(&p::TEXT_SHADOW, ctx),

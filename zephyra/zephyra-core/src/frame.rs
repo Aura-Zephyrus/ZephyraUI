@@ -182,6 +182,9 @@ impl StageTimings {
 /// 不新增分配。
 // `Node` 不派生 `Debug`（它持 `PropertyStore`，而那里面有用户自定义值，
 // 打印出来没有可读性）。要打印整个缓存用 `node().map(|n| n.tag())`。
+/// 应用侧后处理钩子类型（动画等）。只写 paint 属性，不碰布局盒。
+type PostBuildHook = Box<dyn FnMut(&mut Node)>;
+
 /// 目标名。`RenderFrame` 是主名；`FrameCache` 保留为兼容别名。
 #[derive(Default)]
 pub struct RenderFrame {
@@ -190,6 +193,10 @@ pub struct RenderFrame {
     viewport: (f32, f32),
     forced: bool,
     styler: Option<Box<dyn crate::styler::Styler>>,
+    /// 应用侧的后处理钩子（如声明式动画：按外部 progress 写 paint 属性）。
+    /// 在 diff 与样式应用之后、布局之前运行；钩子只能写 paint 属性，
+    /// 不得改布局盒（见 docs/developer/syntax.md 的四所有权）。
+    post_diff: Option<PostBuildHook>,
     diff_scratch: crate::diff::Scratch,
     /// 脏矩形暂存。**跨帧复用** —— 每帧新建一个 `Vec` 是一次堆分配，
     /// 而稳态下这一段每帧都跑（脏区扫描不因「没变化」而跳过）。
@@ -262,6 +269,13 @@ impl RenderFrame {
         self.invalidate();
     }
 
+    /// 装一个应用侧后处理钩子（每帧 diff + 样式之后、布局之前调用）。
+    /// 动画接入走这条路：钩子读 `animation-progress` 写 paint 属性，不碰布局盒。
+    pub fn set_post_diff(&mut self, hook: PostBuildHook) {
+        self.post_diff = Some(hook);
+        self.invalidate();
+    }
+
     /// P2b：开启后，`Updated` 帧会与全量重绘 oracle 比较 `DisplayList`（debug only）。
     #[cfg(debug_assertions)]
     pub fn set_debug_paint_oracle(&mut self, enabled: bool) {
@@ -310,6 +324,14 @@ impl RenderFrame {
             styler.apply(node);
         }
         timings.style_us = t0.elapsed().as_micros() as u32;
+
+        // ---- 1.6 应用侧后处理（动画等）----
+        //
+        // 与样式同一位置：diff 之后、布局之前。钩子只写 paint 属性，所以不会
+        // 触发重排；它写出的 PATH_DATA / OPACITY 由后面的 diff 对账送到 DisplayList。
+        if let (Some(hook), Some(node)) = (self.post_diff.as_mut(), self.node.as_mut()) {
+            hook(node);
+        }
 
         // ---- 2. 要不要重排 ----
         //

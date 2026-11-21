@@ -18,7 +18,7 @@ use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_core::text::atlas::AtlasRaster;
 use zephyra_core::text::sdf::{from_coverage, SDF_BASE_PX, SDF_PADDING, SDF_SPREAD};
-use zephyra_core::text::{GlyphSource, PlacedGlyph, TextEngine, TextRender, TextStyle, TextStack};
+use zephyra_core::text::{GlyphSource, PlacedGlyph, TextEngine, TextRender, TextStack, TextStyle};
 use zephyra_core::theme::{Theme, ThemeVariant};
 
 /// 每个不同字符 → 不同字形 id，逼图集淘汰重排。
@@ -133,7 +133,9 @@ fn render_tree(element: &Element, theme: &Theme, engine: &RefCell<TrackingEngine
     let ctx = Context::with_engine(theme, engine);
     let mut out = DisplayList::new();
     zephyra_core::paint::render(&node, ctx, &mut out);
-    assert!(out.iter().any(|i| matches!(i.command, Command::Text { .. })));
+    assert!(out
+        .iter()
+        .any(|i| matches!(i.command, Command::Text { .. })));
 }
 
 #[test]

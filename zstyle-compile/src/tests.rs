@@ -21,6 +21,9 @@
 
 use zephyra_core::property::ValueSource;
 use zephyra_core::props;
+use zephyra_core::text::{
+    LcdOrder, TextAlign, TextDecoration, TextDecorationMode, TextDecorationStyle, TextPath,
+};
 
 use crate::{parse, ParseResult};
 
@@ -104,7 +107,10 @@ fn advanced_text_properties_parse_into_typed_values() {
         Some(vec![(*b"wght", 700.0)])
     );
     assert!(d[9].value.get::<zephyra_core::text::StrutStyle>().is_some());
-    assert!(d[10].value.get::<zephyra_core::text::TextShadow>().is_some());
+    assert!(d[10]
+        .value
+        .get::<zephyra_core::text::TextShadow>()
+        .is_some());
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,9 @@
 //!   未知属性报错，绝不静默忽略（与 zstylec 的 props_map 同一条规矩）；
 //! - 组件实参名 ⊆ params；params 不得与保留字（key/class/hover/press）撞名；
 //! - 表达式里的标识符必须是参数 / for 变量 / 内置词（hover/press）之一；
-//! - 调用名只认 `tr`；
+//! - 调用名只认 [`zypui::expr::CALLS`] 白名单；
+//! - **文案属性（`TEXT_ATTRS`）的值必须是表达式 `{…}`**，裸字面量报错 ——
+//!   静态文案走 `label_key`（控件内部 `tr()`），已翻译文本走表达式；
 //! - `<children/>` 槽位只能在组件模板里、每个组件至多一个；
 //! - 组件/页面重名报错；Use 传子节点而模板没有槽位报错。
 //!
@@ -30,6 +32,41 @@ use zypui::ir::{ClassTok, Component, ElementNode, ForNode, IfNode, Node, Page, R
 
 /// 保留字：不能当组件参数名。
 const RESERVED: &[&str] = &["key", "class", "hover", "press", "focused"];
+
+/// 面向用户的文案属性。这些属性的值**必须**是 `{…}` 表达式（含 `{'字面量'}`
+/// 这种显式包裹），不能是裸字面量 —— 裸字面量切语言时不变，且症状静默。
+/// `label_key` 刻意不在表内：那是语义 key 通道，由控件内部 `tr()` 翻译。
+const TEXT_ATTRS: &[&str] = &[
+    "label",
+    "title",
+    "text",
+    "placeholder",
+    "hint",
+    "desc",
+    "tip",
+];
+
+/// 文案属性的通道校验。见 `docs/developer/syntax.md` §7「文本通道」。
+fn validate_text_channel(
+    name: &str,
+    raw: &str,
+    file: &'static str,
+    line: u32,
+    col: u32,
+    diags: &mut Vec<Diag>,
+) {
+    // 空值是「无文案」的结构标记（纯图标按钮），不是漏翻译，放行。
+    if TEXT_ATTRS.contains(&name) && !raw.is_empty() && !raw.contains('{') {
+        diags.push(Diag::error(
+            file,
+            line,
+            col,
+            format!(
+                "{name}=\"{raw}\" 是裸文案；静态文案走 label_key=\"key\"，已翻译文本走 {name}=\"{{'文本'}}\" 或绑定"
+            ),
+        ));
+    }
+}
 
 /// 把全部文件的 XML 树构建成一个 [`RawUi`]。
 ///
@@ -440,13 +477,16 @@ fn build_bare(
                 }
                 Err(d) => diags.push(d),
             },
-            other if BARE_ATTRS.contains(&other) => match attr_to_expr(value, file, *l, *c) {
-                Ok(e) => {
-                    validate_expr(&e, visible, file, *l, *c, diags);
-                    attrs.push((leak(other), e));
+            other if BARE_ATTRS.contains(&other) => {
+                validate_text_channel(other, value, file, *l, *c, diags);
+                match attr_to_expr(value, file, *l, *c) {
+                    Ok(e) => {
+                        validate_expr(&e, visible, file, *l, *c, diags);
+                        attrs.push((leak(other), e));
+                    }
+                    Err(d) => diags.push(d),
                 }
-                Err(d) => diags.push(d),
-            },
+            }
             other => diags.push(Diag::error(
                 file,
                 *l,
@@ -562,6 +602,7 @@ fn build_use(
                     ));
                     continue;
                 }
+                validate_text_channel(other, value, file, *l, *c, diags);
                 match attr_to_expr(value, file, *l, *c) {
                     Ok(e) => {
                         validate_expr(&e, visible, file, *l, *c, diags);

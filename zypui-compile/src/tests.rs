@@ -43,7 +43,7 @@ fn xml_elements_attrs_self_closing_comments_entities() {
         "<!-- 头注释 -->\n\
          <page name=\"p\">\n\
            <box key=\"c1\" class=\"a b\"/>\n\
-           <text key=\"t1\" text=\"确定 &amp; 提交\"/>\n\
+           <text key=\"t1\" text=\"{\'确定 &amp; 提交\'}\"/>\n\
          </page>",
     );
     assert_eq!(raw.pages.len(), 1);
@@ -100,7 +100,7 @@ const BUTTON: &str = "\
 #[test]
 fn component_and_page_build() {
     let raw = parse_ok(&format!(
-        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"确定\" variant=\"accent\"/></page>"
+        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"{{\'确定\'}}\" variant=\"accent\"/></page>"
     ));
     assert_eq!(raw.components.len(), 1);
     assert_eq!(raw.components[0].params, &["label", "variant"]);
@@ -117,7 +117,7 @@ fn unknown_component_and_param_are_errors() {
     );
 
     let diags = parse_err(&format!(
-        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"x\" variant=\"a\" color=\"red\"/></page>"
+        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"{{\'x\'}}\" variant=\"a\" color=\"red\"/></page>"
     ));
     assert!(
         has_error(&diags, "没有参数 `color`"),
@@ -190,7 +190,7 @@ fn slot_rules() {
     );
     // 两个槽位：实例化期会炸，编译期就该拦 —— 走 check 全链。
     let src = "<component name=\"C\"><box><children/><children/></box></component>\n\
-               <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"x\"/></C></page>";
+               <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"{\'x\'}\"/></C></page>";
     let diags = parse_err(src);
     assert!(
         diags.iter().any(|d| d.level == Level::Error),
@@ -202,7 +202,7 @@ fn slot_rules() {
 #[test]
 fn use_with_children_but_no_slot_is_an_error() {
     let src = "<component name=\"C\"><box/></component>\n\
-               <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"x\"/></C></page>";
+               <page name=\"p\"><C key=\"c\"><text key=\"t\" text=\"{\'x\'}\"/></C></page>";
     // 编译期查模板槽位数（当前在运行期查；这里确保至少一路拦得住）。
     let raw = parse_ok(src);
     assert_eq!(raw.components.len(), 1);
@@ -286,8 +286,8 @@ fn encode_decode_round_trips_to_the_same_tree_and_same_pixels() {
     let src = format!(
         "{BUTTON}\n\
          <page name=\"p\">\n\
-           <Btn key=\"b1\" label=\"确定\" variant=\"accent\"/>\n\
-           <Btn key=\"b2\" label=\"取消\" variant=\"standard\"/>\n\
+           <Btn key=\"b1\" label=\"{{\'确定\'}}\" variant=\"accent\"/>\n\
+           <Btn key=\"b2\" label=\"{{\'取消\'}}\" variant=\"standard\"/>\n\
            <for var=\"name\" index=\"i\" list=\"@icons\">\n\
              <image key=\"{{name}}\" texture=\"atlas\" uv=\"0.5,0,0.5,1\"/>\n\
            </for>\n\
@@ -316,7 +316,7 @@ fn encode_decode_round_trips_to_the_same_tree_and_same_pixels() {
 #[test]
 fn dev_text_path_and_release_binary_path_agree() {
     let src = format!(
-        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"确定\" variant=\"accent\"/></page>"
+        "{BUTTON}\n<page name=\"p\"><Btn key=\"b1\" label=\"{{\'确定\'}}\" variant=\"accent\"/></page>"
     );
     let from_text = parse_all(&[("a.zypui", &src)]).unwrap();
     let bytes = crate::encode::encode(&from_text);
@@ -461,4 +461,41 @@ fn width_outside_fill_key_is_an_error() {
         "width 出现在非 fill 键上应报错：{}",
         render(&diags)
     );
+}
+
+// ============================== 文案通道 ==============================
+
+#[test]
+fn bare_text_literal_in_bare_element_is_an_error() {
+    let diags = parse_err("<page name=\"p\"><text key=\"t\" text=\"确定\"/></page>");
+    assert!(
+        has_error(&diags, "裸文案"),
+        "text 的裸字面量应报错：{}",
+        render(&diags)
+    );
+}
+
+#[test]
+fn bare_label_literal_in_component_use_is_an_error() {
+    let src = "<component name=\"Button\" params=\"label\">\
+        <control class=\"button\"><text text=\"{label}\"/></control></component>\
+        <page name=\"p\"><Button label=\"确定\"/></page>";
+    let diags = parse_err(src);
+    assert!(
+        has_error(&diags, "裸文案"),
+        "组件的 label 裸字面量应报错：{}",
+        render(&diags)
+    );
+}
+
+#[test]
+fn explicit_literal_expression_and_label_key_still_parse() {
+    let src = "<component name=\"Button\" params=\"label label_key\">\
+        <control class=\"button\"><text text=\"{label_key ? tr(label_key) : label}\"/></control></component>\
+        <page name=\"p\"><Button label=\"{'English'}\" label_key=\"ui.ok\"/></page>";
+    let raw = match parse_all(&[("test.zypui", src)]) {
+        Ok(raw) => raw,
+        Err(diags) => panic!("显式表达式与 label_key 应通过：{}", render(&diags)),
+    };
+    assert_eq!(raw.pages.len(), 1);
 }

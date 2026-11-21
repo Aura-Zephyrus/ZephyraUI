@@ -221,7 +221,8 @@ fn bad_value(
     what: &str,
     expected: &[&str],
 ) -> Result<PropertyValue, ()> {
-    p.errors.push(unexpected(p, line, &format!("invalid {what}."), expected));
+    p.errors
+        .push(unexpected(p, line, &format!("invalid {what}."), expected));
     Err(())
 }
 
@@ -244,7 +245,14 @@ fn parse_advanced_text(
                 "center" => TextAlign::Center,
                 "right" => TextAlign::Right,
                 "justify" => TextAlign::Justify,
-                _ => return bad_value(p, line, "text-align", &["left", "center", "right", "justify"]),
+                _ => {
+                    return bad_value(
+                        p,
+                        line,
+                        "text-align",
+                        &["left", "center", "right", "justify"],
+                    )
+                }
             };
             Ok(PropertyValue::custom(v))
         }
@@ -275,7 +283,14 @@ fn parse_advanced_text(
                 "dotted" => TextDecorationStyle::Dotted,
                 "dashed" => TextDecorationStyle::Dashed,
                 "wavy" => TextDecorationStyle::Wavy,
-                _ => return bad_value(p, line, "text-decoration-style", &["solid", "double", "dotted", "dashed", "wavy"]),
+                _ => {
+                    return bad_value(
+                        p,
+                        line,
+                        "text-decoration-style",
+                        &["solid", "double", "dotted", "dashed", "wavy"],
+                    )
+                }
             };
             Ok(PropertyValue::custom(v))
         }
@@ -291,21 +306,41 @@ fn parse_advanced_text(
         "Text.Decoration" => {
             let mut d = TextDecoration::default();
             let mut any = false;
-            loop {
-                let Some(w) = next_word(input) else { break };
+            while let Some(w) = next_word(input) {
                 match w.as_str() {
                     "none" => {
                         d = TextDecoration::default();
                         any = true;
                     }
-                    "underline" => { d.underline = true; any = true; }
-                    "strikethrough" => { d.strikethrough = true; any = true; }
-                    "overline" => { d.overline = true; any = true; }
-                    _ => return bad_value(p, line, "text-decoration", &["none", "underline", "strikethrough", "overline"]),
+                    "underline" => {
+                        d.underline = true;
+                        any = true;
+                    }
+                    "strikethrough" => {
+                        d.strikethrough = true;
+                        any = true;
+                    }
+                    "overline" => {
+                        d.overline = true;
+                        any = true;
+                    }
+                    _ => {
+                        return bad_value(
+                            p,
+                            line,
+                            "text-decoration",
+                            &["none", "underline", "strikethrough", "overline"],
+                        )
+                    }
                 }
             }
             if !any {
-                return bad_value(p, line, "text-decoration", &["none", "underline", "strikethrough", "overline"]);
+                return bad_value(
+                    p,
+                    line,
+                    "text-decoration",
+                    &["none", "underline", "strikethrough", "overline"],
+                );
             }
             Ok(PropertyValue::custom(d))
         }
@@ -323,7 +358,7 @@ fn parse_advanced_text(
             let dy = next_number(input).ok_or(())?;
             let blur = next_number(input).ok_or(())?;
             let color = match input.next().map_err(|_| ())? {
-                Token::Hash(h) | Token::IDHash(h) => parse_hex_color(&h).ok_or(())?,
+                Token::Hash(h) | Token::IDHash(h) => parse_hex_color(h).ok_or(())?,
                 _ => Color::rgba(0.0, 0.0, 0.0, 0.5),
             };
             Ok(PropertyValue::custom(TextShadow {
@@ -353,8 +388,7 @@ fn parse_advanced_text(
             let variations = key.name() == "Text.Variations";
             let mut out_v: Vec<([u8; 4], f32)> = Vec::new();
             let mut out_f: Vec<(u32, u32)> = Vec::new();
-            loop {
-                let Some(tag) = next_word_list(input) else { break };
+            while let Some(tag) = next_word_list(input) {
                 if tag.len() != 4 {
                     return bad_value(p, line, key.name(), &["wght=700", "tnum=1"]);
                 }
@@ -366,16 +400,26 @@ fn parse_advanced_text(
                     Some(t) => {
                         // 已经取到 token：若不是数字就报错。
                         let value = match t {
-                            Token::Number { value, .. } | Token::Dimension { value, .. } => *value as f64 as f32,
+                            Token::Number { value, .. } | Token::Dimension { value, .. } => {
+                                *value as f64 as f32
+                            }
                             _ => return bad_value(p, line, key.name(), &["wght=700", "tnum=1"]),
                         };
-                        if variations { out_v.push((b, value)); } else { out_f.push((u32::from_be_bytes(b), value as u32)); }
+                        if variations {
+                            out_v.push((b, value));
+                        } else {
+                            out_f.push((u32::from_be_bytes(b), value as u32));
+                        }
                         continue;
                     }
                     None => break,
                 }
                 let value = next_number(input).ok_or(())?;
-                if variations { out_v.push((b, value)); } else { out_f.push((u32::from_be_bytes(b), value as u32)); }
+                if variations {
+                    out_v.push((b, value));
+                } else {
+                    out_f.push((u32::from_be_bytes(b), value as u32));
+                }
             }
             if variations {
                 Ok(PropertyValue::custom(out_v))
@@ -391,9 +435,10 @@ fn parse_advanced_text(
             if !name.as_ref().eq_ignore_ascii_case("arc") {
                 return bad_value(p, line, "text-path", &["arc(120px)"]);
             }
-            let radius = input.parse_nested_block(|args| {
-                Ok::<_, cssparser::ParseError<()>>(next_number(args))
-            }).map_err(|_| ())?.ok_or(())?;
+            let radius = input
+                .parse_nested_block(|args| Ok::<_, cssparser::ParseError<()>>(next_number(args)))
+                .map_err(|_| ())?
+                .ok_or(())?;
             Ok(PropertyValue::custom(TextPath::Arc { radius }))
         }
         _ => Err(()),

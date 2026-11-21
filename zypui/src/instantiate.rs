@@ -360,6 +360,21 @@ pub(crate) fn build_node(
                     "interactive" => {
                         el_el.with(&props::INTERACTIVE, PropertyValue::bool(v.truthy()))
                     }
+                    "window-drag" => {
+                        el_el.with(&props::WINDOW_DRAG, PropertyValue::bool(v.truthy()))
+                    }
+                    "animation" => match v.as_str() {
+                        Some(s) => el_el.with(&props::ANIMATION, PropertyValue::StaticStr(s)),
+                        None => el_el,
+                    },
+                    "animation-progress" => match v.as_f32() {
+                        Some(p) => el_el.with(&props::ANIMATION_PROGRESS, PropertyValue::float(p)),
+                        None => el_el,
+                    },
+                    "animation-play-state" => el_el.with(
+                        &props::ANIMATION_PLAY_STATE,
+                        PropertyValue::bool(v.truthy()),
+                    ),
                     "focusable" => el_el.with(&props::FOCUSABLE, PropertyValue::bool(v.truthy())),
                     "activatable" => {
                         el_el.with(&props::ACTIVATABLE, PropertyValue::bool(v.truthy()))

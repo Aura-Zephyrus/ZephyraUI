@@ -1626,10 +1626,7 @@ mod effect_contract {
                 &crate::props::TEXT_LCD,
                 PropertyValue::custom(LcdOrder::Bgr),
             )
-            .with(
-                &crate::props::TEXT_MAX_LINES,
-                PropertyValue::float(2.0),
-            )
+            .with(&crate::props::TEXT_MAX_LINES, PropertyValue::float(2.0))
             .with(
                 &crate::props::FONT_FEATURES,
                 PropertyValue::custom(vec![(u32::from_be_bytes(*b"tnum"), 1u32)]),

@@ -722,3 +722,110 @@ fn for_track_key_builds_in_order() {
     assert_eq!(els[0].key().and_then(|k| k.as_name()), Some("a"));
     assert_eq!(els[1].key().and_then(|k| k.as_name()), Some("b"));
 }
+
+#[test]
+fn window_drag_attr_reaches_the_core_property() {
+    let ui = Ui::new(RawUi {
+        components: vec![],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::El(ElementNode {
+                tag: NodeTag::Box,
+                key: Some(Expr::LitS("titlebar")),
+                classes: vec![],
+                attrs: vec![("window-drag", Expr::LitB(true))],
+                children: vec![],
+            })],
+        }],
+    })
+    .unwrap();
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    assert_eq!(
+        els[0]
+            .props()
+            .lookup(&props::WINDOW_DRAG)
+            .and_then(|(v, _)| v.get::<bool>()),
+        Some(true),
+        "window-drag 应实例化为 WINDOW_DRAG 属性"
+    );
+}
+
+#[test]
+fn window_drag_attr_false_does_not_mark_the_node() {
+    let ui = Ui::new(RawUi {
+        components: vec![],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::El(ElementNode {
+                tag: NodeTag::Box,
+                key: Some(Expr::LitS("plain")),
+                classes: vec![],
+                attrs: vec![("window-drag", Expr::LitB(false))],
+                children: vec![],
+            })],
+        }],
+    })
+    .unwrap();
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    assert_eq!(
+        els[0]
+            .props()
+            .lookup(&props::WINDOW_DRAG)
+            .and_then(|(v, _)| v.get::<bool>()),
+        Some(false),
+    );
+}
+
+#[test]
+fn animation_attrs_reach_the_core_properties() {
+    let ui = Ui::new(RawUi {
+        components: vec![],
+        pages: vec![Page {
+            name: "p",
+            root: vec![Node::El(ElementNode {
+                tag: NodeTag::Box,
+                key: Some(Expr::LitS("spin")),
+                classes: vec![],
+                attrs: vec![
+                    ("animation", Expr::LitS("spinner")),
+                    ("animation-progress", Expr::LitF(0.5)),
+                    ("animation-play-state", Expr::LitB(false)),
+                ],
+                children: vec![],
+            })],
+        }],
+    })
+    .unwrap();
+    let h = host(vec![]);
+    let mut it = Interner::new();
+    let els = ui.build("p", &h, &mut it).unwrap();
+    let el = &els[0];
+    assert_eq!(
+        el.props()
+            .lookup(&props::ANIMATION)
+            .unwrap()
+            .0
+            .get::<&'static str>(),
+        Some("spinner")
+    );
+    assert_eq!(
+        el.props()
+            .lookup(&props::ANIMATION_PROGRESS)
+            .unwrap()
+            .0
+            .get::<f32>(),
+        Some(0.5)
+    );
+    assert_eq!(
+        el.props()
+            .lookup(&props::ANIMATION_PLAY_STATE)
+            .unwrap()
+            .0
+            .get::<bool>(),
+        Some(false)
+    );
+}

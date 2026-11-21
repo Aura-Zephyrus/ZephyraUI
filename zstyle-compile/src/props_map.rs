@@ -290,6 +290,19 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "scroll-offset-y",
         key: &props::SCROLL_OFFSET_Y,
     },
+    // 动画引用 / 进度 / 播放态：只重绘，不触发重排（时钟归应用侧 driver）。
+    Prop {
+        css: "animation",
+        key: &props::ANIMATION,
+    },
+    Prop {
+        css: "animation-progress",
+        key: &props::ANIMATION_PROGRESS,
+    },
+    Prop {
+        css: "animation-play-state",
+        key: &props::ANIMATION_PLAY_STATE,
+    },
     // 玻璃装饰：高光 / 外投影 / 内阴影（写在哪一侧由契约定，不由样式表定）。
     Prop {
         css: "decoration",
@@ -328,6 +341,51 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop {
         css: "text-color",
         key: &props::TEXT_COLOR,
+    },
+    // ---- 高级文字：只重绘 ----
+    Prop {
+        css: "text-align",
+        key: &props::TEXT_ALIGN,
+    },
+    Prop {
+        css: "text-decoration",
+        key: &props::TEXT_DECORATION,
+    },
+    Prop {
+        css: "text-decoration-style",
+        key: &props::TEXT_DECORATION_STYLE,
+    },
+    Prop {
+        css: "text-decoration-mode",
+        key: &props::TEXT_DECORATION_MODE,
+    },
+    Prop {
+        css: "text-decoration-thickness",
+        key: &props::TEXT_DECORATION_THICKNESS,
+    },
+    Prop {
+        css: "text-decoration-offset",
+        key: &props::TEXT_DECORATION_OFFSET,
+    },
+    Prop {
+        css: "text-decoration-thickness-multiplier",
+        key: &props::TEXT_DECORATION_THICKNESS_MULTIPLIER,
+    },
+    Prop {
+        css: "text-embolden",
+        key: &props::TEXT_EMBOLDEN,
+    },
+    Prop {
+        css: "text-shadow",
+        key: &props::TEXT_SHADOW,
+    },
+    Prop {
+        css: "text-lcd",
+        key: &props::TEXT_LCD,
+    },
+    Prop {
+        css: "text-rotation",
+        key: &props::TEXT_ROTATION,
     },
     // ---- 状态（行为，不是外观）----
     // ⚠️ 这三个虽然**不改外观**，但允许出现在样式表里：`:disabled` 一类伪类

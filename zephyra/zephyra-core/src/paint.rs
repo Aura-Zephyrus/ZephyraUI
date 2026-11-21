@@ -27,6 +27,8 @@
 //! 它是核心对外的唯一产出 —— 宿主拿到 [`DisplayList`] 之后就不再关心树的存在。
 //! 几何必须由 [`crate::layout`] 先算好，本函数只读已摆好的矩形。
 
+use std::hash::{Hash, Hasher};
+
 use crate::context::Context;
 use crate::core::{Color, CornerRadius, Point, Rect};
 use crate::layout::Position;
@@ -73,7 +75,10 @@ fn render_stable(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
     let mut order = 0u32;
     render_rec(node, ctx, &mut order, out, PaintState::ROOT);
     // 本帧没有文字命令 ⇒ 没有 uv 会受图集重排影响，直接跳过 revision 比对。
-    if !out.iter().any(|item| matches!(item.command, Command::Text { .. })) {
+    if !out
+        .iter()
+        .any(|item| matches!(item.command, Command::Text { .. }))
+    {
         return;
     }
     let rev_after = engine.borrow().atlas_revision();
@@ -1023,13 +1028,17 @@ mod fingerprint_tests {
         one!(weight, 700);
         one!(family, Some("Segoe UI".into()));
         one!(line_height, Some(1.8));
-        one!(strut, Some(StrutStyle {
-            ascent: Some(12.0),
-            descent: Some(3.0),
-            leading: Some(1.0),
-            force: true,
-        }));
+        one!(
+            strut,
+            Some(StrutStyle {
+                ascent: Some(12.0),
+                descent: Some(3.0),
+                leading: Some(1.0),
+                force: true,
+            })
+        );
         one!(hyphens, true);
+        one!(palette, 1u16);
         one!(scale, 1.25);
         one!(direction, TextDirection::Rtl);
         one!(paragraph_spacing, 4.0);

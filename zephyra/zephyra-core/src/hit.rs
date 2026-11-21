@@ -35,6 +35,11 @@ impl HitResult {
         self.path.iter().rev().find(|n| n.interactive && n.inside)
     }
 
+    /// 最内层被命中的节点（无论是否 interactive）。
+    pub fn deepest(&self) -> Option<&HitNode> {
+        self.path.iter().rev().find(|n| n.inside)
+    }
+
     pub fn hit_any(&self) -> bool {
         self.path.iter().any(|n| n.inside)
     }
@@ -49,6 +54,8 @@ pub struct HitNode {
     pub interactive: bool,
     /// 该节点自身的视觉矩形是否包含测试点。
     pub inside: bool,
+    /// 是否为窗口拖动区（`props::WINDOW_DRAG`）。宿主据此决定拖动窗口。
+    pub drag_region: bool,
 }
 
 pub fn hit_test(node: &Node, req: HitTestRequest, ctx: Context<'_>, out: &mut HitResult) -> bool {
@@ -116,6 +123,10 @@ fn walk(
         id: node.key().cloned(),
         rect: vrect,
         interactive: node.is_interactive(ctx),
+        drag_region: node
+            .value(&crate::props::WINDOW_DRAG, ctx)
+            .and_then(|v| v.get::<bool>())
+            .unwrap_or(false),
         inside,
     });
 
