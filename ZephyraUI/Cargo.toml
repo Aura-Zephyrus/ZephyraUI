@@ -22,11 +22,11 @@ publish = false
 # 路由、页面、i18n 文案表都不在这里 —— 那些属于 gallery。判据很简单：
 # **换一个应用还能用吗？** 控件样式表能，导航栏的路由表不能。
 [dependencies]
-zephyra-core = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
-zephyra-fx = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
-zephyra-svg-anim = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
-zephyra-bezier = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
-zephyra-style = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
+zephyra-core = { path = "../../ZephyraCore/zephyra-core" }
+zephyra-fx = { path = "../../ZephyraCore/zephyra-fx" }
+zephyra-svg-anim = { path = "../../ZephyraCore/zephyra-svg-anim" }
+zephyra-bezier = { path = "../../ZephyraCore/zephyra-core/extra/zephyra-bezier" }
+zephyra-style = { path = "../../ZephyraCore/zephyra-style" }
 
 # ⚠️ 控件的**文案**归应用，不归这里：同一个 Button 在不同应用里
 # 叫 "确定" / "OK" / "Submit"。控件只发 key，文案表是应用的。
@@ -51,7 +51,7 @@ zephyra-style = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag 
 # 门禁只用：跨仓解析控件样式表，让主仓 `cargo test --workspace` 自己覆盖
 # 「令牌存在 / 分类名有规则 / 模板无字面文案」，而不是等应用仓的红。
 [dev-dependencies]
-zstyle-compile = { git = "https://github.com/Aura-Zephyrus/ZephyraCore.git", tag = "v0.2.0" }
+zstyle-compile = { path = "../../ZephyraCore/zstyle-compile" }
 
 [lib]
 name = "zephyra_ui"

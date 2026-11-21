@@ -1,0 +1,203 @@
+/* Video / Camera —— 每帧外部纹理的显示面。
+ *
+ * 这两个控件只声明「哪块矩形画哪个纹理 key」（见 controls.zypui 的 src 参数），
+ * 外观值全在这里。纹理内容由应用的 ExtContextHandle::submit_frame 每帧替换；
+ * 节点自身的 IMAGE_TEXTURE 绘制在背景之上、子节点之下，所以将来叠 HUD 不会遮画面。
+ *
+ * 16:9 是相机 / 视频最常见的画面比例；image-size 默认 −1 = 铺满整个节点矩形，
+ * 因此节点的宽高比要与提交帧的宽高比一致，否则画面被拉伸。
+ */
+
+box.video-frame {
+    width: 320px;
+    height: 180px;
+    background: @card;
+    corner-radius: 12px;
+    corner-shape: superellipse(1.5);
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+box.camera-frame {
+    width: 320px;
+    height: 180px;
+    background: @card;
+    corner-radius: 12px;
+    corner-shape: superellipse(1.5);
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+/* ---- 完整播放器：画面之上叠一层控制条 ---- */
+
+box.video-player {
+    direction: vertical;
+    main-align: end;
+    cross-align: stretch;
+}
+
+box.video-player.playing {
+    border-color: @accent_fill;
+}
+
+box.video-player.paused {
+    border-color: @card_border;
+}
+
+box.video-player.buffering {
+    border-color: @caution;
+}
+
+box.video-player.ended {
+    border-color: @caution;
+}
+
+box.video-player.fullscreen {
+    border-width: 2px;
+    border-color: @accent_fill;
+}
+
+text.player-volume-value {
+    text-size: 11px;
+    text-color: @content_secondary;
+}
+
+/* 无障碍名来源：视觉上藏起来，但留在树上给 UIA 的 accessible_name() 读。 */
+text.player-label {
+    width: 1px;
+    height: 1px;
+    text-size: 1px;
+    opacity: 0;
+}
+
+box.player-shade {
+    height: 56px;
+    background: @surface_alt_translucent;
+}
+
+box.player-controls {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 8px;
+    padding: 6px;
+    height: 44px;
+}
+
+control.player-button {
+    width: 32px;
+    height: 32px;
+    corner-radius: 10px;
+    corner-shape: superellipse(1.5);
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+control.player-button.hovered {
+    background: @control_fill_hover;
+    border-color: @control_border_strong;
+}
+
+control.player-button.pressed {
+    background: @control_fill_pressed;
+}
+
+control.player-button.focused {
+    border-color: @focus_ring;
+    border-width: 2px;
+}
+
+text.player-time {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+control.player-seek {
+    direction: horizontal;
+    cross-align: center;
+    height: 32px;
+}
+
+control.player-volume {
+    direction: horizontal;
+    cross-align: center;
+    height: 32px;
+}
+
+box.player-seek-track {
+    width: 240px;
+    height: 4px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+box.player-seek-fill {
+    height: 4px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @accent_fill;
+}
+
+box.player-seek-thumb {
+    width: 12px;
+    height: 12px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @on_accent_fill;
+}
+
+box.player-volume-track {
+    width: 80px;
+    height: 4px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+box.player-volume-fill {
+    height: 4px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @accent_fill;
+}
+
+box.player-volume-thumb {
+    width: 12px;
+    height: 12px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @on_accent_fill;
+}
+
+control.player-rate {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    padding: 4px;
+    background: @control_fill;
+    corner-radius: 8px;
+    corner-shape: superellipse(1.5);
+}
+
+text.player-rate-label {
+    text-size: 12px;
+    text-color: @content;
+}
+
+box.player-buffering {
+    width: 24px;
+    height: 24px;
+    corner-radius: 158.4px;
+    corner-shape: superellipse(1.5);
+    background: @caution;
+}

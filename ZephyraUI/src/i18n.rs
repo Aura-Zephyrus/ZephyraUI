@@ -84,6 +84,7 @@ pub const KEY_PARAMS: &[(&str, &str)] = &[
     ("CheckBoxGroup", "label_key"),
     ("RadioButton", "label_key"),
     ("ToggleSwitch", "label_key"),
+    ("VideoPlayer", "label_key"),
 ];
 
 /// 这个实参是不是「语义 key」型（按 [`KEY_PARAMS`] 判定）。

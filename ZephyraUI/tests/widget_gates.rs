@@ -128,6 +128,86 @@ fn widget_control_templates_emit_no_user_facing_text() {
 }
 
 #[test]
+fn video_and_camera_controls_exist_and_are_styled() {
+    // 每帧外部纹理的显示面：模板里要同时有 Video / Camera，样式表里要有对应分类名。
+    for name in ["Video", "Camera"] {
+        assert!(
+            CONTROLS.contains(&format!("<component name=\"{name}\"")),
+            "控件层缺少 {name} 组件"
+        );
+    }
+    let sheet = widget_sheet();
+    let known: Vec<&str> = sheet
+        .rules()
+        .iter()
+        .flat_map(|r| r.selector.names.iter().copied())
+        .collect();
+    for class in ["video-frame", "camera-frame"] {
+        assert!(known.contains(&class), "{class} 在样式表里没有规则");
+    }
+}
+
+#[test]
+fn video_player_control_has_full_player_structure_and_styling() {
+    // 完整播放器：画面 + 六类交互 + 状态外观，缺一个都是"看着像播放器"的空壳。
+    assert!(
+        CONTROLS.contains("<component name=\"VideoPlayer\""),
+        "控件层缺少 VideoPlayer 组件"
+    );
+    for key in [
+        "act:player-play-pause",
+        "act:player-seek",
+        "fill:player-seek",
+        "act:player-volume",
+        "fill:player-volume",
+        "act:player-mute",
+        "act:player-rate",
+        "act:player-fullscreen",
+    ] {
+        assert!(CONTROLS.contains(key), "VideoPlayer 缺少交互 key {key}");
+    }
+    let seek_fills = CONTROLS.matches("fill:player-seek").count();
+    let volume_fills = CONTROLS.matches("fill:player-volume").count();
+    assert_eq!(seek_fills, 1, "fill:player-seek 必须在模板里恰好出现一次");
+    assert_eq!(
+        volume_fills, 1,
+        "fill:player-volume 必须在模板里恰好出现一次"
+    );
+
+    let sheet = widget_sheet();
+    let known: Vec<&str> = sheet
+        .rules()
+        .iter()
+        .flat_map(|r| r.selector.names.iter().copied())
+        .collect();
+    for class in [
+        "video-player",
+        "player-shade",
+        "player-controls",
+        "player-button",
+        "player-time",
+        "player-seek-track",
+        "player-seek-fill",
+        "player-seek-thumb",
+        "player-volume-track",
+        "player-volume-fill",
+        "player-volume-thumb",
+        "player-volume-value",
+        "player-rate",
+        "player-rate-label",
+        "player-buffering",
+        "player-label",
+        "playing",
+        "paused",
+        "buffering",
+        "ended",
+        "fullscreen",
+    ] {
+        assert!(known.contains(&class), "{class} 在样式表里没有规则");
+    }
+}
+
+#[test]
 fn widget_stylesheet_rules_use_classes_the_templates_can_emit() {
     let sheet = widget_sheet();
     let rule_count = sheet.rules().len();

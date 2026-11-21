@@ -52,6 +52,7 @@ pub const STYLESHEETS: &[(&str, &str)] = &[
     ("text", include_str!("../controls-text.zstyle")),
     ("text-input", include_str!("../controls-text-input.zstyle")),
     ("toggle", include_str!("../controls-toggle.zstyle")),
+    ("video", include_str!("../controls-video.zstyle")),
 ];
 
 /// 按名字取一份样式表（给「只想加载其中一份」的场景用）。

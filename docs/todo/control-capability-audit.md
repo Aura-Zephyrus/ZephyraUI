@@ -16,6 +16,11 @@ ZephyraUI 是声明式控件描述层，不是带事件循环、焦点管理、�
 - **滚动与手势**：`ListView`、`SwipeView`、`DatePicker`、`TimePicker`、`TableView`
 - **视觉语义降级**：`AcrylicCard`、`RoundedCornerOverlay`、`ProgressRing`、`BusyIndicator`、`Toast`
 - **部分能力的控件**：`ColorPicker`
+- **播放器**：`VideoPlayer`（完整播放器：播放/暂停、可拖动进度、时间、音量/静音、倍速、全屏）。
+  状态模型 `zephyra_ui::player`、交互 key 与外观都已落地；真实帧/时钟/音频由宿主提供
+  （gallery 经 `zephyra-media`）。UIA 侧根节点报 `Group`、按钮报 `Button`、
+  `key="label"` 提供可访问名；**进度/音量条暂不报 RangeValue** —— UIA 侧没有 Slider
+  角色，为避免发明新图案，这里明确记为降级。
 
 这些条目不是同一种问题：有些只能画静态外观，有些可通过点击与应用状态配合工作，但缺少名称通常暗示的滚动、浮层、系统输入或动画能力。请以各项的“当前行为”列为准。
 

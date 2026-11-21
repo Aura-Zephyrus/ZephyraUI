@@ -305,12 +305,10 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 [[package]]
 name = "zephyra-bezier"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 
 [[package]]
 name = "zephyra-core"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 dependencies = [
  "zephyra-vector",
 ]
@@ -318,7 +316,6 @@ dependencies = [
 [[package]]
 name = "zephyra-fx"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 dependencies = [
  "zephyra-core",
  "zephyra-vector",
@@ -327,7 +324,6 @@ dependencies = [
 [[package]]
 name = "zephyra-style"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 dependencies = [
  "zephyra-bezier",
  "zephyra-core",
@@ -336,7 +332,6 @@ dependencies = [
 [[package]]
 name = "zephyra-svg-anim"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 dependencies = [
  "zephyra-bezier",
  "zephyra-vector",
@@ -371,7 +366,6 @@ dependencies = [
 [[package]]
 name = "zstyle-compile"
 version = "0.1.0"
-source = "git+https://github.com/Aura-Zephyrus/ZephyraCore.git?tag=v0.2.0#587ef1c07172d498a8f0d958acc403b45dcf2f8b"
 dependencies = [
  "cssparser",
  "zephyra-core",

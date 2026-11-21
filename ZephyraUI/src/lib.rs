@@ -8,7 +8,8 @@
 //! | 控件的 `.zstyle` 样式表（[`styles`]） | 应用外壳与页面布局的 `.zstyle` |
 //! | `@令牌` 名单镜像（[`tokens`]） | 路由、页面、应用状态 |
 //! | 控件结构声明 `ui/controls.zypui` | 任何渲染后端 |
-//! | 控件的**状态模型**（[`checkbox`] / [`toggle`] / [`slider`]） | 状态**存哪**（那是宿主的事） |
+//! | 控件的**状态模型**（[`checkbox`] / [`toggle`] / [`slider`] / [`player`]） | 状态**存哪**（那是宿主的事） |
+//! | 控件层自己的图标（[`icons`]） | 底层通用图标表（那个在 `zephyra-vector`） |
 //! | 控件**自身语义**的文案（[`i18n`]） | 应用自己的文案表 |
 //!
 //! # 结构的真相只有一份：`.zypui`
@@ -42,8 +43,10 @@ pub mod animation;
 pub mod catalog;
 pub mod checkbox;
 pub mod i18n;
+pub mod icons;
 pub mod liquid_button;
 pub mod motion;
+pub mod player;
 pub mod popup;
 pub mod scroll_bar;
 pub mod scroll_view;
@@ -66,10 +69,16 @@ pub use i18n::{
     builtin_messages, is_key_param, merge_builtin, resolve, BUILTIN_KEYS, CHECKBOX_SELECT_ALL,
     KEY_PARAMS, NAMESPACE,
 };
+pub use icons::icon_set;
 pub use liquid_button::{LiquidButton, LIQUID_BUTTON_H, LIQUID_BUTTON_W};
 pub use motion::{
     morph_class, morph_height, reveal_items, visible, DropdownMotion, BTN_H, CLOSE_MS, MENU_H,
     MORPH_CLASSES, MORPH_STEPS, OPEN_MS, REVEAL_AT,
+};
+pub use player::{
+    PlaybackState, PlayerState, CLASS_BUFFERING, CLASS_ENDED, CLASS_PAUSED, CLASS_PLAYING,
+    KEY_FULLSCREEN, KEY_MUTE, KEY_PLAY_PAUSE, KEY_RATE, KEY_SEEK, KEY_SEEK_FILL, KEY_VOLUME,
+    KEY_VOLUME_FILL, RATES, SEEK_TRACK_W, VOLUME_TRACK_W,
 };
 pub use popup::Popup;
 pub use scroll_bar::{ScrollBar, ScrollBarAxis, MIN_THUMB_LENGTH, PAGE_FRACTION};

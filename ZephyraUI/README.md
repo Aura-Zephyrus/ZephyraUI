@@ -101,7 +101,7 @@ zephyra_ui::i18n::merge_builtin(&mut msgs);   // 单向：应用条目优先
 
 ## 控件清单
 
-54 个组件，见 `ui/controls.zypui`（按族分段，每段有注释说明度量出处）：
+57 个组件，见 `ui/controls.zypui`（按族分段，每段有注释说明度量出处）：
 
 Button / ToolButton / PillButton / RoundButton / Hyperlink / InfoBadge / DotBadge /
 Card / SettingCard / ClipCard / Expander / TextLabel / Caption / CheckBox /
@@ -110,7 +110,9 @@ MenuItem / MenuBar / NavSubItem / SelectorBar / ErrorPage / ProgressRing / InfoB
 Toast / ToolTip / BusyIndicator / PageIndicator / DropDownButton / ComboBox /
 SpinBox / ColorPicker / ListView / TableView / SwipeView / Avatar / SettingItem /
 SettingExpander / AcrylicCard / CornerOverlay / Dialog / DatePicker / TimePicker /
-TextField / TextArea / ScrollableTextArea / AutoSuggestBox / TextInputMenu …
+TextField / TextArea / ScrollableTextArea / AutoSuggestBox / TextInputMenu /
+Video / Camera（每帧外部纹理的显示面，`src` 是宿主 `submit_frame` 的纹理 key）/
+VideoPlayer（完整播放器：播放/暂停、拖动进度、时间、音量/静音、倍速、全屏；状态模型在 `player.rs`，真实副作用归宿主）…
 
 ⚠️ 控件名代表结构/视觉形态，**不保证**拥有原生控件的全部输入、弹层、滚动、焦点或
 动画行为。已盘点的能力缺口和后续重写候选见
