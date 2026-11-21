@@ -961,7 +961,10 @@ fn transform_vertices(
 #[cfg(test)]
 mod fingerprint_tests {
     use super::*;
-    use crate::text::{TextAlign, TextDecoration, TextShadow};
+    use crate::text::{
+        LcdOrder, StrutStyle, TextAlign, TextDecoration, TextDecorationMode, TextDecorationStyle,
+        TextDirection, TextPath, TextShadow,
+    };
 
     #[test]
     fn fingerprint_tracks_every_advanced_field() {
@@ -1004,8 +1007,38 @@ mod fingerprint_tests {
         s.rotation = Some(0.5);
         cases.push(("rotation", s));
         let mut s = base.clone();
-        s.lcd = Some(crate::text::LcdOrder::Bgr);
+        s.lcd = Some(LcdOrder::Bgr);
         cases.push(("lcd", s));
+
+        // 以下字段此前只被哈希、未被断言；补上后将来新增字段若忘记进指纹会立刻变红。
+        macro_rules! one {
+            ($field:ident, $value:expr) => {{
+                let mut s = base.clone();
+                s.$field = $value;
+                cases.push((stringify!($field), s));
+            }};
+        }
+        one!(size, 20.0);
+        one!(weight, 700);
+        one!(family, Some("Segoe UI".into()));
+        one!(line_height, Some(1.8));
+        one!(strut, Some(StrutStyle {
+            ascent: Some(12.0),
+            descent: Some(3.0),
+            leading: Some(1.0),
+            force: true,
+        }));
+        one!(hyphens, true);
+        one!(scale, 1.25);
+        one!(direction, TextDirection::Rtl);
+        one!(paragraph_spacing, 4.0);
+        one!(decoration_style, TextDecorationStyle::Wavy);
+        one!(decoration_mode, TextDecorationMode::Gaps);
+        one!(decoration_thickness, Some(2.0));
+        one!(decoration_thickness_multiplier, 1.5);
+        one!(decoration_offset, Some(3.0));
+        one!(embolden, Some(0.02));
+        one!(path, Some(TextPath::Arc { radius: 120.0 }));
 
         for (name, style) in cases {
             assert_ne!(fp, text_style_fingerprint(&style), "{name} 未进入指纹");
