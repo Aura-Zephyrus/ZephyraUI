@@ -498,6 +498,10 @@ pub static TEXT_ELLIPSIS: PropertyKey =
 pub static TEXT_HYPHENS: PropertyKey =
     PropertyKey::inheritable_layout("Text.Hyphens", PropertyValue::bool(false));
 
+/// CPAL 调色板索引（COLR v1 彩色字形）。
+pub static TEXT_PALETTE: PropertyKey =
+    PropertyKey::inheritable("Text.Palette", PropertyValue::int(0));
+
 /// 强制行框。值为 `StrutStyle`。
 pub static TEXT_STRUT: PropertyKey =
     PropertyKey::inheritable_layout("Text.Strut", PropertyValue::float(f32::NAN));

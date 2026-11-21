@@ -135,6 +135,10 @@ impl Node {
             rotation: self.opt_num(&p::TEXT_ROTATION, ctx),
             path: self.prop::<TextPath>(&p::TEXT_PATH, ctx),
             hyphens: self.prop::<bool>(&p::TEXT_HYPHENS, ctx).unwrap_or(false),
+            palette: self
+                .prop::<i32>(&p::TEXT_PALETTE, ctx)
+                .map(|v| v.clamp(0, u16::MAX as i32) as u16)
+                .unwrap_or(0),
             variations: self
                 .prop::<Vec<([u8; 4], f32)>>(&p::TEXT_VARIATIONS, ctx)
                 .unwrap_or_default(),

@@ -142,6 +142,7 @@ pub(crate) fn text_style_fingerprint(s: &crate::text::TextStyle) -> u64 {
         None => 0u8.hash(&mut h),
     }
     s.hyphens.hash(&mut h);
+    s.palette.hash(&mut h);
     (s.variations.len() as u64).hash(&mut h);
     for (tag, value) in &s.variations {
         tag.hash(&mut h);

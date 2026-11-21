@@ -189,6 +189,10 @@ pub(crate) const PROPS: &[Prop] = &[
         key: &props::TEXT_HYPHENS,
     },
     Prop {
+        css: "text-palette",
+        key: &props::TEXT_PALETTE,
+    },
+    Prop {
         css: "text-strut",
         key: &props::TEXT_STRUT,
     },
