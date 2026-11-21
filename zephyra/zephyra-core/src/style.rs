@@ -71,13 +71,26 @@ impl Node {
         (!s.is_empty()).then_some(s)
     }
 
+    /// 字体族名（继承），空串表示未设置。
+    pub fn font_family(&self) -> Option<&str> {
+        let (raw, _source) = crate::property::resolve(self.props(), &crate::props::FONT_FAMILY, None);
+        let s: &str = match raw {
+            PropertyValue::StaticStr(s) => s,
+            PropertyValue::Str(s) => s.as_ref(),
+            _ => return None,
+        };
+        (!s.is_empty()).then_some(s)
+    }
+
     /// 文本样式（由本节点的文本属性合成，不含字体 —— 字体是宿主的事）。
     pub fn text_style(&self, ctx: Context<'_>) -> crate::text::TextStyle {
         crate::text::TextStyle {
             // 字号缺省不写死：0.0 会被宿主当成"非法"，由宿主回落到自己的默认字号。
             size: self.number_or(&crate::props::TEXT_SIZE, 14.0, ctx).max(1.0),
-            weight: 400,
-            family: None,
+            weight: finite(self.number_or(&crate::props::FONT_WEIGHT, f32::NAN, ctx))
+                .map(|w| w.round().max(1.0).min(1000.0) as u16)
+                .unwrap_or(400),
+            family: self.font_family().map(str::to_string),
             // 未显式设置时给 None，让 zephyra-vector 用字体的 hhea 真实度量算行高
             // （Skia 的 SkFontMetrics 行为）；只有属性真的给了倍数才覆盖它。
             line_height: finite(self.number_or(&crate::props::TEXT_LINE_HEIGHT, f32::NAN, ctx)),

@@ -325,7 +325,7 @@ fn shared_stack() -> Arc<Mutex<Shared>> {
     SHARED
         .get_or_init(|| {
             // 文本引擎：core 的 `TextStack` + ab_glyph 字形来源。找不到字体时退回禁用模式。
-            let (engine, note) = zephyra_fx::from_system_font();
+            let (engine, note) = zephyra_fx::from_system_font_set();
             eprintln!("[zephyra-d3d12] {note}");
             let gpu = Gpu::new().expect("创建 D3D12 设备：需要可用的 GPU");
             // `msaa_samples()` 是**进程级**环境变量读取，所以所有窗口的采样数一致 ——

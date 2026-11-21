@@ -81,7 +81,10 @@ pub use zephyra_vector::{cpu_raster, geom_clip, offscreen, pixels, quad, shaders
 
 pub use pixels::{srgb_bytes, write_bmp, PixelRead};
 pub use quad::RenderReport;
-pub use text::{from_font_file, from_system_font, AbGlyphSource, FONT_OVERRIDE_ENV};
+pub use text::{
+    from_font_file, from_font_file_set, from_system_font, from_system_font_set, AbGlyphSource,
+    FontMeta, FontSet, FONT_OVERRIDE_ENV,
+};
 pub use texture::TextureNames;
 
 /// 标量属性的本地定义（宿主自定义控件用）。
@@ -104,7 +107,7 @@ pub static Z_INDEX: zephyra_core::property::PropertyKey = zephyra_core::property
 ///
 /// 之所以是类型别名而不是 `impl Trait`：它出现在各后端 `HostWindow` 与
 /// [`cpu_only::CpuHost`] 的字段类型里，必须能被外部指名。
-pub type TextEngine = zephyra_core::text::TextStack<AbGlyphSource>;
+pub type TextEngine = zephyra_core::text::TextStack<FontSet>;
 
 use zephyra_core::context::Context;
 use zephyra_core::diff::DiffStats;

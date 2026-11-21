@@ -447,6 +447,16 @@ pub static TEXT_MAX_WIDTH: PropertyKey =
 pub static TEXT_LINE_HEIGHT: PropertyKey =
     PropertyKey::inheritable_layout("Text.LineHeight", PropertyValue::float(f32::NAN));
 
+/// 字体族名（继承）。空串表示交给字体回退链决定。
+pub static FONT_FAMILY: PropertyKey = PropertyKey::inheritable(
+    "Font.Family",
+    PropertyValue::static_str(""),
+);
+
+/// 字重（继承，400 = Regular）。`NaN` 表示 400。
+pub static FONT_WEIGHT: PropertyKey =
+    PropertyKey::inheritable("Font.Weight", PropertyValue::float(f32::NAN));
+
 /// 光标位置（字节下标，DIP）。由 `TextField` / `TextArea` 控件写入，供 `.zypui`
 /// 模板的 `translate-x` 绑定读取，把光标定位到对应字符位置。
 pub static CURSOR: PropertyKey = PropertyKey::new("Text.Cursor", PropertyValue::float(0.0));

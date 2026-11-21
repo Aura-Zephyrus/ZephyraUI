@@ -42,6 +42,7 @@ impl GlyphSource for DistinctSource {
             sdf: from_coverage(&cov, n, n, SDF_PADDING),
             spread: SDF_SPREAD,
             base_px: SDF_BASE_PX as f32,
+            is_bitmap: false,
         })
     }
     fn font_id(&self) -> u32 {

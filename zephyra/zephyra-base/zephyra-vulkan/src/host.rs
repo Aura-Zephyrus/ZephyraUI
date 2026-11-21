@@ -246,7 +246,7 @@ impl<V: View> HostWindow<V> {
             }
         };
 
-        let (engine, note) = zephyra_fx::text::from_system_font();
+        let (engine, note) = zephyra_fx::text::from_system_font_set();
         eprintln!("[zephyra] {note}");
 
         // MSAA 与两个 Windows 后端同档（4×；ZEPHYRA_MSAA=0 可关）。渲染通道

@@ -371,7 +371,7 @@ impl<V: View> HostWindow<V> {
 
         // 文本引擎：core 的 `TextStack` + 本 crate 的 ab_glyph 字形来源。
         // 找不到字体时退回禁用模式 —— 文本不显示，其余部分照常。
-        let (engine, note) = text::from_system_font();
+        let (engine, note) = text::from_system_font_set();
         eprintln!("[zephyra] {note}");
 
         let gpu = shared_gpu();
