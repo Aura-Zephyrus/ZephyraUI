@@ -404,6 +404,64 @@ pub fn has_cancelled(events: &[PointerInput]) -> bool {
     events.iter().any(|e| e.phase == PointerInputPhase::Cancel)
 }
 
+/// 指针是否落在窗口拖动区（`props::WINDOW_DRAG`，frameless 自绘标题栏用）。
+///
+/// 宿主在鼠标按下时调用；`node` 是保留树根节点，`(x, y)` 是客户区物理像素。
+/// 判据：命中路径里**最内层**节点带拖动标记才算 —— 于是标题栏里的按钮
+/// （不带标记）自然豁免，点按钮不会拖动窗口。与 Tauri 的
+/// `data-tauri-drag-region` 同一语义，只是判定放在 core 的命中测试里。
+/// 窗口边缘缩放方向（后端无关；各宿主映射到自己的 winit `ResizeDirection`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// 判断指针是否落在 frameless 窗口的缩放边缘。
+///
+/// 与 Tauri `undecorated_resizing` 同一思路：窗口边缘固定像素带用于缩放，
+/// 中间区域留给 UI。本函数只做判定，真正的 `drag_resize_window` 由宿主调
+/// （winit API 必须在鼠标按下事件里调用）。
+pub fn resize_edge(x: f32, y: f32, width: f32, height: f32, inset: f32) -> Option<ResizeEdge> {
+    if width <= 0.0 || height <= 0.0 || inset <= 0.0 {
+        return None;
+    }
+    let left = x < inset;
+    let right = x >= width - inset;
+    let top = y < inset;
+    let bottom = y >= height - inset;
+    match (top, bottom, left, right) {
+        (true, _, true, _) => Some(ResizeEdge::NorthWest),
+        (true, _, _, true) => Some(ResizeEdge::NorthEast),
+        (_, true, true, _) => Some(ResizeEdge::SouthWest),
+        (_, true, _, true) => Some(ResizeEdge::SouthEast),
+        (true, _, false, false) => Some(ResizeEdge::North),
+        (_, true, false, false) => Some(ResizeEdge::South),
+        (false, false, true, _) => Some(ResizeEdge::West),
+        (false, false, _, true) => Some(ResizeEdge::East),
+        _ => None,
+    }
+}
+
+pub fn hit_drag_region(node: &zephyra_core::node::Node, x: f32, y: f32, ctx: Context<'_>) -> bool {
+    let mut out = zephyra_core::hit::HitResult::default();
+    zephyra_core::hit::hit_test(
+        node,
+        zephyra_core::hit::HitTestRequest {
+            point: zephyra_core::core::Point::new(x, y),
+        },
+        ctx,
+        &mut out,
+    );
+    out.deepest().is_some_and(|n| n.drag_region)
+}
+
 /// 一个静态手势（官方触控指南的「静态手势事件」一档）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GestureEvent {
@@ -470,6 +528,9 @@ pub trait View {
 #[cfg(test)]
 #[path = "../tests/unit/tests/input_state_tests.rs"]
 mod input_state_tests;
+#[cfg(test)]
+#[path = "../tests/unit/window_drag_tests.rs"]
+mod window_drag_tests;
 
 /// 一帧的输出：diff 统计 + 渲染统计。
 ///

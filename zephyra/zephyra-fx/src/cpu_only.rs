@@ -40,7 +40,6 @@ use zephyra_core::theme::Theme;
 
 use crate::cpu_raster::{self, CpuCanvas};
 use crate::quad;
-use crate::text;
 use crate::texture::TextureNames;
 use crate::{Frame, View};
 

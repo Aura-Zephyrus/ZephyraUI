@@ -768,6 +768,10 @@ fn bridge_on_ephemeral_port() -> (DebugBridge, u16) {
     (
         DebugBridge {
             listener: Some(listener),
+            pending_listen_port: None,
+            app_name: None,
+            app_version: None,
+            window_id: None,
             link: None,
             conns: Vec::new(),
         },
@@ -799,6 +803,10 @@ fn connects_out_to_mcp_and_serves_the_same_protocol() {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let bridge = DebugBridge {
         listener: None,
+        pending_listen_port: None,
+        app_name: None,
+        app_version: None,
+        window_id: None,
         link: Some(OutboundLink::new(addr)),
         conns: Vec::new(),
     };
@@ -1318,6 +1326,10 @@ fn bridge_state_distinguishes_outbound_phases() {
     let addr = listener.local_addr().unwrap();
     let mut bridge = DebugBridge {
         listener: None,
+        pending_listen_port: None,
+        app_name: None,
+        app_version: None,
+        window_id: None,
         link: Some(OutboundLink::new(addr)),
         conns: Vec::new(),
     };
@@ -1384,6 +1396,95 @@ fn with_config_declares_outbound_and_app_identity() {
     assert_eq!(hello.trim(), "hello my-app 9.9.9");
 }
 
+/// 多窗口：`set_window_id` 注入的 id 必须出现在 hello 第三帧位，MCP 据此路由。
+#[test]
+fn set_window_id_is_reported_in_hello() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mcp = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = [0u8; 256];
+        let n = stream.read(&mut line).unwrap();
+        tx.send(String::from_utf8_lossy(&line[..n]).into_owned())
+            .unwrap();
+    });
+
+    let config = super::BridgeConfig {
+        connect_to: Some(addr),
+        app_name: Some("my-app".into()),
+        app_version: Some("9.9.9".into()),
+        ..Default::default()
+    };
+    let mut bridge = DebugBridge::with_config(config).unwrap();
+    // 后端 create() 里做的那一步：拿到 WindowKey 后注入。
+    bridge.set_window_id(7);
+    let mut host = MockHost::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !bridge.is_connected() && std::time::Instant::now() < deadline {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..10 {
+        bridge.poll(&mut host);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    mcp.join().unwrap();
+    let hello = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(hello.trim(), "hello my-app 9.9.9 7");
+}
+
+/// CDP 式拓扑：应用持有端口（基址 + 窗口 id），MCP 连进来后发 `identify`
+/// 就能知道连的是哪个窗口 —— 多个 agent 进程因此可以各连各的、互不抢端口。
+#[test]
+fn listen_mode_binds_window_offset_and_answers_identify() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let base = loop {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        if port >= 65000 {
+            continue;
+        }
+        // 真正要用的是 base+3，先确认它空闲（ephemeral 端口附近可能被占）。
+        if let Ok(reserved) = TcpListener::bind(("127.0.0.1", port + 3)) {
+            drop(reserved);
+            break port;
+        }
+    };
+    let config = super::BridgeConfig {
+        listen_port: Some(base),
+        app_name: Some("app".into()),
+        app_version: Some("1.0".into()),
+        ..Default::default()
+    };
+    let mut bridge = DebugBridge::with_config(config).unwrap();
+    // 后端 create() 里的那一步：注入窗口 id，桥据此绑定 base+3。
+    bridge.set_window_id(3);
+
+    let answer = std::thread::spawn(move || {
+        let mut stream = TcpStream::connect(("127.0.0.1", base + 3)).unwrap();
+        writeln!(stream, "identify").unwrap();
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        line.trim_end().to_string()
+    });
+
+    // 桥在独立线程里 poll，主线程等应答线程收结果。
+    let poller = std::thread::spawn(move || {
+        let mut host = MockHost::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            bridge.poll(&mut host);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    });
+    let got = answer.join().unwrap();
+    poller.join().unwrap();
+    assert_eq!(got, "hello app 1.0 3", "identify 应答: {got}");
+}
+
 /// 没声明任何拓扑 ⇒ 默认关闭，与「不设环境变量」同款零开销。
 #[test]
 fn with_empty_config_stays_disabled() {
@@ -1420,6 +1521,10 @@ fn full_slot_outbound_backs_off_instead_of_spamming_threads() {
 
     let mut bridge = DebugBridge {
         listener: None,
+        pending_listen_port: None,
+        app_name: None,
+        app_version: None,
+        window_id: None,
         link: Some(super::OutboundLink::new(addr)),
         conns,
     };

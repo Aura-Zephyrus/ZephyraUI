@@ -43,6 +43,12 @@ pub use crate::{DEFAULT_PORT, MCP_PORT_ENV, PORT_ENV};
 /// 一条从 TCP 上解析出来的命令。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    /// 报身份：`hello <app> <version> <window-id>`。
+    ///
+    /// CDP 式拓扑里**应用持有监听端口、MCP 连进来**。连上后先发这条拿到
+    /// 窗口 id，再把工具调用路由到对应窗口；不会像 hello 帧那样主动推送
+    /// （老的 `zephyra bridge` 客户端一连上就发命令，多一行会打乱它的解析）。
+    Identify,
     /// 探活。回 `pong`。
     Ping,
     /// 布局树 dump（缩进文本，路径列可直接复制给 `props`）。
@@ -920,10 +926,17 @@ pub enum BridgeState {
 /// - **旧模式**：监听 `ZEPHYRA_DEBUG_PORT`，客户端连进来（`listener`）。
 /// - **MCP 模式**：`ZEPHYRA_MCP_PORT` 由 CLI 注入，应用连进 MCP（`link`）。
 pub struct DebugBridge {
-    /// 旧模式的监听器。MCP 模式下仍可同时存在（`ZEPHYRA_DEBUG_PORT` 也设了），
-    /// 这样 `zephyra bridge` / `perf` / `debug` 这些直连工具不受影响。
+    /// 监听器。**CDP 式拓扑里应用持有端口**：端口 = `ZEPHYRA_DEBUG_PORT` 基址
+    /// + 窗口 id，所以 MCP 进程可以连出来，多个 agent 窗口也不会抢同一个端口。
     listener: Option<TcpListener>,
-    /// MCP 模式的连出状态。
+    /// `with_config` 里先记下基址，等 `set_window_id` 拿到窗口 id 再真正绑定。
+    /// 没有 id 的兼容路径（测试 / IDE 显式配置）在第一次 `poll` 时按基址绑定。
+    pending_listen_port: Option<u16>,
+    /// 身份素材：`identify` 命令回它，让连进来的 MCP 知道这是哪个窗口。
+    app_name: Option<String>,
+    app_version: Option<String>,
+    window_id: Option<u64>,
+    /// MCP 模式的连出状态（旧拓扑兼容用；新拓扑不需要它）。
     link: Option<OutboundLink>,
     /// 当前挂着的客户端连接。
     ///
@@ -1008,8 +1021,11 @@ struct OutboundLink {
     connecting: bool,
     /// 下次发起连接的时刻。MCP 还没起来时退避重试，不要每帧试。
     next_try: Instant,
-    /// 连上后第一帧：应用身份。MCP 据此区分「哪个应用 / 哪版框架」。
-    hello: String,
+    /// 身份素材：`hello` 帧在每次连上时现拼，这样后端晚一步注入的 window-id
+    /// 也能出现在第一帧里（构造桥时还没有 `WindowKey`）。
+    app_name: Option<String>,
+    app_version: Option<String>,
+    window_id: Option<u64>,
 }
 
 /// 连出失败后的重试间隔。
@@ -1017,10 +1033,13 @@ const CONNECT_RETRY: Duration = Duration::from_millis(500);
 
 /// `hello` 帧：应用连入 MCP 后主动报的身份。
 ///
-/// 格式 `hello <app-name> <version>\n`。app-name 取可执行文件名，version 取
-/// 框架自身版本 —— 无需应用额外配置就能区分「哪个应用 / 哪版框架」，也给
-/// P2 的显式 builder API 留了升级路径（那时改成应用自己声明）。
-fn hello_line(name: Option<&str>, version: Option<&str>) -> String {
+/// 格式 `hello <app-name> <version> [<window-id>]\n`。app-name 取可执行文件名，
+/// version 取框架自身版本 —— 无需应用额外配置就能区分「哪个应用 / 哪版框架」。
+/// 末尾的 window-id 是窗口宿主在 `Backend::create` 里经
+/// [`DebugBridge::set_window_id`] 注入的：同一进程用 `WindowSet` 开多个窗口时，每个
+/// 窗口各有一条桥连接、各自报自己的 id，MCP 才能精准路由到目标窗口。
+/// 老应用 / 单窗口兼容路径不带第三段，MCP 侧按可选字段解析（从右往左）。
+fn hello_line(name: Option<&str>, version: Option<&str>, window_id: Option<u64>) -> String {
     let name = name.map(str::to_string).unwrap_or_else(|| {
         std::env::current_exe()
             .ok()
@@ -1030,25 +1049,51 @@ fn hello_line(name: Option<&str>, version: Option<&str>) -> String {
     let version = version
         .map(str::to_string)
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into());
-    format!("hello {name} {version}\n")
+    let mut line = format!("hello {name} {version}");
+    if let Some(id) = window_id {
+        line.push_str(&format!(" {id}"));
+    }
+    line.push('\n');
+    line
 }
 
 impl OutboundLink {
     fn new(addr: SocketAddr) -> Self {
-        Self::with_hello(addr, hello_line(None, None))
+        Self::with_identity(addr, None, None)
     }
 
-    fn with_hello(addr: SocketAddr, hello: String) -> Self {
+    fn with_identity(
+        addr: SocketAddr,
+        app_name: Option<String>,
+        app_version: Option<String>,
+    ) -> Self {
         let mut this = Self {
             addr,
             // 立刻被 spawn 换掉；这里的 receiver 只为了满足字段初始化。
             rx: mpsc::channel::<std::io::Result<TcpStream>>().1,
             connecting: false,
             next_try: Instant::now(),
-            hello,
+            app_name,
+            app_version,
+            window_id: None,
         };
         this.spawn();
         this
+    }
+
+    /// 后端在拿到 `WindowKey` 后注入。必须在第一次连上之前调用（后端
+    /// `create()` 里就会调），否则本轮 hello 不带 id。
+    fn set_window_id(&mut self, id: u64) {
+        self.window_id = Some(id);
+    }
+
+    /// 连上后第一帧：应用身份 + 窗口 id。现场拼，保证晚注入的 id 不丢。
+    fn hello(&self) -> String {
+        hello_line(
+            self.app_name.as_deref(),
+            self.app_version.as_deref(),
+            self.window_id,
+        )
     }
 
     fn spawn(&mut self) {
@@ -1079,7 +1124,7 @@ impl OutboundLink {
                         // 真的挂上了：身份必须赶在任何命令之前发出，MCP 侧在
                         // 第一次 call 前先读掉它，否则响应解析会错位。
                         if let Some(conn) = conns.last_mut() {
-                            conn.write_buf.extend_from_slice(self.hello.as_bytes());
+                            conn.write_buf.extend_from_slice(self.hello().as_bytes());
                         }
                         self.connecting = false;
                     } else {
@@ -1131,6 +1176,10 @@ impl DebugBridge {
         listener.set_nonblocking(true)?;
         Ok(Self {
             listener: Some(listener),
+            pending_listen_port: None,
+            app_name: None,
+            app_version: None,
+            window_id: None,
             link: None,
             conns: Vec::new(),
         })
@@ -1145,37 +1194,71 @@ impl DebugBridge {
             return None;
         }
 
-        let listener =
-            config
-                .listen_port
-                .and_then(|port| match TcpListener::bind(("127.0.0.1", port)) {
-                    Ok(l) => {
-                        l.set_nonblocking(true).ok();
-                        eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}（显式配置）");
-                        Some(l)
-                    }
-                    Err(e) => {
-                        eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行");
-                        None
-                    }
-                });
-
+        // 延迟绑定：窗口 id 要等 `Backend::create` 才拿到，端口 = 基址 + id。
+        // 没有 id 的调用方在第一次 `poll` 时按基址绑定（兼容老行为）。
         let link = config.connect_to.map(|addr| {
             eprintln!("[zephyra] 调试桥连入 MCP {addr}（显式配置）");
-            OutboundLink::with_hello(
-                addr,
-                hello_line(config.app_name.as_deref(), config.app_version.as_deref()),
-            )
+            OutboundLink::with_identity(addr, config.app_name.clone(), config.app_version.clone())
         });
 
-        if listener.is_none() && link.is_none() {
+        if config.listen_port.is_none() && link.is_none() {
             return None;
         }
         Some(Self {
-            listener,
+            listener: None,
+            pending_listen_port: config.listen_port,
+            app_name: config.app_name,
+            app_version: config.app_version,
+            window_id: None,
             link,
             conns: Vec::new(),
         })
+    }
+
+    /// 注入本窗口的稳定 id（`WindowKey::as_u64`），让连进来的 MCP 能区分
+    /// 同一进程里用 `WindowSet` 开出的多个窗口。
+    ///
+    /// 除了更新身份，这里还**真正绑定监听端口**：基址 + id。每个窗口一条
+    /// 独立端点，多窗口不会抢同一个端口；MCP 进程只管连出来。
+    pub fn set_window_id(&mut self, id: u64) {
+        self.window_id = Some(id);
+        if let Some(link) = self.link.as_mut() {
+            link.set_window_id(id);
+        }
+        self.ensure_listener();
+    }
+
+    /// 把延迟的监听端口绑定出来。端口 = 基址 + id（单窗口兼容路径 id 为
+    /// `u64::MAX`，直接用基址）。绑定失败只报诊断，不让应用起不来。
+    fn ensure_listener(&mut self) {
+        let Some(base) = self.pending_listen_port.take() else {
+            return;
+        };
+        let port = match self.window_id {
+            Some(id) if id != u64::MAX && id <= u16::MAX as u64 => {
+                base.checked_add(id as u16).unwrap_or(base)
+            }
+            _ => base,
+        };
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                listener.set_nonblocking(true).ok();
+                eprintln!("[zephyra] 调试桥已开启 127.0.0.1:{port}");
+                self.listener = Some(listener);
+            }
+            Err(e) => eprintln!("[zephyra] 调试桥绑定 {port} 失败（{e}）——无桥继续运行"),
+        }
+    }
+
+    /// `identify` 的应答正文：与 `hello` 帧同形，便于客户端复用解析。
+    fn identity_line(&self) -> String {
+        hello_line(
+            self.app_name.as_deref(),
+            self.app_version.as_deref(),
+            self.window_id,
+        )
+        .trim_end_matches('\n')
+        .to_string()
     }
 
     /// 按环境变量开启桥（见 [`BridgeConfig::from_env`]）。
@@ -1209,7 +1292,10 @@ impl DebugBridge {
     /// `poll` 的实现体。拆出来只为让外层能在返回后统一判断连接是否消失
     /// （体内有多个 `return`，在体内加钩子必然漏分支）。
     fn poll_inner(&mut self, host: &mut dyn BridgeHost) {
-        // 旧模式：接受新连接（最多 [`MAX_CLIENTS`] 个）。
+        // 没有 `set_window_id` 的调用方（测试 / IDE 显式配置）在这里按基址绑定。
+        self.ensure_listener();
+
+        // 监听模式：接受新连接（最多 [`MAX_CLIENTS`] 个）。
         //
         // ⚠ 原来只在「没有客户端」时 accept —— 于是第二个客户端只能挂在
         // backlog 里干等，而它的命令**一条也进不来**。
@@ -1231,9 +1317,11 @@ impl DebugBridge {
         }
 
         // 逐个连接处理。死掉的连接记下来，最后**倒序**移除（否则下标会错位）。
+        // `identify` 要桥自己的身份素材（app 名 / 版本 / 窗口 id），不能靠宿主。
+        let identity = self.identity_line();
         let mut dead: Vec<usize> = Vec::new();
         for (index, conn) in self.conns.iter_mut().enumerate() {
-            if !poll_connection(conn, host) {
+            if !poll_connection(conn, host, &identity) {
                 dead.push(index);
             }
         }
@@ -1320,7 +1408,7 @@ impl DebugBridge {
 /// 其余部分 —— 写成自由函数就没有「同时可变借用 `self.conns` 与 `self`」
 /// 的问题。多连接之后那个借用冲突是**真的**：方法体里 `self.conns.iter_mut()`
 /// 期间不能再碰 `self` 的别的字段。
-fn poll_connection(conn: &mut Connection, host: &mut dyn BridgeHost) -> bool {
+fn poll_connection(conn: &mut Connection, host: &mut dyn BridgeHost, identity: &str) -> bool {
     match flush_response(conn) {
         Ok(true) => {}
         // 还有没写完的（大截图）：下一帧继续。
@@ -1360,6 +1448,8 @@ fn poll_connection(conn: &mut Connection, host: &mut dyn BridgeHost) -> bool {
             continue;
         }
         let resp = match parse_command(line) {
+            // `identify` 回桥自己的身份：连进来的 MCP 据此知道端口对应哪个窗口。
+            Ok(Command::Identify) => Response::Text(vec![identity.to_string()]),
             // `wait_frames` 要**延迟应答**：等应用真的画够 N 帧再回话。
             // 这里只登记目标帧数，回应在下面的「pending」检查里发。
             Ok(Command::WaitFrames { frames }) => {
@@ -1977,6 +2067,12 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
     let rest_raw = line[cmd.len()..].trim_start();
     let rest: Vec<&str> = parts.collect();
     match cmd {
+        "identify" => {
+            if !rest.is_empty() {
+                return Err("identify 不接受参数".into());
+            }
+            Ok(Command::Identify)
+        }
         "ping" => Ok(Command::Ping),
         "tree" => {
             let json = rest.contains(&"--json");
@@ -2232,6 +2328,9 @@ fn parse_path(s: &str) -> Result<Vec<usize>, String> {
 /// 执行命令。宿主方法各管各的，这里只做搬运。
 fn execute(cmd: &Command, host: &mut dyn BridgeHost) -> Response {
     match cmd {
+        // `identify` 在 poll_connection 里就地回答（它要的是桥自己的身份素材，
+        // 不是宿主的状态）。到这里说明调用点漏了特判，给出明确错误而不是漏答。
+        Command::Identify => Response::Err("identify 必须由桥直接应答".into()),
         Command::Ping => Response::Text(vec![format!("pong {}", host.identity())]),
         Command::Tree { json } => {
             if *json {
