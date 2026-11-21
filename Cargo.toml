@@ -1,100 +1,19 @@
 [workspace]
 resolver = "2"
-# `zephyra/` 分三层，依赖方向单向（上层不知道下层存在）：
-#
-#   zephyra-core   通用层（无外部依赖）：画什么 —— property/tree/layout/diff/input/frame
-#      ↓ DisplayList（纯数据、可序列化、可断言）
-#   zephyra-vector 已独立成仓：E:\zephyra-vector（https://github.com/Aura-Zephyrus/zephyra-vector.git）
-#      core / fx / svg-anim 通过 git 依赖它；它只依赖 ab_glyph + bytemuck
-#   zephyra-fx     效果器层：帧循环 / 调试桥 / 对 vector 渲染 API 的再导出
-#      ↓ 顶点流 + 中立的资源需求
-#   zephyra-base/  系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
-#
-# 绘制库与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
-# 并列处相同：绘制**描述与展开**是纯数据、零系统依赖，而真正的**执行**才需要 GPU。
+# 主仓只保留 zephyra-ui 控件层库；core、编译器栈与全部后端已迁至独立仓 ZephyraCore。
+# 见 https://github.com/Aura-Zephyrus/ZephyraCore
 members = [
-    # 后端无关的矢量绘制库：core 与 fx 都依赖它；它自己不依赖任何 workspace crate。
-    # SVG SMIL 动画引擎：解析 + 时间线 + 插值，只依赖 vector 与零依赖 bezier。
-    "zephyra/zephyra-svg-anim",
-    "zephyra/zephyra-fx",
-    # `.zypui` 的编译核心（对位 zephyra-style）：
-    #   zypui    运行时：同一份 IR 的解码 + 表达式求值 + 实例化成 Element
-    #   zypui-compile  编译期：XML 子集解析器 + 校验 + 二进制编码（文本 → RawUi → .bin）
-    # 与 zypui 共享同一份 IR —— zephyra-style 的「同一份 IR
-    # 是命门」结论在这里同样成立，dev/release 漂移在结构上不可能。
-    "zephyra/zephyra-base/zephyra-winit",
-    "zephyra/zephyra-base/zephyra-winit-d3d12",
-    # winit → core 的输入翻译，三个后端共用一份（winit 类型住这里，core 装不下）。
-    # 不进 default-members：与其它 base crate 一致 —— 默认构建不该拉 winit 的
-    # 平台依赖树；要跑它就用 `-p zephyra-winit-input`。
-    "zephyra/zephyra-base/zephyra-winit-input",
-    # 摄像头采集已独立成仓：https://github.com/Aura-Zephyrus/zephyra-camera
-    # 视频解码已独立成仓：https://github.com/Aura-Zephyrus/zephyra-video
-    # 主仓与两者零双向依赖（它们不依赖主仓）。注意唯一例外：
-    # extra/zephyra-media 单向 path 依赖 zephyra-video —— 它是可选播放桥接，
-    # 不进 default-members，默认构建连依赖解析都不做；主仓核心仍零依赖。
-    # UI Automation（屏幕阅读器 / 自动化脚本看得见这个界面）。
-    # Windows 专属、要碰 COM 边界 ⇒ 碰平台、允许 unsafe。
-    # 不进 default-members（默认构建不该编 COM 那一坨）。
-    "zephyra/zephyra-base/extra/zephyra-uia",
-    "zephyra/zephyra-base/zephyra-dcomp",
-    # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**
-    # （可进 default-members，但暂无独立产物需要默认构建，故一并归到"按需选"）。
-    # `zephyra-platform-win` 含 Win32 API，与 dcomp 同一条理由不进
-    # default-members：默认构建不该出现 unsafe 与 COM 边界。
-    "zephyra/zephyra-base/zephyra-platform",
-    "zephyra/zephyra-base/zephyra-platform-win",
-    "zephyra/zephyra-base/zephyra-app-config",
-    # 窗口集合（每线程一个协调者 + 多顶层窗口）。与渲染后端无关，三个后端共用。
-    # 不进 default-members：它拉 winit，与其它 base crate 同一条理由。
-    "zephyra/zephyra-base/zephyra-window",
-    # Linux 实现：与 `zephyra-platform-win` **同级**，两个平台互不认识。
-    # 同一条理由不进 default-members（"按需选"），但它一行 unsafe 都没有，
-    # 见 Cargo.toml 的说明。
-    "zephyra/zephyra-base/zephyra-platform-linux",
-    # Linux 渲染后端（winit + 裸 Vulkan/ash，**不用 wgpu**）。与两个 Windows 后端互不依赖 —
-    # 理由逐条相同（D3D11 / D3D12 / Vulkan 是三套不同的词汇，硬并会让 `#[cfg]`
-    # 分支淹没真正的逻辑）。同样不进 default-members：默认构建不该编译另一套图形栈。
-    # （wgpu 版 zephyra-winit-vk 已删除 —— 用户明确要求不用 wgpu，raw ash 全链路实测通过。）
-    "zephyra/zephyra-base/zephyra-vulkan",
-    # ---- extra ----
-    #
-    # `extra/` 是"不是所有项目都需要"的包的存放处。两个位置按**判据**分：
-    #
-    #   zephyra-core/extra/     零依赖 + 无 GPU 可单测的纯逻辑
-    #   zephyra-base/extra/     要碰平台 / 允许 unsafe 的
-    #
-    # 判据与 `zephyra-base/README.md` 的分层判据同源。
-    # 原住这里做样板的 `zephyra-camera` 已独立成仓（见上方注释）。
-    # 控件层（库）。**不依赖任何渲染后端** —— 后端由应用用 feature 选。
-    # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
+    # 主仓只剩控件层库；core、编译器栈与全部后端已迁至 ZephyraCore。
     "ZephyraUI",
-    # gallery 已迁至独立仓 E:\zephyra-gallery
-    # （https://github.com/Aura-Zephyrus/ZephyraUI-gallery.git）。
-    # 它单向依赖本仓：crate 依赖 + build.rs/tests 读取 ZephyraUI/ui/controls.zypui。
-    "zephyra/zephyra-base/zephyra-render-ext",
-    "zephyra/zephyra-base/zephyra-ext",
-    # wgpu interop（可选，S5）：让用户用 wgpu 开发扩展时可转换 AdapterIdentity/类型。
-    # 不进 default-members，避免默认构建拉入 wgpu 依赖树；`cargo check -p zephyra-ext-wgpu` 按需使用。
-    "zephyra/zephyra-base/zephyra-ext-wgpu",
-    # 媒体播放桥接（demux + 解码线程 + A/V 同步 + 纹理/音频输出）。
-    # 单向依赖独立仓 zephyra-video；不进 default-members，默认构建零影响。
-    "zephyra/zephyra-base/extra/zephyra-media",
-]
-# `extra/` 下的包（`zephyra-bezier` / `zephyra-uia`）
-# 与 `zephyra-dcomp` 进 members 但**不进** default-members：
-# 它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
-# 但不会被无差别的 `cargo build` / `cargo test` 编译。这就是"选择编译"落在 Cargo
-# 层面的形式——比在源码里 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
-#
-# `zephyra-dcomp` 排除的理由更强一层：它需要 `unsafe`（COM / DXGI），
-# 放进 default-members 会让"无差别构建"这个动作本身开始编译 unsafe 代码。
-#
-# `zephyra-winit-d3d12` 同样不在 default-members，理由基本相同：它是 D3D12 后端，与
-# `zephyra-winit`（D3D11）是**两个独立 crate**，同一个二进制里只应有一个后端。
-# 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
-default-members = [
-    "zephyra/zephyra-fx",
-    "zephyra/zephyra-base/zephyra-winit",
 ]
 
+default-members = [
+    "ZephyraUI",
+]
+
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
