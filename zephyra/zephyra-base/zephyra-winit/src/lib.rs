@@ -76,8 +76,8 @@ pub mod texture;
 pub use zephyra_fx::cpu_only;
 pub use zephyra_fx::{cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{
-    from_font_file, from_system_font, Frame, InputState, PixelRead, RenderReport, TextEngine,
-    TextureNames, View, FONT_OVERRIDE_ENV,
+    from_font_file, from_system_font, create_text_engine, AtlasUploadState, Frame, InputState,
+    PixelRead, RenderReport, TextEngine, TextureNames, View, FONT_OVERRIDE_ENV,
 };
 pub use zephyra_fx::{srgb_bytes, write_bmp};
 
@@ -251,11 +251,10 @@ pub struct HostWindow<V: View> {
     present_interval: std::time::Duration,
     /// 文本引擎。
     ///
-    /// 泛型参数固定为 [`text::AbGlyphSource`]（本 crate 的唯一字体后端）。用
-    /// `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求这一点。
+    /// 用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求这一点。
     engine: std::cell::RefCell<TextEngine>,
-    /// 已上传的图集字形数，用来避免每帧重传 4MB。
-    atlas_revision_uploaded: u64,
+    /// 已上传的图集修订号（统一由 `AtlasUploadState` 判定）。
+    atlas_upload: AtlasUploadState,
     /// 图像纹理表：`Command::Image` 的句柄 → 采样视图。
     textures: TextureTable,
     /// 调试桥。两种拓扑共用同一套连接协议（见 `zephyra_fx::bridge`）：
@@ -371,7 +370,7 @@ impl<V: View> HostWindow<V> {
 
         // 文本引擎：core 的 `TextStack` + 本 crate 的 ab_glyph 字形来源。
         // 找不到字体时退回禁用模式 —— 文本不显示，其余部分照常。
-        let (engine, note) = text::from_system_font_set();
+        let (engine, note) = create_text_engine();
         eprintln!("[zephyra] {note}");
 
         let gpu = shared_gpu();
@@ -467,7 +466,7 @@ impl<V: View> HostWindow<V> {
             dirty: true,
             window_visible: true,
             engine: std::cell::RefCell::new(engine),
-            atlas_revision_uploaded: 0,
+            atlas_upload: AtlasUploadState::new(),
             textures: TextureTable::new(),
             #[cfg(debug_assertions)]
             bridge: zephyra_fx::bridge::DebugBridge::from_env(),
@@ -744,7 +743,7 @@ impl<V: View> HostWindow<V> {
             // 判据不能换成「已缓存字形数」：图集加了 LRU 淘汰之后，「数量不变 ⇒ 内容
             // 不变」这条**不成立** —— 淘汰一个再放进一个，数量不变而纹理已整体重排。
             let revision_now = self.engine.borrow().atlas_revision();
-            if revision_now != self.atlas_revision_uploaded {
+            if let Some(rev) = self.atlas_upload.changed(revision_now) {
                 let gpu = lock_gpu(&self.gpu);
                 let uploaded = self
                     .renderer
@@ -753,7 +752,7 @@ impl<V: View> HostWindow<V> {
                 if uploaded.is_err() {
                     eprintln!("[zephyra] 图集上传失败，本帧文字可能不显示");
                 }
-                self.atlas_revision_uploaded = revision_now;
+                self.atlas_upload.mark(rev);
             }
             // ⚠️ 在作用域**内**就把 `FrameOutcome` 拆成 `Copy` 的标量。
             //

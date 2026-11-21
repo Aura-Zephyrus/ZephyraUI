@@ -457,6 +457,113 @@ pub static FONT_FAMILY: PropertyKey = PropertyKey::inheritable(
 pub static FONT_WEIGHT: PropertyKey =
     PropertyKey::inheritable("Font.Weight", PropertyValue::float(f32::NAN));
 
+// ---- 高级文字属性（值与 zephyra-vector 的 TextStyle 逐字段对应）----
+//
+// 约定：数值键用 `NaN` 作「未设置」哨兵（负值合法，不能用 `finite()` 过滤）；
+// 枚举 / 结构化值用 `PropertyValue::custom` 承载，默认给 `Float(NaN)`，
+// 读取端 `get::<T>()` 失败即视为未设置。
+
+/// 字间距（继承，DIP，可为负）。
+pub static TEXT_LETTER_SPACING: PropertyKey =
+    PropertyKey::inheritable_layout("Text.LetterSpacing", PropertyValue::float(f32::NAN));
+
+/// 词间距（继承，DIP，可为负）。
+pub static TEXT_WORD_SPACING: PropertyKey =
+    PropertyKey::inheritable_layout("Text.WordSpacing", PropertyValue::float(f32::NAN));
+
+/// 段间距（继承，DIP，可为负）。
+pub static TEXT_PARAGRAPH_SPACING: PropertyKey =
+    PropertyKey::inheritable_layout("Text.ParagraphSpacing", PropertyValue::float(f32::NAN));
+
+/// 水平对齐。值为 `TextAlign`。
+pub static TEXT_ALIGN: PropertyKey = PropertyKey::inheritable("Text.Align", PropertyValue::float(f32::NAN));
+
+/// 段落基准方向。值为 `TextDirection`。
+pub static TEXT_DIRECTION: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Direction", PropertyValue::float(f32::NAN));
+
+/// 字号缩放系数。`NaN` 表示 1.0。
+pub static TEXT_SCALE: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Scale", PropertyValue::float(f32::NAN));
+
+/// 最大行数。`NaN` 表示不限。
+pub static TEXT_MAX_LINES: PropertyKey =
+    PropertyKey::inheritable_layout("Text.MaxLines", PropertyValue::float(f32::NAN));
+
+/// 截断省略号。空串表示 "…"。
+pub static TEXT_ELLIPSIS: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Ellipsis", PropertyValue::static_str(""));
+
+/// 是否允许连字符断词。
+pub static TEXT_HYPHENS: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Hyphens", PropertyValue::bool(false));
+
+/// 强制行框。值为 `StrutStyle`。
+pub static TEXT_STRUT: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Strut", PropertyValue::float(f32::NAN));
+
+/// 可变字体轴。值为 `Vec<([u8; 4], f32)>`。
+pub static TEXT_VARIATIONS: PropertyKey =
+    PropertyKey::inheritable_layout("Text.Variations", PropertyValue::float(f32::NAN));
+
+/// OpenType 特性开关。值为 `Vec<(u32, u32)>`。
+pub static FONT_FEATURES: PropertyKey =
+    PropertyKey::inheritable_layout("Font.Features", PropertyValue::float(f32::NAN));
+
+/// 装饰线位标志。值为 `TextDecoration`。
+pub static TEXT_DECORATION: PropertyKey = PropertyKey::inheritable(
+    "Text.Decoration",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 装饰线样式。值为 `TextDecorationStyle`。
+pub static TEXT_DECORATION_STYLE: PropertyKey = PropertyKey::inheritable(
+    "Text.DecorationStyle",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 装饰线与墨迹的相交方式。值为 `TextDecorationMode`。
+pub static TEXT_DECORATION_MODE: PropertyKey = PropertyKey::inheritable(
+    "Text.DecorationMode",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 装饰线粗细（DIP，`NaN` 用字体建议值）。
+pub static TEXT_DECORATION_THICKNESS: PropertyKey = PropertyKey::inheritable(
+    "Text.DecorationThickness",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 下划线相对基线的偏移（DIP，`NaN` 用字体建议值，可为负）。
+pub static TEXT_DECORATION_OFFSET: PropertyKey = PropertyKey::inheritable(
+    "Text.DecorationOffset",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 装饰线粗细倍率。`NaN` 表示 1.0。
+pub static TEXT_DECORATION_THICKNESS_MULTIPLIER: PropertyKey = PropertyKey::inheritable(
+    "Text.DecorationThicknessMultiplier",
+    PropertyValue::float(f32::NAN),
+);
+
+/// 伪粗体阈值覆盖（SDF 值域）。
+pub static TEXT_EMBOLDEN: PropertyKey =
+    PropertyKey::inheritable("Text.Embolden", PropertyValue::float(f32::NAN));
+
+/// 文字阴影。值为 `TextShadow`。
+pub static TEXT_SHADOW: PropertyKey =
+    PropertyKey::inheritable("Text.Shadow", PropertyValue::float(f32::NAN));
+
+/// LCD 子像素排列。值为 `LcdOrder`。
+pub static TEXT_LCD: PropertyKey = PropertyKey::inheritable("Text.Lcd", PropertyValue::float(f32::NAN));
+
+/// 字形绕自身中心旋转（弧度）。
+pub static TEXT_ROTATION: PropertyKey =
+    PropertyKey::inheritable("Text.Rotation", PropertyValue::float(f32::NAN));
+
+/// 文字路径。值为 `TextPath`。
+pub static TEXT_PATH: PropertyKey = PropertyKey::inheritable_layout("Text.Path", PropertyValue::float(f32::NAN));
+
 /// 光标位置（字节下标，DIP）。由 `TextField` / `TextArea` 控件写入，供 `.zypui`
 /// 模板的 `translate-x` 绑定读取，把光标定位到对应字符位置。
 pub static CURSOR: PropertyKey = PropertyKey::new("Text.Cursor", PropertyValue::float(0.0));

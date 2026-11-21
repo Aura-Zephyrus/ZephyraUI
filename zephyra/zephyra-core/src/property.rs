@@ -598,6 +598,19 @@ pub fn name_affects_layout(name: &str) -> bool {
             | "MainAlign"
             | "Text.Size"
             | "Text.MaxWidth"
+            // ---- 高级文字：影响测量/断行/基线的键 ----
+            | "Text.LetterSpacing"
+            | "Text.WordSpacing"
+            | "Text.ParagraphSpacing"
+            | "Text.Direction"
+            | "Text.Scale"
+            | "Text.MaxLines"
+            | "Text.Ellipsis"
+            | "Text.Hyphens"
+            | "Text.Strut"
+            | "Text.Variations"
+            | "Font.Features"
+            | "Text.Path"
             // ---- Flexbox ----
             // 全部由 `layout::measure` / `arrange` 直读（经 `style::Node::flex`
             // 与 `layout::FlexItem::read_item`），且 `Flex` 本身**没有**缓存 ——

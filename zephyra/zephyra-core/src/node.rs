@@ -143,6 +143,9 @@ pub(crate) struct GlyphQuadCache {
     /// 代价是每帧每文本节点一次小字符串克隆，换掉的是每帧每文本节点一次
     /// **重新排版**。那个交换是划算的，而且量级差着两个数量级。
     pub(crate) style: crate::text::TextStyle,
+    /// `style` 的紧凑指纹：命中路径只比这个 `u64`，不逐字段比较新增的
+    /// `Vec` / `Option<String>`（见 `paint::text_style_fingerprint`）。
+    pub(crate) style_fingerprint: u64,
     /// 排版输入指纹：`max_width`。
     pub(crate) max_width: Option<f32>,
     /// 算出这些四边形时的图集修订号（`TextStack::atlas_revision`）。

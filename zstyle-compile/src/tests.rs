@@ -51,6 +51,62 @@ fn bad(css: &str) -> String {
         .join("\n")
 }
 
+#[test]
+fn advanced_text_properties_parse_into_typed_values() {
+    let r = ok(concat!(
+        ".T { ",
+        "text-align: justify; ",
+        "text-decoration: underline overline; ",
+        "text-decoration-style: wavy; ",
+        "text-decoration-mode: gaps; ",
+        "text-lcd: bgr; ",
+        "text-path: arc(120px); ",
+        "text-hyphens: true; ",
+        "font-features: tnum=1, liga=0; ",
+        "text-variations: wght=700; ",
+        "text-strut: 16px 4px 2px force; ",
+        "text-shadow: 2px 3px 1px #00000080; ",
+        "}",
+    ));
+    let d = &r.sheet.rules()[0].declarations;
+    assert_eq!(d[0].value.get::<TextAlign>(), Some(TextAlign::Justify));
+    assert_eq!(
+        d[1].value.get::<TextDecoration>(),
+        Some(TextDecoration {
+            underline: true,
+            overline: true,
+            ..Default::default()
+        })
+    );
+    assert_eq!(
+        d[2].value.get::<TextDecorationStyle>(),
+        Some(TextDecorationStyle::Wavy)
+    );
+    assert_eq!(
+        d[3].value.get::<TextDecorationMode>(),
+        Some(TextDecorationMode::Gaps)
+    );
+    assert_eq!(d[4].value.get::<LcdOrder>(), Some(LcdOrder::Bgr));
+    assert_eq!(
+        d[5].value.get::<TextPath>(),
+        Some(TextPath::Arc { radius: 120.0 })
+    );
+    assert_eq!(d[6].value.get::<bool>(), Some(true));
+    assert_eq!(
+        d[7].value.get::<Vec<(u32, u32)>>(),
+        Some(vec![
+            (u32::from_be_bytes(*b"tnum"), 1),
+            (u32::from_be_bytes(*b"liga"), 0),
+        ])
+    );
+    assert_eq!(
+        d[8].value.get::<Vec<([u8; 4], f32)>>(),
+        Some(vec![(*b"wght", 700.0)])
+    );
+    assert!(d[9].value.get::<zephyra_core::text::StrutStyle>().is_some());
+    assert!(d[10].value.get::<zephyra_core::text::TextShadow>().is_some());
+}
+
 // ---------------------------------------------------------------------------
 //  正常路径
 // ---------------------------------------------------------------------------

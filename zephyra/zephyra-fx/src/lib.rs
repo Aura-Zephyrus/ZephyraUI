@@ -109,6 +109,46 @@ pub static Z_INDEX: zephyra_core::property::PropertyKey = zephyra_core::property
 /// [`cpu_only::CpuHost`] 的字段类型里，必须能被外部指名。
 pub type TextEngine = zephyra_core::text::TextStack<FontSet>;
 
+/// 统一的宿主引擎构造入口：四个后端/离线宿主不再各写一遍字体栈装配。
+pub fn create_text_engine() -> (TextEngine, String) {
+    from_system_font_set()
+}
+
+/// 图集上传状态：集中「比对 revision / 记录已上传版本」这段判据。
+///
+/// 之前各宿主的初始哨兵不统一（有 `0` 也有 `u64::MAX`），这里一律用 `u64::MAX`
+/// 强制首帧上传。设备重建后调用 [`Self::reset`] 即可重新触发。
+#[derive(Debug, Clone, Copy)]
+pub struct AtlasUploadState {
+    uploaded: u64,
+}
+
+impl Default for AtlasUploadState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AtlasUploadState {
+    pub fn new() -> Self {
+        Self { uploaded: u64::MAX }
+    }
+
+    /// 若 revision 有变化，返回它（供调用方上传）；否则 `None`。
+    pub fn changed(&self, revision: u64) -> Option<u64> {
+        (revision != self.uploaded).then_some(revision)
+    }
+
+    pub fn mark(&mut self, revision: u64) {
+        self.uploaded = revision;
+    }
+
+    /// 设备重建后调用：强制下一帧重新上传。
+    pub fn reset(&mut self) {
+        self.uploaded = u64::MAX;
+    }
+}
+
 use zephyra_core::context::Context;
 use zephyra_core::diff::DiffStats;
 use zephyra_core::element::Element;

@@ -155,6 +155,55 @@ pub(crate) const PROPS: &[Prop] = &[
         css: "text-max-width",
         key: &props::TEXT_MAX_WIDTH,
     },
+    // ---- 高级文字：影响测量/断行/基线 ----
+    Prop {
+        css: "text-letter-spacing",
+        key: &props::TEXT_LETTER_SPACING,
+    },
+    Prop {
+        css: "text-word-spacing",
+        key: &props::TEXT_WORD_SPACING,
+    },
+    Prop {
+        css: "text-paragraph-spacing",
+        key: &props::TEXT_PARAGRAPH_SPACING,
+    },
+    Prop {
+        css: "text-direction",
+        key: &props::TEXT_DIRECTION,
+    },
+    Prop {
+        css: "text-scale",
+        key: &props::TEXT_SCALE,
+    },
+    Prop {
+        css: "text-max-lines",
+        key: &props::TEXT_MAX_LINES,
+    },
+    Prop {
+        css: "text-ellipsis",
+        key: &props::TEXT_ELLIPSIS,
+    },
+    Prop {
+        css: "text-hyphens",
+        key: &props::TEXT_HYPHENS,
+    },
+    Prop {
+        css: "text-strut",
+        key: &props::TEXT_STRUT,
+    },
+    Prop {
+        css: "text-variations",
+        key: &props::TEXT_VARIATIONS,
+    },
+    Prop {
+        css: "font-features",
+        key: &props::FONT_FEATURES,
+    },
+    Prop {
+        css: "text-path",
+        key: &props::TEXT_PATH,
+    },
     // ---- 只重绘 ----
     Prop {
         css: "background",

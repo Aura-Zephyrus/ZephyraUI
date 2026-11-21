@@ -301,8 +301,8 @@ pub(crate) struct Shared {
     ///
     /// `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求这一点。
     pub(crate) engine: std::cell::RefCell<TextEngine>,
-    /// 已上传的图集 revision，用来避免每帧重传 4MB。
-    pub(crate) atlas_revision_uploaded: u64,
+    /// 已上传的图集 revision（统一由 `AtlasUploadState` 判定）。
+    pub(crate) atlas_upload: zephyra_fx::AtlasUploadState,
     /// 已注册的图像纹理（名字 → SRV 槽位）。
     pub(crate) textures: TextureTable,
     /// 设备代次。设备重建时 +1；各窗口据此重建自己的交换链。
@@ -325,7 +325,7 @@ fn shared_stack() -> Arc<Mutex<Shared>> {
     SHARED
         .get_or_init(|| {
             // 文本引擎：core 的 `TextStack` + ab_glyph 字形来源。找不到字体时退回禁用模式。
-            let (engine, note) = zephyra_fx::from_system_font_set();
+            let (engine, note) = zephyra_fx::create_text_engine();
             eprintln!("[zephyra-d3d12] {note}");
             let gpu = Gpu::new().expect("创建 D3D12 设备：需要可用的 GPU");
             // `msaa_samples()` 是**进程级**环境变量读取，所以所有窗口的采样数一致 ——
@@ -340,7 +340,7 @@ fn shared_stack() -> Arc<Mutex<Shared>> {
                 gpu,
                 renderer,
                 engine: std::cell::RefCell::new(engine),
-                atlas_revision_uploaded: 0,
+                atlas_upload: zephyra_fx::AtlasUploadState::new(),
                 textures: TextureTable::new(),
                 generation: 0,
             }))
@@ -1033,7 +1033,7 @@ impl<V: View> HostWindow<V> {
             // 「数量不变 ⇒ 内容不变」不成立 —— 淘汰一个再放进一个，数量不变而纹理已
             // 整体重排。
             let revision_now = shared.engine.borrow().atlas_revision();
-            if revision_now != shared.atlas_revision_uploaded {
+            if shared.atlas_upload.changed(revision_now).is_some() {
                 self.cache.invalidate();
             }
 
@@ -1266,14 +1266,14 @@ impl<V: View> HostWindow<V> {
         // 淘汰一个再进一个时字形数不变而纹理已整体重排，用数量当判据会让 GPU 一直
         // 抱着旧图集（画面上字全跑到别的位置）。每帧传 4MB 又会让稳态多几毫秒。
         let revision_now = shared.engine.borrow().atlas_revision();
-        if revision_now != shared.atlas_revision_uploaded {
+        if let Some(rev) = shared.atlas_upload.changed(revision_now) {
             if let Err(e) = shared
                 .renderer
                 .record_upload_atlas(shared.gpu.list(), shared.engine.borrow().atlas().pixels())
             {
                 eprintln!("[zephyra-d3d12] 图集上传失败（{e}），本帧文字可能不显示");
             }
-            shared.atlas_revision_uploaded = revision_now;
+            shared.atlas_upload.mark(rev);
         }
 
         // 后缓冲在每帧开头都是 `PRESENT`。不转就没有渲染目标 —— 且**不报任何错**。
@@ -1754,7 +1754,7 @@ impl<V: View> HostWindow<V> {
         shared.renderer = renderer;
         // 旧纹理属于旧设备，必须清掉（槽位也失效了）。
         shared.textures = TextureTable::new();
-        shared.atlas_revision_uploaded = 0;
+        shared.atlas_upload.reset();
         // 代次 +1：其它窗口在自己的下一帧看到它，就会重建各自的交换链。
         shared.generation = shared.generation.wrapping_add(1);
         self.compositor = compositor;

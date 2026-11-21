@@ -145,7 +145,7 @@ impl<V: View> CpuHost<V> {
     /// 找不到系统字体时**不** panic：字体缺失应当让文本不显示，而不是让程序起不来
     /// —— 与各后端宿主的 `HostWindow::new_lenient` 同一个取舍。
     pub fn new(view: V, size: (u32, u32)) -> Self {
-        let (engine, note) = text::from_system_font_set();
+        let (engine, note) = crate::create_text_engine();
         eprintln!("[zephyra:cpu] {note}");
         Self {
             view,

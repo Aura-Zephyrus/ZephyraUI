@@ -82,26 +82,91 @@ impl Node {
         (!s.is_empty()).then_some(s)
     }
 
+    /// 读取字符串属性；空串视为未设置。返回 owned，因为 `value()` 可能是 Cow。
+    fn string_prop(&self, key: &PropertyKey, ctx: Context<'_>) -> Option<String> {
+        let binding = self.value(key, ctx);
+        let s: &str = match binding.as_deref() {
+            Some(PropertyValue::StaticStr(s)) => s,
+            Some(PropertyValue::Str(s)) => s.as_ref(),
+            _ => return None,
+        };
+        (!s.is_empty()).then(|| s.to_string())
+    }
+
+    fn prop<T: Any + Clone + 'static>(&self, key: &PropertyKey, ctx: Context<'_>) -> Option<T> {
+        self.value(key, ctx).and_then(|v| v.get::<T>())
+    }
+
+    fn num(&self, key: &PropertyKey, ctx: Context<'_>) -> Option<f32> {
+        self.prop::<f32>(key, ctx).filter(|v| v.is_finite())
+    }
+
+    fn opt_num(&self, key: &PropertyKey, ctx: Context<'_>) -> Option<f32> {
+        self.num(key, ctx)
+    }
+
+    fn num_or_default(&self, key: &PropertyKey, default: f32, ctx: Context<'_>) -> f32 {
+        self.num(key, ctx).unwrap_or(default)
+    }
+
     /// 文本样式（由本节点的文本属性合成，不含字体 —— 字体是宿主的事）。
+    ///
+    /// 所有新字段都通过 `PropertyValue::custom` 读取；结构化值由 `.zstyle` 解析器
+    /// 构造，读到这里时已经是具体类型，未设置（默认 `Float(NaN)`）则回落 vector 默认。
     pub fn text_style(&self, ctx: Context<'_>) -> crate::text::TextStyle {
+        use crate::props as p;
+        use crate::text::{
+            LcdOrder, StrutStyle, TextAlign, TextDecoration, TextDecorationMode,
+            TextDecorationStyle, TextDirection, TextPath, TextShadow,
+        };
+
         crate::text::TextStyle {
             // 字号缺省不写死：0.0 会被宿主当成"非法"，由宿主回落到自己的默认字号。
-            size: self.number_or(&crate::props::TEXT_SIZE, 14.0, ctx).max(1.0),
-            weight: finite(self.number_or(&crate::props::FONT_WEIGHT, f32::NAN, ctx))
+            size: self.number_or(&p::TEXT_SIZE, 14.0, ctx).max(1.0),
+            weight: finite(self.number_or(&p::FONT_WEIGHT, f32::NAN, ctx))
                 .map(|w| w.round().max(1.0).min(1000.0) as u16)
                 .unwrap_or(400),
             family: self.font_family().map(str::to_string),
-            // 未显式设置时给 None，让 zephyra-vector 用字体的 hhea 真实度量算行高
-            // （Skia 的 SkFontMetrics 行为）；只有属性真的给了倍数才覆盖它。
-            line_height: finite(self.number_or(&crate::props::TEXT_LINE_HEIGHT, f32::NAN, ctx)),
-            letter_spacing: 0.0,
-            text_align: crate::text::TextAlign::Left,
-            paragraph_spacing: 0.0,
-            scale: 1.0,
-            direction: Default::default(),
-            // 高级文字能力（装饰线 / 两端对齐 / 伪粗体 / LCD）由 zephyra-vector
-            // 提供；样式层暂无对应属性，全部用缺省值。
-            ..Default::default()
+            line_height: finite(self.number_or(&p::TEXT_LINE_HEIGHT, f32::NAN, ctx)),
+            strut: self.prop::<StrutStyle>(&p::TEXT_STRUT, ctx),
+            // 间距允许负值：必须用 num()（只滤非有限），不能用 finite()。
+            letter_spacing: self.num_or_default(&p::TEXT_LETTER_SPACING, 0.0, ctx),
+            word_spacing: self.num_or_default(&p::TEXT_WORD_SPACING, 0.0, ctx),
+            rotation: self.opt_num(&p::TEXT_ROTATION, ctx),
+            path: self.prop::<TextPath>(&p::TEXT_PATH, ctx),
+            hyphens: self.prop::<bool>(&p::TEXT_HYPHENS, ctx).unwrap_or(false),
+            variations: self
+                .prop::<Vec<([u8; 4], f32)>>(&p::TEXT_VARIATIONS, ctx)
+                .unwrap_or_default(),
+            max_lines: self
+                .num(&p::TEXT_MAX_LINES, ctx)
+                .map(|n| n.max(0.0) as usize),
+            ellipsis: self.string_prop(&p::TEXT_ELLIPSIS, ctx),
+            font_features: self
+                .prop::<Vec<(u32, u32)>>(&p::FONT_FEATURES, ctx)
+                .unwrap_or_default(),
+            text_align: self.prop::<TextAlign>(&p::TEXT_ALIGN, ctx).unwrap_or_default(),
+            paragraph_spacing: self.num_or_default(&p::TEXT_PARAGRAPH_SPACING, 0.0, ctx),
+            scale: self.num_or_default(&p::TEXT_SCALE, 1.0, ctx),
+            direction: self
+                .prop::<TextDirection>(&p::TEXT_DIRECTION, ctx)
+                .unwrap_or_default(),
+            decoration: self
+                .prop::<TextDecoration>(&p::TEXT_DECORATION, ctx)
+                .unwrap_or_default(),
+            decoration_style: self
+                .prop::<TextDecorationStyle>(&p::TEXT_DECORATION_STYLE, ctx)
+                .unwrap_or_default(),
+            decoration_mode: self
+                .prop::<TextDecorationMode>(&p::TEXT_DECORATION_MODE, ctx)
+                .unwrap_or_default(),
+            decoration_thickness: self.opt_num(&p::TEXT_DECORATION_THICKNESS, ctx),
+            decoration_thickness_multiplier: self
+                .num_or_default(&p::TEXT_DECORATION_THICKNESS_MULTIPLIER, 1.0, ctx),
+            decoration_offset: self.opt_num(&p::TEXT_DECORATION_OFFSET, ctx),
+            embolden: self.opt_num(&p::TEXT_EMBOLDEN, ctx),
+            shadow: self.prop::<TextShadow>(&p::TEXT_SHADOW, ctx),
+            lcd: self.prop::<LcdOrder>(&p::TEXT_LCD, ctx),
         }
     }
 

@@ -1600,4 +1600,46 @@ mod effect_contract {
     fn layout_size_constants_are_self_consistent() {
         assert_eq!(Size::new(200.0, 100.0).width, 200.0);
     }
+
+    /// 新属性必须真正流到 `TextStyle`，否则样式表写了也不生效。
+    #[test]
+    fn advanced_properties_reach_text_style() {
+        use crate::context::Context;
+        use crate::element::Element;
+        use crate::id::NodeTag;
+        use crate::node::Node;
+        use crate::text::{LcdOrder, NullEngine, TextAlign};
+
+        let theme = Theme::dark();
+        let engine = std::cell::RefCell::new(NullEngine { char_width: 0.5 });
+        let ctx = Context::with_engine(&theme, &engine);
+        let element = Element::new(NodeTag::Text)
+            .with(
+                &crate::props::TEXT_LETTER_SPACING,
+                PropertyValue::float(-2.0),
+            )
+            .with(
+                &crate::props::TEXT_ALIGN,
+                PropertyValue::custom(TextAlign::Justify),
+            )
+            .with(
+                &crate::props::TEXT_LCD,
+                PropertyValue::custom(LcdOrder::Bgr),
+            )
+            .with(
+                &crate::props::TEXT_MAX_LINES,
+                PropertyValue::float(2.0),
+            )
+            .with(
+                &crate::props::FONT_FEATURES,
+                PropertyValue::custom(vec![(u32::from_be_bytes(*b"tnum"), 1u32)]),
+            );
+        let node = Node::from_element(&element);
+        let style = node.text_style(ctx);
+        assert_eq!(style.letter_spacing, -2.0, "负间距不能被 finite() 吞掉");
+        assert_eq!(style.text_align, TextAlign::Justify);
+        assert_eq!(style.lcd, Some(LcdOrder::Bgr));
+        assert_eq!(style.max_lines, Some(2));
+        assert_eq!(style.font_features, vec![(u32::from_be_bytes(*b"tnum"), 1)]);
+    }
 }

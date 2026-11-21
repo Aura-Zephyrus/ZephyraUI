@@ -72,21 +72,124 @@ fn render_stable(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
     out.clear();
     let mut order = 0u32;
     render_rec(node, ctx, &mut order, out, PaintState::ROOT);
+    // 本帧没有文字命令 ⇒ 没有 uv 会受图集重排影响，直接跳过 revision 比对。
+    if !out.iter().any(|item| matches!(item.command, Command::Text { .. })) {
+        return;
+    }
     let rev_after = engine.borrow().atlas_revision();
     if rev_after != rev_before {
         // 本趟发生过淘汰重排：前面节点的 uv 属于旧布局，作废重来。
         // 重跑前 revision 已稳定（字形都在图集里，touch 命中不再淘汰），
         // 至多再重排一次；若真的还在变（极端小的图集），循环到收敛或到达上限。
+        let mut converged = false;
         for _ in 0..4 {
             let before = engine.borrow().atlas_revision();
             out.clear();
             let mut order = 0u32;
             render_rec(node, ctx, &mut order, out, PaintState::ROOT);
             if engine.borrow().atlas_revision() == before {
+                converged = true;
                 break;
             }
         }
+        // 未收敛说明上游图集在极端小容量下反复淘汰；这是配置错误而非偶发，
+        // debug 下直接暴露，release 仍保留最后一次结果让画面尽量可用。
+        debug_assert!(converged, "图集 revision 在 4 趟内未收敛");
     }
+}
+
+/// `TextStyle` 的紧凑指纹：命中路径只比 `u64`，不再逐字段比较新增的
+/// `Vec` / `Option<String>`。必须覆盖**所有**会改变字形四边形的字段。
+///
+/// 用 `f32::to_bits()` 而不是 `f32` 本身：后者没有 `Hash`，且 `-0.0` / `NaN`
+/// 的位型差异在这里正是我们要区分的（它们会改变排版结果）。
+pub(crate) fn text_style_fingerprint(s: &crate::text::TextStyle) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    macro_rules! f {
+        ($v:expr) => {
+            ($v).to_bits().hash(&mut h)
+        };
+    }
+    f!(s.size);
+    s.weight.hash(&mut h);
+    s.family.hash(&mut h);
+    f!(s.line_height.unwrap_or(f32::NAN));
+    match s.strut {
+        Some(st) => {
+            1u8.hash(&mut h);
+            f!(st.ascent.unwrap_or(f32::NAN));
+            f!(st.descent.unwrap_or(f32::NAN));
+            f!(st.leading.unwrap_or(f32::NAN));
+            st.force.hash(&mut h);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    f!(s.letter_spacing);
+    f!(s.word_spacing);
+    match s.rotation {
+        Some(r) => {
+            1u8.hash(&mut h);
+            f!(r);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    match s.path {
+        Some(crate::text::TextPath::Arc { radius }) => {
+            1u8.hash(&mut h);
+            f!(radius);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    s.hyphens.hash(&mut h);
+    (s.variations.len() as u64).hash(&mut h);
+    for (tag, value) in &s.variations {
+        tag.hash(&mut h);
+        f!(*value);
+    }
+    match s.max_lines {
+        Some(n) => {
+            1u8.hash(&mut h);
+            n.hash(&mut h);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    s.ellipsis.hash(&mut h);
+    s.font_features.hash(&mut h);
+    std::mem::discriminant(&s.text_align).hash(&mut h);
+    f!(s.paragraph_spacing);
+    f!(s.scale);
+    std::mem::discriminant(&s.direction).hash(&mut h);
+    s.decoration.underline.hash(&mut h);
+    s.decoration.strikethrough.hash(&mut h);
+    s.decoration.overline.hash(&mut h);
+    std::mem::discriminant(&s.decoration_style).hash(&mut h);
+    std::mem::discriminant(&s.decoration_mode).hash(&mut h);
+    f!(s.decoration_thickness.unwrap_or(f32::NAN));
+    f!(s.decoration_thickness_multiplier);
+    f!(s.decoration_offset.unwrap_or(f32::NAN));
+    f!(s.embolden.unwrap_or(f32::NAN));
+    match s.shadow {
+        Some(sh) => {
+            1u8.hash(&mut h);
+            f!(sh.color.r);
+            f!(sh.color.g);
+            f!(sh.color.b);
+            f!(sh.color.a);
+            f!(sh.offset.x);
+            f!(sh.offset.y);
+            f!(sh.blur_sigma);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    match s.lcd {
+        Some(order) => {
+            1u8.hash(&mut h);
+            std::mem::discriminant(&order).hash(&mut h);
+        }
+        None => 0u8.hash(&mut h),
+    }
+    h.finish()
 }
 
 /// 绘制趟沿树传递的状态。
@@ -590,13 +693,14 @@ fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> O
     // 不要改成「测量趟这帧有没有重算」：resize 时约束一变 `measure` 就会重跑，
     // 产出一个**内容相同**的 `MeasureResult`（只有 `size` 被 `pick_axis` 夹了一下）。
     // 用那种判据，命中率恒为 0 —— 这正是早先那版的错误，136 KB/帧 一分没省。
+    let style_fp = text_style_fingerprint(&style);
     let cached = {
         let slot = node.glyph_quads.borrow();
         match slot.as_ref() {
             Some(c)
                 if c.revision == revision
                     && c.text.as_ref() == text
-                    && c.style == style
+                    && c.style_fingerprint == style_fp
                     && c.max_width == max_width =>
             {
                 Some((c.atlas.clone(), std::sync::Arc::clone(&c.glyphs)))
@@ -636,6 +740,7 @@ fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> O
             *node.glyph_quads.borrow_mut() = Some(Box::new(crate::node::GlyphQuadCache {
                 text: text.into(),
                 style: style.clone(),
+                style_fingerprint: style_fp,
                 max_width,
                 revision,
                 atlas: atlas.clone(),
@@ -851,4 +956,59 @@ fn transform_vertices(
             })
             .collect::<Vec<Vertex>>(),
     )
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+    use crate::text::{TextAlign, TextDecoration, TextShadow};
+
+    #[test]
+    fn fingerprint_tracks_every_advanced_field() {
+        let base = crate::text::TextStyle::default();
+        let fp = text_style_fingerprint(&base);
+        assert_eq!(fp, text_style_fingerprint(&base.clone()));
+
+        let mut cases = Vec::new();
+        let mut s = base.clone();
+        s.letter_spacing = -2.0;
+        cases.push(("letter_spacing", s));
+        let mut s = base.clone();
+        s.word_spacing = 3.0;
+        cases.push(("word_spacing", s));
+        let mut s = base.clone();
+        s.text_align = TextAlign::Justify;
+        cases.push(("text_align", s));
+        let mut s = base.clone();
+        s.decoration = TextDecoration {
+            underline: true,
+            ..Default::default()
+        };
+        cases.push(("decoration", s));
+        let mut s = base.clone();
+        s.shadow = Some(TextShadow::default());
+        cases.push(("shadow", s));
+        let mut s = base.clone();
+        s.variations = vec![(*b"wght", 700.0)];
+        cases.push(("variations", s));
+        let mut s = base.clone();
+        s.font_features = vec![(u32::from_be_bytes(*b"tnum"), 1)];
+        cases.push(("font_features", s));
+        let mut s = base.clone();
+        s.max_lines = Some(2);
+        cases.push(("max_lines", s));
+        let mut s = base.clone();
+        s.ellipsis = Some("...".into());
+        cases.push(("ellipsis", s));
+        let mut s = base.clone();
+        s.rotation = Some(0.5);
+        cases.push(("rotation", s));
+        let mut s = base.clone();
+        s.lcd = Some(crate::text::LcdOrder::Bgr);
+        cases.push(("lcd", s));
+
+        for (name, style) in cases {
+            assert_ne!(fp, text_style_fingerprint(&style), "{name} 未进入指纹");
+        }
+    }
 }

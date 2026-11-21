@@ -129,7 +129,8 @@ pub struct HostWindow<V: View> {
     /// 显示器刷新周期（纳秒精度的 `Duration`）。
     present_interval: std::time::Duration,
     engine: std::cell::RefCell<TextEngine>,
-    atlas_revision_uploaded: u64,
+    /// 已上传的图集 revision（统一由 `AtlasUploadState` 判定）。
+    atlas_upload: zephyra_fx::AtlasUploadState,
     system_languages: Vec<String>,
     frames: usize,
     last_frame_at: Option<std::time::Instant>,
@@ -246,7 +247,7 @@ impl<V: View> HostWindow<V> {
             }
         };
 
-        let (engine, note) = zephyra_fx::text::from_system_font_set();
+        let (engine, note) = zephyra_fx::create_text_engine();
         eprintln!("[zephyra] {note}");
 
         // MSAA 与两个 Windows 后端同档（4×；ZEPHYRA_MSAA=0 可关）。渲染通道
@@ -313,7 +314,7 @@ impl<V: View> HostWindow<V> {
             last_present_at: None,
             present_interval: refresh_interval(&window),
             engine: std::cell::RefCell::new(engine),
-            atlas_revision_uploaded: u64::MAX,
+            atlas_upload: zephyra_fx::AtlasUploadState::new(),
             system_languages,
             frames: 0,
             last_frame_at: None,
@@ -446,12 +447,14 @@ impl<V: View> HostWindow<V> {
 
     /// 跑一帧：布局 → `DisplayList` → 顶点展开 → 提交。
     pub fn frame(&mut self) -> Frame {
+        #[cfg(debug_assertions)]
+        let frame_started = std::time::Instant::now();
         let size = self.client_size();
         let revision_now = self.engine.borrow().atlas_revision();
-        if revision_now != self.atlas_revision_uploaded {
+        if let Some(rev) = self.atlas_upload.changed(revision_now) {
             self.cache.invalidate();
+            self.atlas_upload.mark(rev);
         }
-        self.atlas_revision_uploaded = revision_now;
 
         let theme = self.theme;
         let (diff, damage, redrawn) = {
