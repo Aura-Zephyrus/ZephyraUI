@@ -246,19 +246,13 @@ impl PlayerState {
         (self.current_us as f64 / self.duration_us as f64).clamp(0.0, 1.0) as f32
     }
 
+    /// 填充宽度留出拇指的位置：布局里拇指紧跟填充之后，两者相加不得超过轨道宽，
+    /// 否则 100% 时拇指会伸出轨道（更糟的是旧版还叠加 translate-x，直接飘到音量条上）。
     pub fn seek_fill_w(&self) -> f32 {
-        SEEK_TRACK_W * self.progress01()
-    }
-
-    pub fn seek_thumb_x(&self) -> f32 {
         (SEEK_TRACK_W - THUMB_W) * self.progress01()
     }
 
     pub fn volume_fill_w(&self) -> f32 {
-        VOLUME_TRACK_W * self.effective_volume()
-    }
-
-    pub fn volume_thumb_x(&self) -> f32 {
         (VOLUME_TRACK_W - THUMB_W) * self.effective_volume()
     }
 

@@ -839,8 +839,8 @@
      状态值与派生几何由宿主从 `zephyra_ui::PlayerState` 喂进来；这里只声明结构。
      控制条挂在画面盒子的子节点上，绘制序「背景 → 图像 → 子节点」保证它盖在画面上。
      `fill:` key 是唯一允许写本地 width 的节点，所以拖动条的宽度走绑定值。 -->
-<component name="VideoPlayer" params="src state label_key play_icon mute_icon fullscreen_icon seek_fill_w seek_thumb_x volume_fill_w volume_thumb_x volume_text time_text duration_text rate_text fullscreen">
-  <box key="video-frame" texture="{src}" class="video-frame video-player {state} {fullscreen ? 'fullscreen'}">
+<component name="VideoPlayer" params="src state label_key play_icon mute_icon fullscreen_icon seek_fill_w volume_fill_w volume_text time_text duration_text rate_text fullscreen">
+  <box key="video-frame" texture="{src}" class="player-surface video-player {state} {fullscreen ? 'fullscreen'}">
     <text key="label" text="{tr(label_key)}" class="player-label"/>
     <box key="player-shade" class="player-shade"/>
     <box key="player-controls" class="player-controls">
@@ -851,7 +851,7 @@
       <control key="act:player-seek" interactive="true" focusable="true" activatable="true" class="player-seek">
         <box key="track" class="player-seek-track">
           <box key="fill:player-seek" width="{seek_fill_w}" class="player-seek-fill"/>
-          <box key="thumb:seek" translate-x="{seek_thumb_x}" class="player-seek-thumb"/>
+          <box key="thumb:seek" class="player-seek-thumb"/>
         </box>
       </control>
       <control key="act:player-mute" interactive="true" focusable="true" activatable="true" class="button tool-button player-button">
@@ -860,7 +860,7 @@
       <control key="act:player-volume" interactive="true" focusable="true" activatable="true" class="player-volume">
         <box key="track" class="player-volume-track">
           <box key="fill:player-volume" width="{volume_fill_w}" class="player-volume-fill"/>
-          <box key="thumb:volume" translate-x="{volume_thumb_x}" class="player-volume-thumb"/>
+          <box key="thumb:volume" class="player-volume-thumb"/>
         </box>
         <text key="player-volume-value" text="{volume_text}" class="player-volume-value"/>
       </control>
@@ -871,6 +871,7 @@
         <box key="icon" icon="{fullscreen_icon}" class="tool-icon"/>
       </control>
     </box>
+    <box key="player-bottom-pad" class="player-bottom-pad"/>
     <if cond="state == 'buffering'">
       <box key="player-buffering" class="player-buffering"/>
     </if>

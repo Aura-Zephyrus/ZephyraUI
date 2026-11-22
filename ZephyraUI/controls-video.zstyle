@@ -18,6 +18,18 @@ box.video-frame {
     border-color: @card_border;
 }
 
+/* 播放器画面：控制条有六类交互，320px 装不下（实测溢出到画面外 250px），
+ * 所以播放器用 640×360 的专属表面；Video / Camera 仍保持 320×180 的裸显示面。 */
+box.player-surface {
+    width: 640px;
+    height: 360px;
+    background: @card;
+    corner-radius: 12px;
+    corner-shape: superellipse(1.5);
+    border-width: 1px;
+    border-color: @card_border;
+}
+
 box.camera-frame {
     width: 320px;
     height: 180px;
@@ -30,14 +42,18 @@ box.camera-frame {
 
 /* ---- 完整播放器：画面之上叠一层控制条 ---- */
 
+/* 苹果播放器的控制条是**悬浮在画面上的一条毛玻璃胶囊**，不是贴底的工具栏：
+ * 圆角大、半透明、背景被模糊，图标白、轨道白，状态**不**用红/黄描边去喊。 */
+
 box.video-player {
     direction: vertical;
     main-align: end;
-    cross-align: stretch;
+    cross-align: center;
 }
 
+/* 状态只留一条极淡的描边；全屏才用强调色强调。 */
 box.video-player.playing {
-    border-color: @accent_fill;
+    border-color: @card_border;
 }
 
 box.video-player.paused {
@@ -45,11 +61,11 @@ box.video-player.paused {
 }
 
 box.video-player.buffering {
-    border-color: @caution;
+    border-color: @card_border;
 }
 
 box.video-player.ended {
-    border-color: @caution;
+    border-color: @card_border;
 }
 
 box.video-player.fullscreen {
@@ -59,7 +75,7 @@ box.video-player.fullscreen {
 
 text.player-volume-value {
     text-size: 11px;
-    text-color: @content_secondary;
+    text-color: @on_accent_fill;
 }
 
 /* 无障碍名来源：视觉上藏起来，但留在树上给 UIA 的 accessible_name() 读。 */
@@ -70,39 +86,62 @@ text.player-label {
     opacity: 0;
 }
 
+/* 底部轻轻一层压暗，让毛玻璃条压在亮画面上时仍然看得清。
+ * 必须是固定黑：浅色主题里 @card 是「白 70%」，拿它当遮罩反而会提亮画面，语义反了。 */
 box.player-shade {
-    height: 56px;
-    background: @surface_alt_translucent;
+    width: 640px;
+    height: 60px;
+    background: #00000066;
+}
+
+/* 让胶囊四边都离画面边缘一点，而不是贴着底边。 */
+box.player-bottom-pad {
+    width: 640px;
+    height: 10px;
 }
 
 box.player-controls {
+    width: 604px;
+    height: 52px;
     direction: horizontal;
     cross-align: center;
-    spacing: 8px;
-    padding: 6px;
-    height: 44px;
+    spacing: 10px;
+    padding: 10px;
+    corner-radius: 18px;
+    corner-shape: superellipse(1.7);
+    /* 半透明黑比中性灰更像 Apple 的 vibrancy：背后仍可见，但亮画面不会把白字冲淡。 */
+    background: #000000CC;
+    material: frosted;
+    material-params: 10;
+    border-width: 1px;
+    /* 胶囊在两套主题里都是固定深色，边框不能用随主题翻转的 @divider
+     * （浅色下是黑 8%，压在深色胶囊上等于没边，圆角看起来就糊了）。 */
+    border-color: #ffffff2B;
 }
 
+/* 按钮：透明底 + 白色图标，只在悬停/按下时浮出一层白雾。
+ * 这些填充也必须是固定白 alpha：胶囊是固定的深色，不能跟主题令牌走，
+ * 否则浅色主题修好后它们会变成「深底上的深填充」而消失。 */
 control.player-button {
     width: 32px;
     height: 32px;
-    corner-radius: 10px;
+    corner-radius: 999px;
     corner-shape: superellipse(1.5);
-    background: @control_fill;
-    border-width: 1px;
-    border-color: @control_border;
+    /* 模板上还挂着 button/tool-button：它们的实色填充会盖过来，必须显式抵消。 */
+    background: #ffffff1A;
+    border-width: 0px;
     direction: horizontal;
     main-align: center;
     cross-align: center;
 }
 
 control.player-button.hovered {
-    background: @control_fill_hover;
-    border-color: @control_border_strong;
+    background: #ffffff33;
 }
 
 control.player-button.pressed {
-    background: @control_fill_pressed;
+    /* 不能用 #ffffff4d：那是被删掉的玻璃白纱，gates 明令禁止回潮 */
+    background: #ffffff40;
 }
 
 control.player-button.focused {
@@ -112,7 +151,8 @@ control.player-button.focused {
 
 text.player-time {
     text-size: 12px;
-    text-color: @content_secondary;
+    text-color: @on_accent_fill;
+    text-letter-spacing: 0.2px;
 }
 
 control.player-seek {
@@ -124,25 +164,27 @@ control.player-seek {
 control.player-volume {
     direction: horizontal;
     cross-align: center;
+    spacing: 6px;
     height: 32px;
 }
 
+/* 时间轴：未播放是中性灰，已播放与拇指都是白色（苹果的单色时间轴）。 */
 box.player-seek-track {
     width: 240px;
-    height: 4px;
+    height: 5px;
     corner-radius: 158.4px;
     corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
-    background: @control_strong;
+    background: @switch_track;
 }
 
 box.player-seek-fill {
-    height: 4px;
+    height: 5px;
     corner-radius: 158.4px;
     corner-shape: superellipse(1.5);
-    background: @accent_fill;
+    background: @on_accent_fill;
 }
 
 box.player-seek-thumb {
@@ -155,20 +197,20 @@ box.player-seek-thumb {
 
 box.player-volume-track {
     width: 80px;
-    height: 4px;
+    height: 5px;
     corner-radius: 158.4px;
     corner-shape: superellipse(1.5);
     direction: horizontal;
     main-align: start;
     cross-align: center;
-    background: @control_strong;
+    background: @switch_track;
 }
 
 box.player-volume-fill {
-    height: 4px;
+    height: 5px;
     corner-radius: 158.4px;
     corner-shape: superellipse(1.5);
-    background: @accent_fill;
+    background: @on_accent_fill;
 }
 
 box.player-volume-thumb {
@@ -179,19 +221,24 @@ box.player-volume-thumb {
     background: @on_accent_fill;
 }
 
+/* 倍速是一颗低调的文字胶囊。 */
 control.player-rate {
     direction: horizontal;
     main-align: center;
     cross-align: center;
-    padding: 4px;
-    background: @control_fill;
-    corner-radius: 8px;
+    padding: 5px;
+    border-width: 0px;
+    corner-radius: 10px;
     corner-shape: superellipse(1.5);
 }
 
+control.player-rate.hovered {
+    background: #ffffff33;
+}
+
 text.player-rate-label {
-    text-size: 12px;
-    text-color: @content;
+    text-size: 13px;
+    text-color: @on_accent_fill;
 }
 
 box.player-buffering {
@@ -199,5 +246,5 @@ box.player-buffering {
     height: 24px;
     corner-radius: 158.4px;
     corner-shape: superellipse(1.5);
-    background: @caution;
+    background: @on_accent_fill;
 }

@@ -48,9 +48,10 @@ fn end_clamps_time_and_play_restarts() {
 fn seek_and_volume_are_bounded_and_drive_geometry() {
     let mut p = state();
     p.set_seek_geometry(100.0, SEEK_TRACK_W);
-    p.seek_at(100.0 + SEEK_TRACK_W / 2.0);
-    assert!((p.progress01() - 0.5).abs() < 0.05);
-    assert!((p.seek_fill_w() - SEEK_TRACK_W * 0.5).abs() < 12.0);
+    p.seek_at(100.0 + (SEEK_TRACK_W - THUMB_W) / 2.0);
+    assert!((p.progress01() - 0.5).abs() < 0.01);
+    // 填充要给末尾的 12px 拇指留位：50% 时正好是 (240-12)/2。
+    assert!((p.seek_fill_w() - (SEEK_TRACK_W - THUMB_W) * 0.5).abs() < 0.01);
     p.seek_at(-1000.0);
     assert_eq!(p.current_us(), 0);
     p.seek_at(100_000.0);
@@ -58,7 +59,7 @@ fn seek_and_volume_are_bounded_and_drive_geometry() {
 
     p.set_volume_geometry(0.0, VOLUME_TRACK_W);
     p.set_volume(0.5);
-    assert!((p.volume_fill_w() - VOLUME_TRACK_W * 0.5).abs() < 0.01);
+    assert!((p.volume_fill_w() - (VOLUME_TRACK_W - THUMB_W) * 0.5).abs() < 0.01);
     p.toggle_mute();
     assert_eq!(p.effective_volume(), 0.0);
     assert_eq!(p.mute_icon(), "volume-off");
